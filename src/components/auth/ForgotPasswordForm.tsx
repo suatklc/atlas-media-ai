@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useTransition, type FormEvent } from "react";
 import AuthMobileBrand from "./AuthMobileBrand";
 import AuthHeading from "./AuthHeading";
 import TextField from "./TextField";
 import FormBanner from "./FormBanner";
 import AuthFooterLink from "./AuthFooterLink";
 import { isRequired, isValidEmail } from "@/lib/auth-validation";
+import { requestPasswordResetAction } from "@/app/forgot-password/actions";
 
 type ForgotPasswordErrors = {
   email?: string;
@@ -16,9 +17,12 @@ export default function ForgotPasswordForm() {
   const [email, setEmail] = useState("");
   const [errors, setErrors] = useState<ForgotPasswordErrors>({});
   const [submitted, setSubmitted] = useState(false);
+  const [serverError, setServerError] = useState<string | undefined>();
+  const [isPending, startTransition] = useTransition();
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setServerError(undefined);
 
     const nextErrors: ForgotPasswordErrors = {};
     if (!isRequired(email)) {
@@ -28,7 +32,17 @@ export default function ForgotPasswordForm() {
     }
 
     setErrors(nextErrors);
-    setSubmitted(Object.keys(nextErrors).length === 0);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    startTransition(async () => {
+      const result = await requestPasswordResetAction(email);
+      if (result?.error) {
+        setServerError(result.error);
+        setSubmitted(false);
+      } else {
+        setSubmitted(true);
+      }
+    });
   }
 
   return (
@@ -45,6 +59,7 @@ export default function ForgotPasswordForm() {
           message={`${email} adresine bir şifre sıfırlama bağlantısı gönderildi.`}
         />
       )}
+      {serverError && <FormBanner variant="error" message={serverError} />}
 
       <form className="space-y-5" onSubmit={handleSubmit} noValidate>
         <TextField
@@ -64,9 +79,10 @@ export default function ForgotPasswordForm() {
 
         <button
           type="submit"
-          className="w-full rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-400"
+          disabled={isPending}
+          className="w-full rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Sıfırlama Bağlantısı Gönder
+          {isPending ? "Gönderiliyor..." : "Sıfırlama Bağlantısı Gönder"}
         </button>
       </form>
 

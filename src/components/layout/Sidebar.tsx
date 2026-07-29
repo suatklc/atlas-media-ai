@@ -1,13 +1,17 @@
 import Link from "next/link";
-import { X } from "lucide-react";
+import { LogOut, X } from "lucide-react";
 import { navItems } from "@/lib/mock-data";
+import { getInitials } from "@/lib/format";
+import type { AuthUser } from "@/lib/types";
+import { signOutAction } from "@/app/dashboard/actions";
 
 type SidebarProps = {
   open: boolean;
   onClose: () => void;
+  user: AuthUser;
 };
 
-export default function Sidebar({ open, onClose }: SidebarProps) {
+export default function Sidebar({ open, onClose, user }: SidebarProps) {
   return (
     <>
       <div
@@ -24,7 +28,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         }`}
       >
         <div className="flex h-16 items-center justify-between px-6">
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/dashboard" className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-bold text-white">
               A
             </div>
@@ -64,15 +68,23 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
         <div className="border-t border-zinc-800 p-4">
           <div className="flex items-center gap-3 rounded-lg bg-zinc-900 px-3 py-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-semibold text-white">
-              SK
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-semibold text-white">
+              {getInitials(user.name)}
             </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-white">
-                Suat Kılıç
-              </p>
-              <p className="truncate text-xs text-zinc-500">Free plan</p>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium text-white">{user.name}</p>
+              <p className="truncate text-xs text-zinc-500">{user.email}</p>
             </div>
+            <form action={signOutAction}>
+              <button
+                type="submit"
+                className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-white"
+                aria-label="Çıkış yap"
+                title="Çıkış yap"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </form>
           </div>
         </div>
       </aside>

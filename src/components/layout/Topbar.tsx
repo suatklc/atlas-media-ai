@@ -1,10 +1,13 @@
 import { Bell, Menu, Search } from "lucide-react";
+import { getInitials } from "@/lib/format";
+import type { AuthUser } from "@/lib/types";
 
 type TopbarProps = {
   onMenuClick: () => void;
+  user: AuthUser;
 };
 
-export default function Topbar({ onMenuClick }: TopbarProps) {
+export default function Topbar({ onMenuClick, user }: TopbarProps) {
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-zinc-800 bg-zinc-950/80 px-4 backdrop-blur sm:px-6 lg:px-8">
       <button
@@ -35,7 +38,7 @@ export default function Topbar({ onMenuClick }: TopbarProps) {
           <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-indigo-500" />
         </button>
         <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-semibold text-white sm:hidden">
-          SK
+          {getInitials(user.name)}
         </div>
       </div>
     </header>

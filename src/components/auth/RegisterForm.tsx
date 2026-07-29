@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useTransition, type FormEvent } from "react";
 import Link from "next/link";
 import AuthMobileBrand from "./AuthMobileBrand";
 import AuthHeading from "./AuthHeading";
@@ -10,12 +10,14 @@ import FieldError from "./FieldError";
 import AuthDivider from "./AuthDivider";
 import SocialButtons from "./SocialButtons";
 import AuthFooterLink from "./AuthFooterLink";
+import FormBanner from "./FormBanner";
 import {
   hasMinLength,
   isRequired,
   isValidEmail,
   valuesMatch,
 } from "@/lib/auth-validation";
+import { signUpAction } from "@/app/register/actions";
 
 type RegisterErrors = {
   name?: string;
@@ -32,9 +34,12 @@ export default function RegisterForm() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [errors, setErrors] = useState<RegisterErrors>({});
+  const [serverError, setServerError] = useState<string | undefined>();
+  const [isPending, startTransition] = useTransition();
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setServerError(undefined);
 
     const nextErrors: RegisterErrors = {};
     if (!isRequired(name)) {
@@ -60,6 +65,14 @@ export default function RegisterForm() {
     }
 
     setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    startTransition(async () => {
+      const result = await signUpAction(name, email, password);
+      if (result?.error) {
+        setServerError(result.error);
+      }
+    });
   }
 
   return (
@@ -69,6 +82,8 @@ export default function RegisterForm() {
         title="Hesap Oluştur"
         subtitle="Atlas AI'ı kullanmaya başlamak için birkaç bilgi girin."
       />
+
+      {serverError && <FormBanner variant="error" message={serverError} />}
 
       <form className="space-y-5" onSubmit={handleSubmit} noValidate>
         <TextField
@@ -139,9 +154,10 @@ export default function RegisterForm() {
 
         <button
           type="submit"
-          className="w-full rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-400"
+          disabled={isPending}
+          className="w-full rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Hesap Oluştur
+          {isPending ? "Hesap oluşturuluyor..." : "Hesap Oluştur"}
         </button>
       </form>
 

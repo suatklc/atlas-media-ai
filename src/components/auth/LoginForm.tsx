@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useTransition, type FormEvent } from "react";
 import Link from "next/link";
 import AuthMobileBrand from "./AuthMobileBrand";
 import AuthHeading from "./AuthHeading";
@@ -9,7 +9,9 @@ import PasswordField from "./PasswordField";
 import AuthDivider from "./AuthDivider";
 import SocialButtons from "./SocialButtons";
 import AuthFooterLink from "./AuthFooterLink";
+import FormBanner from "./FormBanner";
 import { isRequired, isValidEmail } from "@/lib/auth-validation";
+import { signInAction } from "@/app/login/actions";
 
 type LoginErrors = {
   email?: string;
@@ -20,9 +22,12 @@ export default function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<LoginErrors>({});
+  const [serverError, setServerError] = useState<string | undefined>();
+  const [isPending, startTransition] = useTransition();
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setServerError(undefined);
 
     const nextErrors: LoginErrors = {};
     if (!isRequired(email)) {
@@ -35,12 +40,22 @@ export default function LoginForm() {
     }
 
     setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    startTransition(async () => {
+      const result = await signInAction(email, password);
+      if (result?.error) {
+        setServerError(result.error);
+      }
+    });
   }
 
   return (
     <div className="w-full max-w-sm">
       <AuthMobileBrand />
       <AuthHeading title="Giriş Yap" subtitle="Devam etmek için hesabınıza giriş yapın." />
+
+      {serverError && <FormBanner variant="error" message={serverError} />}
 
       <form className="space-y-5" onSubmit={handleSubmit} noValidate>
         <TextField
@@ -83,9 +98,10 @@ export default function LoginForm() {
 
         <button
           type="submit"
-          className="w-full rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-400"
+          disabled={isPending}
+          className="w-full rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Giriş Yap
+          {isPending ? "Giriş yapılıyor..." : "Giriş Yap"}
         </button>
       </form>
 

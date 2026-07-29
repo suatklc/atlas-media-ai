@@ -7,10 +7,16 @@ export const metadata: Metadata = {
   description: "Atlas AI e-posta doğrulama",
 };
 
-export default function VerifyEmailPage() {
+type VerifyEmailPageProps = {
+  searchParams: Promise<{ email?: string }>;
+};
+
+export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageProps) {
+  const { email } = await searchParams;
+
   return (
     <AuthLayout>
-      <VerifyEmailForm />
+      <VerifyEmailForm email={email ?? ""} />
     </AuthLayout>
   );
 }
