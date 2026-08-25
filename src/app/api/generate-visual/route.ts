@@ -15,7 +15,8 @@ import { PLATFORM_CONFIGS, DEFAULT_PLATFORM, isPlatformId } from "@/lib/ai/platf
 import { composeInstagramPost } from "@/lib/ai/image/compose";
 import { selectVisualTemplateId } from "@/lib/ai/image/templates/select";
 import { uploadGeneratedImage } from "@/lib/supabase/storage";
-import { buildPublishableCaption, extractEducationalPoints } from "@/lib/ai/creative/caption";
+import { buildPublishableCaption } from "@/lib/ai/creative/caption";
+import { resolveEducationalPoints } from "@/lib/ai/content/educational-points";
 
 const MAX_MESSAGE_LENGTH = 4000;
 // Kept aligned with AIAssistantPanel.tsx's own extractor bound — a full
@@ -26,14 +27,6 @@ const FALLBACK_HEADLINE = "Gayrimenkul İçeriği";
 // Generous, purely defensive cap for the persisted caption text (history
 // only — never fed into any prompt).
 const MAX_CONTENT_LENGTH = 8000;
-const MAX_ASSISTANT_RESPONSE_LENGTH = 20000;
-// Package 5C: mirrors the marker extractor's own cap (creative/caption.ts)
-// and the educational renderer's own per-aspect-ratio point limit — this is
-// a coarse anti-abuse sanity bound on untrusted client input, not the
-// primary text-fitting mechanism (that's educational.ts's own
-// layoutAtSize-based truncation).
-const MAX_EDUCATIONAL_POINTS = 5;
-const MAX_EDUCATIONAL_POINT_LENGTH = 200;
 
 // Generic marketing visual, not documentary evidence of a specific unit —
 // appended only for "listing" intent, since the MVP does not yet accept a
@@ -157,63 +150,6 @@ function sanitizeContent(value: unknown): string | null {
     return null;
   }
   return cleaned.length > MAX_CONTENT_LENGTH ? cleaned.slice(0, MAX_CONTENT_LENGTH) : cleaned;
-}
-
-// Client-supplied — untrusted. Accepts only an array of plain strings;
-// never objects/HTML/SVG (each accepted entry becomes exactly one <text>
-// title string via educational.ts's own escapeXml + layoutAtSize, so this
-// is a coarse sanity bound, not a rendering mechanism). Trims, discards
-// empty entries, caps count and per-item length. Returns [] (not an error)
-// for anything malformed — educational.ts's own "no points supplied" safe
-// fallback already handles that case.
-function sanitizeEducationalPoints(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const cleaned: string[] = [];
-  for (const item of value) {
-    if (typeof item !== "string") {
-      continue;
-    }
-    const trimmed = item.trim();
-    if (!trimmed) {
-      continue;
-    }
-    cleaned.push(trimmed.length > MAX_EDUCATIONAL_POINT_LENGTH ? trimmed.slice(0, MAX_EDUCATIONAL_POINT_LENGTH) : trimmed);
-    if (cleaned.length >= MAX_EDUCATIONAL_POINTS) {
-      break;
-    }
-  }
-  return cleaned;
-}
-
-function sanitizeAssistantResponseText(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-  return trimmed.slice(0, MAX_ASSISTANT_RESPONSE_LENGTH);
-}
-
-export function resolveEducationalPoints(
-  intent: ContentIntent,
-  clientValue: unknown,
-  assistantResponseText: unknown,
-): string[] {
-  const clientPoints = sanitizeEducationalPoints(clientValue);
-  if (intent !== "educational" || clientPoints.length > 0) {
-    return clientPoints;
-  }
-
-  const safeAssistantResponseText = sanitizeAssistantResponseText(assistantResponseText);
-  if (!safeAssistantResponseText) {
-    return [];
-  }
-
-  return sanitizeEducationalPoints(extractEducationalPoints(safeAssistantResponseText));
 }
 
 export async function POST(request: NextRequest) {

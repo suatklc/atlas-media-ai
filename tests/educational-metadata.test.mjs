@@ -27,8 +27,8 @@ function loadTypeScriptModule(relativePath, dependencyLoader = () => ({})) {
 
 const caption = loadTypeScriptModule("src/lib/ai/creative/caption.ts");
 const directive = loadTypeScriptModule("src/lib/ai/creative/directive.ts");
-const visualRoute = loadTypeScriptModule("src/app/api/generate-visual/route.ts", (specifier) => {
-  if (specifier === "@/lib/ai/creative/caption") return caption;
+const educationalPoints = loadTypeScriptModule("src/lib/ai/content/educational-points.ts", (specifier) => {
+  if (specifier === "../creative/caption") return caption;
   return {};
 });
 
@@ -174,21 +174,21 @@ test("client and server source retain the recovery contract without changing pro
 
 test("server recovers only missing educational points and preserves valid client points", () => {
   assert.deepEqual(
-    plain(visualRoute.resolveEducationalPoints("educational", undefined, "1. Tapu\n2. Bütçe")),
+    plain(educationalPoints.resolveEducationalPoints("educational", undefined, "1. Tapu\n2. Bütçe")),
     ["Tapu", "Bütçe"],
   );
   assert.deepEqual(
-    plain(visualRoute.resolveEducationalPoints("educational", [null, ""], "- Tapu\n- Bütçe")),
+    plain(educationalPoints.resolveEducationalPoints("educational", [null, ""], "- Tapu\n- Bütçe")),
     ["Tapu", "Bütçe"],
   );
   assert.deepEqual(
-    plain(visualRoute.resolveEducationalPoints("educational", ["İstemci noktası"], "1. Fallback")),
+    plain(educationalPoints.resolveEducationalPoints("educational", ["İstemci noktası"], "1. Fallback")),
     ["İstemci noktası"],
   );
-  assert.deepEqual(plain(visualRoute.resolveEducationalPoints("educational", undefined, "Normal prose")), []);
+  assert.deepEqual(plain(educationalPoints.resolveEducationalPoints("educational", undefined, "Normal prose")), []);
 });
 
 test("server does not run educational fallback for Hero or Comparison intents", () => {
-  assert.deepEqual(plain(visualRoute.resolveEducationalPoints("listing", undefined, "1. Yanlış nokta")), []);
-  assert.deepEqual(plain(visualRoute.resolveEducationalPoints("comparison", undefined, "1. Yanlış nokta")), []);
+  assert.deepEqual(plain(educationalPoints.resolveEducationalPoints("listing", undefined, "1. Yanlış nokta")), []);
+  assert.deepEqual(plain(educationalPoints.resolveEducationalPoints("comparison", undefined, "1. Yanlış nokta")), []);
 });
