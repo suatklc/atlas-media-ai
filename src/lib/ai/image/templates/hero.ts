@@ -1,6 +1,6 @@
-import sharp from "sharp";
 import type { CompositionInput } from "./types";
 import { FONT_STACK, escapeXml, layoutAtSize, buildBrandBadgeMarkup, parseCanvasDimensions } from "./shared";
+import { buildCoverImageMarkup, renderSvgToPng } from "../resvg-renderer";
 
 const SAFE_PADDING_X = 64;
 const FALLBACK_HEADLINE = "Gayrimenkul İçeriği";
@@ -47,6 +47,7 @@ function buildHeroOverlaySvg(
   height: number,
   rawHeadline: string,
   rawCta: string | undefined,
+  baseImage: Buffer,
 ): string {
   const availableWidth = width - SAFE_PADDING_X * 2;
   const { lines, fontSize, lineHeight } = wrapHeadline(rawHeadline, availableWidth);
@@ -91,6 +92,8 @@ function buildHeroOverlaySvg(
       </linearGradient>
     </defs>
 
+    ${buildCoverImageMarkup(baseImage, width, height)}
+
     <rect x="0" y="${scrimTop}" width="${width}" height="${height - scrimTop}" fill="url(#scrim)" />
 
     ${brandBadgeMarkup}
@@ -109,20 +112,19 @@ function buildHeroOverlaySvg(
 // (CTA/headline/scrim vertical position) derive from dimensionsPx instead
 // of a hardcoded 1080x1350, so platform-selected formats other than
 // Instagram's own default render at their own correct final size.
+//
+// Sharp removal (Handoff — production recovery): the base image and the
+// text/scrim/badge overlay are now composited in a single pass by
+// embedding the base image as a data: URI <image> element directly inside
+// the same SVG string the overlay markup already builds, rasterized once
+// by resvg-wasm — rather than sharp's previous two-step resize-then-
+// composite. See resvg-renderer.ts's buildCoverImageMarkup for the cover-
+// crop equivalence and its one known behavior difference (center crop,
+// not saliency-based).
 export async function renderHero({ baseImage, headline, cta, dimensionsPx }: HeroRenderInput): Promise<Buffer> {
   const { width, height } = parseCanvasDimensions(dimensionsPx);
 
-  const resizedBase = await sharp(baseImage)
-    .resize(width, height, {
-      fit: "cover",
-      position: sharp.strategy.attention,
-    })
-    .toBuffer();
+  const overlaySvg = buildHeroOverlaySvg(width, height, headline, cta, baseImage);
 
-  const overlaySvg = buildHeroOverlaySvg(width, height, headline, cta);
-
-  return sharp(resizedBase)
-    .composite([{ input: Buffer.from(overlaySvg, "utf-8"), top: 0, left: 0 }])
-    .png()
-    .toBuffer();
+  return renderSvgToPng(overlaySvg, width, height);
 }

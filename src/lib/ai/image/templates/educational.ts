@@ -1,6 +1,6 @@
-import sharp from "sharp";
 import type { CompositionInput } from "./types";
 import { FONT_STACK, escapeXml, layoutAtSize, buildBrandBadgeMarkup, parseCanvasDimensions } from "./shared";
+import { buildCoverImageMarkup, renderSvgToPng } from "../resvg-renderer";
 
 const SAFE_PADDING_X = 64;
 const FALLBACK_HEADLINE = "Gayrimenkul İçeriği";
@@ -150,6 +150,7 @@ function buildEducationalOverlaySvg(
   rawSupportingText: string | undefined,
   rawPoints: string[],
   rawCta: string | undefined,
+  baseImage: Buffer,
 ): string {
   const availableWidth = width - SAFE_PADDING_X * 2;
   const badgeY = 56;
@@ -284,6 +285,8 @@ function buildEducationalOverlaySvg(
       </linearGradient>
     </defs>
 
+    ${buildCoverImageMarkup(baseImage, width, height)}
+
     <rect x="0" y="0" width="${width}" height="${topScrimHeight}" fill="url(#topScrim)" />
 
     ${brandBadgeMarkup}
@@ -308,21 +311,24 @@ function buildEducationalOverlaySvg(
 // older/malformed response), this produces a clean headline+badge
 // composition on the correctly-sized (4:5 or 1:1) canvas — never a
 // fabricated or emptily decorative panel.
+//
+// Sharp removal (Handoff — production recovery): same single-pass
+// SVG+resvg-wasm compositing as renderHero — see that function's comment
+// and resvg-renderer.ts for the cover-crop equivalence and its one known
+// behavior difference (center crop, not saliency-based).
 export async function renderEducational(input: EducationalRenderInput): Promise<Buffer> {
   const { baseImage, headline, cta, supportingText, educationalPoints } = input;
   const { width, height } = parseCanvasDimensions(input.dimensionsPx);
 
-  const resizedBase = await sharp(baseImage)
-    .resize(width, height, {
-      fit: "cover",
-      position: sharp.strategy.attention,
-    })
-    .toBuffer();
+  const overlaySvg = buildEducationalOverlaySvg(
+    width,
+    height,
+    headline,
+    supportingText,
+    educationalPoints ?? [],
+    cta,
+    baseImage,
+  );
 
-  const overlaySvg = buildEducationalOverlaySvg(width, height, headline, supportingText, educationalPoints ?? [], cta);
-
-  return sharp(resizedBase)
-    .composite([{ input: Buffer.from(overlaySvg, "utf-8"), top: 0, left: 0 }])
-    .png()
-    .toBuffer();
+  return renderSvgToPng(overlaySvg, width, height);
 }
