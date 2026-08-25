@@ -49,10 +49,28 @@ export default function Sidebar({ open, onClose, user }: SidebarProps) {
         <nav className="flex-1 space-y-1 px-3 py-4">
           {navItems.map((item) => {
             const Icon = item.icon;
+
+            if (item.comingSoon) {
+              return (
+                <div
+                  key={item.label}
+                  aria-disabled="true"
+                  title="Yakında"
+                  className="flex cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-zinc-600"
+                >
+                  <Icon className="h-[18px] w-[18px]" />
+                  <span className="flex-1">{item.label}</span>
+                  <span className="rounded-full border border-zinc-800 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                    Yakında
+                  </span>
+                </div>
+              );
+            }
+
             return (
-              <a
+              <Link
                 key={item.label}
-                href="#"
+                href={item.href ?? "/dashboard"}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                   item.active
                     ? "bg-indigo-500/10 text-indigo-400"
@@ -61,7 +79,7 @@ export default function Sidebar({ open, onClose, user }: SidebarProps) {
               >
                 <Icon className="h-[18px] w-[18px]" />
                 {item.label}
-              </a>
+              </Link>
             );
           })}
         </nav>

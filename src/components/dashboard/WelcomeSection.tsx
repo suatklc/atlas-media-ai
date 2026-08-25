@@ -1,14 +1,26 @@
-export default function WelcomeSection() {
+import { formatLongDateTR } from "@/lib/format";
+
+type WelcomeSectionProps = {
+  name: string;
+};
+
+export default function WelcomeSection({ name }: WelcomeSectionProps) {
+  const firstName = name.split(" ")[0];
+
   return (
-    <section className="mb-8">
-      <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-        Welcome back to{" "}
-        <span className="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">
-          Atlas AI
-        </span>
+    <section className="animate-fade-up mb-8">
+      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+        {formatLongDateTR(new Date())}
+      </p>
+      <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+        Tekrar hoş geldiniz, {firstName}
       </h1>
       <p className="mt-1.5 text-sm text-zinc-400">
-        Here&apos;s what&apos;s happening across your workspace today.
+        İlan metinleri, sosyal medya içerikleri ve müşteri mesajlarını{" "}
+        <span className="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text font-medium text-transparent">
+          Atlas
+        </span>{" "}
+        ile hızlıca hazırlayın.
       </p>
     </section>
   );

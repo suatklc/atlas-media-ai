@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { MailCheck } from "lucide-react";
 import AuthMobileBrand from "./AuthMobileBrand";
-import TextField from "./TextField";
 import FormBanner from "./FormBanner";
 import AuthFooterLink from "./AuthFooterLink";
-import { isValidCode } from "@/lib/auth-validation";
-import { resendVerificationAction, verifyEmailAction } from "@/app/verify-email/actions";
+import { resendVerificationAction } from "@/app/verify-email/actions";
 
 const RESEND_COOLDOWN_SECONDS = 30;
 
@@ -16,13 +14,10 @@ type VerifyEmailFormProps = {
 };
 
 export default function VerifyEmailForm({ email }: VerifyEmailFormProps) {
-  const [code, setCode] = useState("");
-  const [error, setError] = useState<string | undefined>();
   const [banner, setBanner] = useState<{ variant: "success" | "error"; message: string } | null>(
     null,
   );
   const [cooldown, setCooldown] = useState(0);
-  const [isVerifying, startVerifying] = useTransition();
   const [isResending, startResending] = useTransition();
 
   useEffect(() => {
@@ -33,24 +28,6 @@ export default function VerifyEmailForm({ email }: VerifyEmailFormProps) {
     return () => clearInterval(timer);
   }, [cooldown]);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBanner(null);
-
-    if (!isValidCode(code)) {
-      setError("6 haneli doğrulama kodunu girin.");
-      return;
-    }
-    setError(undefined);
-
-    startVerifying(async () => {
-      const result = await verifyEmailAction(email, code);
-      if (result?.error) {
-        setBanner({ variant: "error", message: result.error });
-      }
-    });
-  }
-
   function handleResend() {
     setBanner(null);
     startResending(async () => {
@@ -58,7 +35,7 @@ export default function VerifyEmailForm({ email }: VerifyEmailFormProps) {
       if (result?.error) {
         setBanner({ variant: "error", message: result.error });
       } else {
-        setBanner({ variant: "success", message: "Doğrulama kodu tekrar gönderildi." });
+        setBanner({ variant: "success", message: "Doğrulama bağlantısı tekrar gönderildi." });
         setCooldown(RESEND_COOLDOWN_SECONDS);
       }
     });
@@ -78,51 +55,31 @@ export default function VerifyEmailForm({ email }: VerifyEmailFormProps) {
         <p className="mt-1.5 text-sm text-zinc-400">
           {email ? (
             <>
-              <span className="font-medium text-zinc-300">{email}</span> adresine 6 haneli bir
-              doğrulama kodu gönderdik. Kodu aşağıya girin.
+              <span className="font-medium text-zinc-300">{email}</span> adresine bir doğrulama
+              bağlantısı gönderdik. Hesabınızı etkinleştirmek için e-postanızdaki bağlantıya
+              tıklayın.
             </>
           ) : (
-            "E-posta adresinize 6 haneli bir doğrulama kodu gönderdik. Kodu aşağıya girin."
+            "E-posta adresinize bir doğrulama bağlantısı gönderdik. Hesabınızı etkinleştirmek için e-postanızdaki bağlantıya tıklayın."
           )}
         </p>
       </div>
 
       {banner && <FormBanner variant={banner.variant} message={banner.message} />}
 
-      <form className="space-y-5" onSubmit={handleSubmit} noValidate>
-        <TextField
-          id="code"
-          name="code"
-          label="Doğrulama Kodu"
-          placeholder="123456"
-          inputMode="numeric"
-          maxLength={6}
-          value={code}
-          onChange={(value) => {
-            setCode(value);
-            setError(undefined);
-          }}
-          error={error}
-        />
-
-        <button
-          type="submit"
-          disabled={isVerifying}
-          className="w-full rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {isVerifying ? "Doğrulanıyor..." : "Doğrula"}
-        </button>
-      </form>
-
-      <p className="mt-6 text-center text-sm text-zinc-400">
-        Kod gelmedi mi?{" "}
+      <p className="text-center text-sm text-zinc-400 lg:text-left">
+        Bağlantı gelmedi mi?{" "}
         <button
           type="button"
           onClick={handleResend}
           disabled={cooldown > 0 || isResending}
           className="font-medium text-indigo-400 hover:text-indigo-300 disabled:cursor-not-allowed disabled:text-zinc-600"
         >
-          {cooldown > 0 ? `Tekrar gönder (${cooldown}sn)` : "Tekrar gönder"}
+          {isResending
+            ? "Gönderiliyor..."
+            : cooldown > 0
+              ? `Tekrar gönder (${cooldown}sn)`
+              : "Tekrar gönder"}
         </button>
       </p>
 

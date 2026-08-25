@@ -18,7 +18,11 @@ type LoginErrors = {
   password?: string;
 };
 
-export default function LoginForm() {
+type LoginFormProps = {
+  resetSuccess?: boolean;
+};
+
+export default function LoginForm({ resetSuccess = false }: LoginFormProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<LoginErrors>({});
@@ -55,6 +59,12 @@ export default function LoginForm() {
       <AuthMobileBrand />
       <AuthHeading title="Giriş Yap" subtitle="Devam etmek için hesabınıza giriş yapın." />
 
+      {resetSuccess && (
+        <FormBanner
+          variant="success"
+          message="Şifreniz başarıyla güncellendi. Yeni şifrenizle giriş yapabilirsiniz."
+        />
+      )}
       {serverError && <FormBanner variant="error" message={serverError} />}
 
       <form className="space-y-5" onSubmit={handleSubmit} noValidate>

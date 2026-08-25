@@ -1,32 +1,33 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  BarChart3,
-  CheckCircle2,
-  FilePlus2,
-  FolderKanban,
+  Building2,
+  CalendarDays,
+  Handshake,
+  ImagePlus,
   LayoutDashboard,
-  MessageSquare,
-  Plus,
   Settings,
-  Sparkles,
-  UserPlus,
-  Users,
-  Zap,
+  Share2,
+  Wand2,
 } from "lucide-react";
 
 export type NavItem = {
   label: string;
   icon: LucideIcon;
+  href?: string;
   active?: boolean;
+  // No route exists for this module yet — rendered as a disabled,
+  // non-navigating item instead of a dead href="#" link.
+  comingSoon?: boolean;
 };
 
 export const navItems: NavItem[] = [
-  { label: "Dashboard", icon: LayoutDashboard, active: true },
-  { label: "Analytics", icon: BarChart3 },
-  { label: "Projects", icon: FolderKanban },
-  { label: "Team", icon: Users },
-  { label: "Messages", icon: MessageSquare },
-  { label: "Settings", icon: Settings },
+  { label: "Pano", icon: LayoutDashboard, href: "/dashboard", active: true },
+  { label: "İçerik Üretimi", icon: Wand2, comingSoon: true },
+  { label: "Sosyal Medya", icon: Share2, comingSoon: true },
+  { label: "Gayrimenkul", icon: Building2, comingSoon: true },
+  { label: "CRM", icon: Handshake, comingSoon: true },
+  { label: "Takvim", icon: CalendarDays, comingSoon: true },
+  { label: "Ayarlar", icon: Settings, comingSoon: true },
 ];
 
 export type Stat = {
@@ -39,45 +40,62 @@ export type Stat = {
 
 export const stats: Stat[] = [
   {
-    label: "Total Conversations",
-    value: "12,483",
-    change: "+12.3%",
+    label: "Aktif İlanlar",
+    value: "128",
+    change: "+8.2%",
     trend: "up",
-    icon: MessageSquare,
+    icon: Building2,
   },
   {
-    label: "Active Projects",
-    value: "36",
-    change: "+4.1%",
+    label: "Üretilen İçerik",
+    value: "342",
+    change: "+18.4%",
     trend: "up",
-    icon: FolderKanban,
+    icon: Wand2,
   },
   {
-    label: "API Requests",
-    value: "842K",
-    change: "+8.7%",
+    label: "Sosyal Etkileşim",
+    value: "24.6K",
+    change: "+12.1%",
     trend: "up",
-    icon: Zap,
+    icon: Share2,
   },
   {
-    label: "Success Rate",
-    value: "99.2%",
-    change: "-0.2%",
+    label: "Açık Fırsatlar",
+    value: "37",
+    change: "-3.4%",
     trend: "down",
-    icon: CheckCircle2,
+    icon: Handshake,
   },
 ];
 
-export type QuickAction = {
-  label: string;
+export type ModuleShortcut = {
+  title: string;
+  description: string;
   icon: LucideIcon;
 };
 
-export const quickActions: QuickAction[] = [
-  { label: "New Conversation", icon: Plus },
-  { label: "New Project", icon: FilePlus2 },
-  { label: "Invite Team", icon: UserPlus },
-  { label: "View Reports", icon: BarChart3 },
+export const moduleShortcuts: ModuleShortcut[] = [
+  {
+    title: "İçerik Üretimi",
+    description: "İlanlarınız için AI destekli metin ve görsel oluşturun.",
+    icon: Wand2,
+  },
+  {
+    title: "Gayrimenkul Yönetimi",
+    description: "İlanlarınızı ekleyin, güncelleyin ve takip edin.",
+    icon: Building2,
+  },
+  {
+    title: "CRM",
+    description: "Müşteri adaylarınızı ve fırsatlarınızı yönetin.",
+    icon: Handshake,
+  },
+  {
+    title: "Takvim",
+    description: "Görüşmelerinizi ve paylaşım planınızı görüntüleyin.",
+    icon: CalendarDays,
+  },
 ];
 
 export type ActivityItem = {
@@ -91,37 +109,73 @@ export type ActivityItem = {
 export const recentActivity: ActivityItem[] = [
   {
     id: "1",
-    title: "New conversation started",
-    description: "Onboarding assistant · Project Atlas",
-    time: "2m ago",
-    icon: MessageSquare,
+    title: "Yeni ilan yayınlandı",
+    description: "Bahçelievler'de 3+1 daire · Satılık",
+    time: "12dk önce",
+    icon: Building2,
   },
   {
     id: "2",
-    title: "Model fine-tune completed",
-    description: "atlas-core-v2 · 99.2% accuracy",
-    time: "1h ago",
-    icon: Sparkles,
+    title: "İçerik üretimi tamamlandı",
+    description: "Instagram paylaşımı · 4 görsel, 1 metin",
+    time: "48dk önce",
+    icon: Wand2,
   },
   {
     id: "3",
-    title: "New team member joined",
-    description: "Elena Marin joined the workspace",
-    time: "3h ago",
-    icon: UserPlus,
+    title: "Yeni fırsat oluşturuldu",
+    description: "Ahmet Demir · Kadıköy'de villa arıyor",
+    time: "2sa önce",
+    icon: Handshake,
   },
   {
     id: "4",
-    title: "Project created",
-    description: "Customer Support Copilot",
-    time: "5h ago",
-    icon: FolderKanban,
+    title: "Paylaşım planlandı",
+    description: "Hafta sonu açık ev etkinliği duyurusu",
+    time: "4sa önce",
+    icon: ImagePlus,
   },
   {
     id: "5",
-    title: "Weekly usage report generated",
-    description: "842K requests processed this week",
-    time: "1d ago",
-    icon: BarChart3,
+    title: "Görüşme takvime eklendi",
+    description: "Zeynep Aydın ile yerinde inceleme",
+    time: "6sa önce",
+    icon: CalendarDays,
+  },
+];
+
+export type QuickAction = {
+  id: string;
+  label: string;
+  prompt: string;
+};
+
+export const quickActions: QuickAction[] = [
+  {
+    id: "listing-description",
+    label: "İlan açıklaması oluştur",
+    prompt: "Örnek bir gayrimenkul ilanı için ikna edici ve profesyonel bir açıklama metni yaz.",
+  },
+  {
+    id: "instagram-post",
+    label: "Instagram paylaşımı hazırla",
+    prompt:
+      "Bir gayrimenkul ilanını tanıtmak için kısa, dikkat çekici bir Instagram gönderi metni hazırla.",
+  },
+  {
+    id: "whatsapp-message",
+    label: "WhatsApp mesajı yaz",
+    prompt: "Bir müşteriye gönderebileceğim kısa, samimi ve profesyonel bir WhatsApp mesajı yaz.",
+  },
+  {
+    id: "portfolio-analysis",
+    label: "Portföy analizi yap",
+    prompt:
+      "Bir emlak danışmanının portföyünü değerlendirirken dikkat etmesi gereken noktaları adım adım anlat.",
+  },
+  {
+    id: "daily-plan",
+    label: "Günlük plan oluştur",
+    prompt: "Bir emlak danışmanı için örnek, verimli bir günlük çalışma planı oluştur.",
   },
 ];

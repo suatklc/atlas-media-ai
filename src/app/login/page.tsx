@@ -7,10 +7,16 @@ export const metadata: Metadata = {
   description: "Atlas AI hesabınıza giriş yapın",
 };
 
-export default function LoginPage() {
+type LoginPageProps = {
+  searchParams: Promise<{ reset?: string }>;
+};
+
+export default async function LoginPage({ searchParams }: LoginPageProps) {
+  const params = await searchParams;
+
   return (
     <AuthLayout>
-      <LoginForm />
+      <LoginForm resetSuccess={params.reset === "success"} />
     </AuthLayout>
   );
 }

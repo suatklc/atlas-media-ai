@@ -7,3 +7,11 @@ export function getInitials(name: string): string {
 
   return (first + last).toUpperCase();
 }
+
+export function formatLongDateTR(date: Date): string {
+  return new Intl.DateTimeFormat("tr-TR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(date);
+}

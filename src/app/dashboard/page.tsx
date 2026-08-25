@@ -2,11 +2,21 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import DashboardShell from "@/components/layout/DashboardShell";
 import WelcomeSection from "@/components/dashboard/WelcomeSection";
-import StatsGrid from "@/components/dashboard/StatsGrid";
-import QuickActions from "@/components/dashboard/QuickActions";
-import RecentActivity from "@/components/dashboard/RecentActivity";
+import AIAssistantPanel from "@/components/dashboard/AIAssistantPanel";
+import GenerationHistory from "@/components/dashboard/GenerationHistory";
+import SocialAccounts from "@/components/dashboard/SocialAccounts";
 
-export default async function DashboardPage() {
+type DashboardPageProps = {
+  // Next 15 async searchParams — same pattern as verify-email/page.tsx.
+  // meta_connection is the one non-sensitive status param the Meta OAuth
+  // callback (src/app/api/meta/callback/route.ts) actually sets today; no
+  // other value is invented here.
+  searchParams: Promise<{ meta_connection?: string }>;
+};
+
+export default async function DashboardPage({ searchParams }: DashboardPageProps) {
+  const { meta_connection: metaConnection } = await searchParams;
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -29,15 +39,11 @@ export default async function DashboardPage() {
 
   return (
     <DashboardShell user={authUser}>
-      <WelcomeSection />
-      <div className="space-y-6">
-        <StatsGrid />
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <QuickActions />
-          <div className="lg:col-span-2">
-            <RecentActivity />
-          </div>
-        </div>
+      <WelcomeSection name={authUser.name} />
+      <div className="mx-auto max-w-5xl space-y-8">
+        <AIAssistantPanel />
+        <SocialAccounts connectionStatus={metaConnection} />
+        <GenerationHistory />
       </div>
     </DashboardShell>
   );

@@ -15,7 +15,3 @@ export function hasMinLength(value: string, min: number): boolean {
 export function valuesMatch(a: string, b: string): boolean {
   return a === b;
 }
-
-export function isValidCode(value: string, length = 6): boolean {
-  return new RegExp(`^\\d{${length}}$`).test(value.trim());
-}

@@ -14,7 +14,7 @@ export default function Topbar({ onMenuClick, user }: TopbarProps) {
         type="button"
         onClick={onMenuClick}
         className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white lg:hidden"
-        aria-label="Open sidebar"
+        aria-label="Menüyü aç"
       >
         <Menu className="h-5 w-5" />
       </button>
@@ -23,7 +23,7 @@ export default function Topbar({ onMenuClick, user }: TopbarProps) {
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
         <input
           type="text"
-          placeholder="Search..."
+          placeholder="Ara..."
           className="w-full rounded-lg border border-zinc-800 bg-zinc-900 py-2 pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
         />
       </div>
@@ -32,14 +32,22 @@ export default function Topbar({ onMenuClick, user }: TopbarProps) {
         <button
           type="button"
           className="relative rounded-md p-2 text-zinc-400 hover:bg-zinc-800 hover:text-white"
-          aria-label="Notifications"
+          aria-label="Bildirimler"
         >
           <Bell className="h-5 w-5" />
           <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-indigo-500" />
         </button>
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-semibold text-white sm:hidden">
+
+        <div className="hidden h-6 w-px bg-zinc-800 sm:block" />
+
+        <button
+          type="button"
+          className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-semibold text-white transition-transform hover:scale-105"
+          aria-label={`${user.name} hesap menüsü`}
+          title={user.name}
+        >
           {getInitials(user.name)}
-        </div>
+        </button>
       </div>
     </header>
   );

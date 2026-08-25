@@ -1,14 +1,21 @@
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import type { Stat } from "@/lib/mock-data";
 
-export default function StatCard({ label, value, change, trend, icon: Icon }: Stat) {
+type StatCardProps = Stat & {
+  delayMs?: number;
+};
+
+export default function StatCard({ label, value, change, trend, icon: Icon, delayMs = 0 }: StatCardProps) {
   const isUp = trend === "up";
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
+    <div
+      style={{ animationDelay: `${delayMs}ms` }}
+      className="animate-fade-up group rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 transition-colors hover:border-zinc-700"
+    >
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-zinc-400">{label}</span>
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400 transition-transform duration-200 group-hover:scale-110">
           <Icon className="h-[18px] w-[18px]" />
         </div>
       </div>
