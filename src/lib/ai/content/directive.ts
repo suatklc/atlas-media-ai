@@ -76,13 +76,23 @@ export function buildContentDirective(plan: ContentPlan): string {
   const translatedSections = template.sectionStructure.map((token) => SECTION_LABELS[token] ?? token);
   const tags = [...(BASE_TAGS_BY_INTENT[plan.intent] ?? []), AUDIENCE_TAG[plan.audience]];
 
+  // No "Görsel Spesifikasyonu" section in this structure: the actual visual
+  // spec (aspect ratio, composition, camera/lighting/typography direction)
+  // is already derived deterministically and independently by
+  // creative/brief.ts's buildCreativeBrief (from this same ContentPlan) and
+  // consumed directly by generate-visual/route.ts — never parsed from
+  // anything Claude writes here. Instructing the model to also write that
+  // spec out as a visible section of its own reply was purely redundant,
+  // implementation-detail prose leaking into what the user reads (Handoff
+  // — one-instruction experience). template.visualEmphasis still reaches
+  // the model via creative/directive.ts's own internal (never-repeated)
+  // brief line — removing it from here loses no information, only the
+  // duplicate visible restatement of it.
   const structureLine = plan.outputMode === "single"
     ? `Yapı: tam olarak tek gönderi/görsel; ek slayt ekleme; ${translatedSections.join(" → ")} → ` +
-      `Görsel Spesifikasyonu (tek görsel, ${template.visualEmphasis}) → ` +
       `Etiketler (${tags.join(", ")} + mesaj konusu; ~5-8; konum uydurma)`
     : `Yapı: tam olarak ${plan.slideCount} slayt; ilk slayt giriş, son slayt özet/CTA, ` +
-      `ara slaytlar ana noktalar → Görsel Spesifikasyonu (${template.visualEmphasis}) → ` +
-      `Etiketler (${tags.join(", ")} + mesaj konusu; ~5-8; konum uydurma)`;
+      `ara slaytlar ana noktalar → Etiketler (${tags.join(", ")} + mesaj konusu; ~5-8; konum uydurma)`;
 
   const ctaStyle = CTA_STYLE_BY_GOAL[goal];
   const ctaModifier = CTA_AUDIENCE_MODIFIER[plan.audience];

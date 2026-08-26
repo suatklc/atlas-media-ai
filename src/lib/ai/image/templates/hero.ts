@@ -1,5 +1,6 @@
 import type { CompositionInput } from "./types";
-import { FONT_STACK, escapeXml, layoutAtSize, buildBrandBadgeMarkup, parseCanvasDimensions } from "./shared";
+import { FONT_STACK, escapeXml, layoutAtSize, parseCanvasDimensions } from "./shared";
+import { buildBrandMark, GOLD } from "./brand";
 import { buildCoverImageMarkup, renderSvgToPng } from "../resvg-renderer";
 
 const SAFE_PADDING_X = 64;
@@ -75,10 +76,10 @@ function buildHeroOverlaySvg(
   // Comfortably readable on a phone feed while staying clearly secondary to
   // the headline (still smaller/lighter weight than the 44-54px headline).
   const ctaMarkup = cta
-    ? `<text x="${SAFE_PADDING_X}" y="${ctaBaselineY}" font-family="${FONT_STACK}" font-size="36" font-weight="700" fill="#c7d2fe">${escapeXml(cta)}</text>`
+    ? `<text x="${SAFE_PADDING_X}" y="${ctaBaselineY}" font-family="${FONT_STACK}" font-size="36" font-weight="700" fill="${GOLD}">${escapeXml(cta)}</text>`
     : "";
 
-  const brandBadgeMarkup = buildBrandBadgeMarkup(SAFE_PADDING_X, 56);
+  const brand = buildBrandMark(SAFE_PADDING_X, 56);
 
   return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     <defs>
@@ -86,17 +87,14 @@ function buildHeroOverlaySvg(
         <stop offset="0%" stop-color="#09090b" stop-opacity="0" />
         <stop offset="100%" stop-color="#09090b" stop-opacity="0.88" />
       </linearGradient>
-      <linearGradient id="brandGradient" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="#6366f1" />
-        <stop offset="100%" stop-color="#7c3aed" />
-      </linearGradient>
+      ${brand.defs}
     </defs>
 
     ${buildCoverImageMarkup(baseImage, width, height)}
 
     <rect x="0" y="${scrimTop}" width="${width}" height="${height - scrimTop}" fill="url(#scrim)" />
 
-    ${brandBadgeMarkup}
+    ${brand.markup}
 
     <text font-family="${FONT_STACK}" font-size="${fontSize}" font-weight="700" fill="#f4f4f5" letter-spacing="-0.5">${headlineTspans}</text>
 

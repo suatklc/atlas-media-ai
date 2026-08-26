@@ -96,27 +96,7 @@ export function layoutAtSize(
   return { lines, truncated: true };
 }
 
-// Temporary MVP identity only — there is no real agent/brokerage logo asset
-// in the repo yet. Deliberately a plain text/SVG badge, not a generated or
-// invented logo file; expected to be replaced by real agent branding later.
-const BRAND_LABEL = "Atlas AI";
-
-// Verbatim current badge markup, parameterized only by its anchor position —
-// every visual template is expected to reuse this identical badge per the
-// Package 5 audit's branding recommendation ("reuse it unchanged across all
-// 3 templates for consistency"). Callers must ensure their enclosing SVG
-// defines a "brandGradient" linearGradient in its own <defs>, exactly as
-// hero.ts's overlay already does.
-export function buildBrandBadgeMarkup(x: number, y: number): string {
-  const brandBadgeSize = 40;
-  const brandChipPaddingX = 10;
-  const brandChipPaddingY = 8;
-  const brandTextGap = 12;
-  const brandTextWidthEstimate = 112;
-  const brandChipWidth = brandBadgeSize + brandTextGap + brandTextWidthEstimate + brandChipPaddingX * 2;
-
-  return `<rect x="${x - brandChipPaddingX}" y="${y - brandChipPaddingY}" width="${brandChipWidth}" height="${brandBadgeSize + brandChipPaddingY * 2}" rx="10" fill="#09090b" fill-opacity="0.5" />
-    <rect x="${x}" y="${y}" width="${brandBadgeSize}" height="${brandBadgeSize}" rx="8" fill="url(#brandGradient)" />
-    <text x="${x + brandBadgeSize / 2}" y="${y + brandBadgeSize / 2 + 7}" font-family="${FONT_STACK}" font-size="20" font-weight="700" fill="#ffffff" text-anchor="middle">A</text>
-    <text x="${x + brandBadgeSize + brandTextGap}" y="${y + brandBadgeSize / 2 + 7}" font-family="${FONT_STACK}" font-size="23" font-weight="600" letter-spacing="0.3" fill="#f4f4f5">${escapeXml(BRAND_LABEL)}</text>`;
-}
+// The previous "Atlas AI" placeholder badge lived here (buildBrandBadgeMarkup).
+// Removed — Atlas is the product generating this content, not the personal/
+// agency brand that belongs on the published post. Customer-facing visuals
+// now use the real brand mark in ./brand.ts (buildBrandMark).

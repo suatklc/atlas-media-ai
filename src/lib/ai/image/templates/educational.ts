@@ -1,5 +1,6 @@
 import type { CompositionInput } from "./types";
-import { FONT_STACK, escapeXml, layoutAtSize, buildBrandBadgeMarkup, parseCanvasDimensions } from "./shared";
+import { FONT_STACK, escapeXml, layoutAtSize, parseCanvasDimensions } from "./shared";
+import { buildBrandMark, GOLD, GOLD_LIGHT, GOLD_DEEP } from "./brand";
 import { buildCoverImageMarkup, renderSvgToPng } from "../resvg-renderer";
 
 const SAFE_PADDING_X = 64;
@@ -230,7 +231,7 @@ function buildEducationalOverlaySvg(
         const titleText = escapeXml(titleLayout.lines[0] || "");
         const numberLabel = String(index + 1).padStart(2, "0");
 
-        return `<circle cx="${badgeCx}" cy="${rowCenterY}" r="${NUMBER_BADGE_SIZE / 2}" fill="url(#brandGradient)" />
+        return `<circle cx="${badgeCx}" cy="${rowCenterY}" r="${NUMBER_BADGE_SIZE / 2}" fill="url(#pointBadgeGold)" />
     <text x="${badgeCx}" y="${rowCenterY + NUMBER_BADGE_FONT_SIZE * 0.35}" font-family="${FONT_STACK}" font-size="${NUMBER_BADGE_FONT_SIZE}" font-weight="700" fill="#ffffff" text-anchor="middle">${numberLabel}</text>
     <text x="${titleX}" y="${rowCenterY + pointFontSize * 0.35}" font-family="${FONT_STACK}" font-size="${pointFontSize}" font-weight="700" fill="#ffffff">${titleText}</text>`;
       })
@@ -241,7 +242,7 @@ function buildEducationalOverlaySvg(
       .map((line, index) => `<tspan x="${SAFE_PADDING_X}" y="${ctaTop + index * CTA_LINE_HEIGHT}">${escapeXml(line)}</tspan>`)
       .join("");
     const ctaMarkup = ctaLines.length > 0
-      ? `<text font-family="${FONT_STACK}" font-size="24" font-weight="600" fill="#c7d2fe">${ctaTspans}</text>`
+      ? `<text font-family="${FONT_STACK}" font-size="24" font-weight="600" fill="${GOLD}">${ctaTspans}</text>`
       : "";
 
     // Gradient rect spans from just above the zone's top down to the
@@ -267,7 +268,7 @@ function buildEducationalOverlaySvg(
     ${ctaMarkup}`;
   }
 
-  const brandBadgeMarkup = buildBrandBadgeMarkup(SAFE_PADDING_X, badgeY);
+  const brand = buildBrandMark(SAFE_PADDING_X, badgeY);
   // Headline sits directly over the base photo (no panel above it) — a
   // dedicated top scrim keeps it deterministically readable regardless of
   // image brightness, the same principle the bottom scrim applies below.
@@ -275,21 +276,22 @@ function buildEducationalOverlaySvg(
 
   return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     <defs>
-      <linearGradient id="brandGradient" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="#6366f1" />
-        <stop offset="100%" stop-color="#7c3aed" />
+      <linearGradient id="pointBadgeGold" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="${GOLD_LIGHT}" />
+        <stop offset="100%" stop-color="${GOLD_DEEP}" />
       </linearGradient>
       <linearGradient id="topScrim" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%" stop-color="#09090b" stop-opacity="0.55" />
         <stop offset="100%" stop-color="#09090b" stop-opacity="0" />
       </linearGradient>
+      ${brand.defs}
     </defs>
 
     ${buildCoverImageMarkup(baseImage, width, height)}
 
     <rect x="0" y="0" width="${width}" height="${topScrimHeight}" fill="url(#topScrim)" />
 
-    ${brandBadgeMarkup}
+    ${brand.markup}
 
     <text font-family="${FONT_STACK}" font-size="${headlineLayout.fontSize}" font-weight="700" fill="#f4f4f5" letter-spacing="-0.5">${headlineTspans}</text>
 

@@ -13,12 +13,15 @@ import { Resvg, initWasm } from "@resvg/resvg-wasm";
 // Unlike sharp (backed by librsvg, which had SOME system font to fall back
 // to on whatever Linux box it ran on), resvg-wasm has NO OS font access at
 // all — text renders only from fonts explicitly loaded into it via
-// fontBuffers. A font must be bundled and loaded here; see ./fonts/Inter.ttf
-// (SIL Open Font License 1.1 — see ./fonts/OFL.txt), chosen as a free,
-// widely-used, close visual match to the previous "Segoe UI, Arial,
-// sans-serif" font-stack's intent. sansSerifFamily below maps that
-// stack's generic "sans-serif" fallback keyword to Inter, so none of the
-// existing SVG markup's font-family strings need to change.
+// fontBuffers. Two fonts are bundled and loaded here:
+//   - ./fonts/Inter.ttf — body/UI text (sansSerifFamily maps the existing
+//     "sans-serif" generic fallback in FONT_STACK to it, so none of the
+//     existing SVG markup's font-family strings need to change).
+//   - ./fonts/PlayfairDisplay-Bold.ttf — the brand wordmark's "elegant
+//     high-contrast serif" requirement (see templates/brand.ts); referenced
+//     directly by its own family name in that module's SVG markup only.
+// Both SIL Open Font License 1.1 — see fonts/OFL.txt and
+// fonts/PlayfairDisplay-OFL.txt.
 
 // Deliberately plain path.join string construction, never require()/
 // require.resolve()/import() for either file below: any of those is a
@@ -52,30 +55,33 @@ function resolveWasmPath(): string {
 
 // __dirname is kept as a second candidate for local `next start`/dev,
 // where the compiled module's own directory reliably sits next to its
-// bundled fonts/ folder (this module and fonts/Inter.ttf are colocated in
-// source under src/lib/ai/image/).
-function resolveFontPath(): string {
+// bundled fonts/ folder (this module and fonts/ are colocated in source
+// under src/lib/ai/image/).
+function resolveFontPath(filename: string, label: string): string {
   return findExistingPath(
     [
-      path.join(process.cwd(), "src", "lib", "ai", "image", "fonts", "Inter.ttf"),
-      path.join(__dirname, "fonts", "Inter.ttf"),
+      path.join(process.cwd(), "src", "lib", "ai", "image", "fonts", filename),
+      path.join(__dirname, "fonts", filename),
     ],
-    "Bundled Inter font",
+    label,
   );
 }
 
-// Both the WASM module init and the font read are expensive, one-time,
+// Both the WASM module init and the font reads are expensive, one-time,
 // process-lifetime operations — memoized as a single in-flight promise
 // (not just a boolean flag) so concurrent renders during a cold start
 // await the same initialization instead of racing to init twice.
-let readyPromise: Promise<Uint8Array> | null = null;
+let readyPromise: Promise<Uint8Array[]> | null = null;
 
-function ensureResvgReady(): Promise<Uint8Array> {
+function ensureResvgReady(): Promise<Uint8Array[]> {
   if (!readyPromise) {
     readyPromise = (async () => {
       const wasmBytes = await fs.promises.readFile(resolveWasmPath());
       await initWasm(wasmBytes);
-      return fs.promises.readFile(resolveFontPath());
+      return Promise.all([
+        fs.promises.readFile(resolveFontPath("Inter.ttf", "Bundled Inter font")),
+        fs.promises.readFile(resolveFontPath("PlayfairDisplay-Bold.ttf", "Bundled Playfair Display font")),
+      ]);
     })();
   }
   return readyPromise;
@@ -124,12 +130,12 @@ export function buildCoverImageMarkup(baseImage: Buffer, width: number, height: 
 // string itself already declares the exact target pixel size — no
 // additional scaling should ever be applied here.
 export async function renderSvgToPng(svg: string, width: number, height: number): Promise<Buffer> {
-  const fontBuffer = await ensureResvgReady();
+  const fontBuffers = await ensureResvgReady();
 
   const resvg = new Resvg(svg, {
     fitTo: { mode: "original" },
     font: {
-      fontBuffers: [fontBuffer],
+      fontBuffers,
       loadSystemFonts: false,
       defaultFontFamily: "Inter",
       sansSerifFamily: "Inter",
