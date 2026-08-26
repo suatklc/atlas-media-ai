@@ -52,6 +52,14 @@ export type BrandMarkVariant = "compact" | "full";
 // monochrome fallback for a scrim/background too warm or busy for gold to
 // stay legible against.
 export type BrandMarkTone = "gold" | "light";
+// "left" (default) is the original icon-then-text lockup, anchored by its
+// own left edge — used as-is by educational.ts's top placement. "right" is
+// a mirrored lockup (text-then-icon, reading order unchanged) anchored by
+// its own RIGHT edge, for a corner placement where the mark's right edge
+// must land at a fixed safe margin regardless of "SUAT KILIÇ"'s rendered
+// text width — used by hero.ts's bottom-right placement. Achieved with
+// SVG's own text-anchor="end" rather than estimating text width.
+export type BrandMarkAlign = "left" | "right";
 
 // Splice into the enclosing <svg>'s own <defs> block — the caller's
 // responsibility, same pattern hero.ts/educational.ts already use for
@@ -91,15 +99,15 @@ function resolveColors(tone: BrandMarkTone): BrandColors {
   return { icon: GOLD, name: "url(#brandGoldWordmark)", nameIsGradient: true, descriptor: GOLD };
 }
 
-// The only variant actually wired into a renderer today (hero.ts/
-// educational.ts's corner placement) — icon on the left, the two-line
-// wordmark (name + descriptor) beside it, vertically centered against the
-// icon. Deliberately no background chip/rounded-rect panel behind it
-// (unlike the old Atlas AI badge) — the existing scrim already provides
-// contrast, and a boxed badge reads as an app UI element rather than a
-// logo lockup sitting naturally on the image, which the brand's editorial/
-// premium standard calls for.
-function buildCompactMarkup(x: number, y: number, colors: BrandColors): string {
+// Left-aligned lockup — educational.ts's top placement, unchanged since
+// its introduction: icon at the given left edge, the two-line wordmark
+// (name + descriptor) beside it, vertically centered against the icon.
+// Deliberately no background chip/rounded-rect panel behind it (unlike
+// the old Atlas AI badge) — the existing scrim already provides contrast,
+// and a boxed badge reads as an app UI element rather than a logo lockup
+// sitting naturally on the image, which the brand's editorial/premium
+// standard calls for.
+function buildCompactLeftMarkup(x: number, y: number, colors: BrandColors): string {
   const iconSize = 36;
   const textX = x + iconSize + 14;
   const nameBaselineY = y + 17;
@@ -108,6 +116,31 @@ function buildCompactMarkup(x: number, y: number, colors: BrandColors): string {
   return `<g transform="translate(${x}, ${y})">${buildVillaIconMarkup(colors.icon)}</g>
     <text x="${textX}" y="${nameBaselineY}" font-family="${SERIF_FONT_FAMILY}" font-size="21" font-weight="700" letter-spacing="0.5" fill="${colors.name}">${escapeXml(BRAND_NAME)}</text>
     <text x="${textX}" y="${descriptorBaselineY}" font-family="${FONT_STACK}" font-size="11" font-weight="600" letter-spacing="0.8" fill="${colors.descriptor}">${escapeXml(BRAND_DESCRIPTOR)}</text>`;
+}
+
+// Right-aligned lockup — hero.ts's bottom-right corner placement. `x` is
+// the mark's own RIGHT edge (the icon's right edge lands exactly there);
+// the wordmark sits to the icon's left with text-anchor="end", so it
+// grows leftward from a fixed point regardless of "SUAT KILIÇ"'s actual
+// rendered width — no text-width estimation needed. Name only, no
+// descriptor: at this compact corner size a second, smaller line reads as
+// clutter rather than an understated signature, and the task's own brand
+// hierarchy for this placement is icon + name only. `y` is still the
+// icon's own top edge, same convention as the left-aligned variant, so
+// the caller's own bottom-anchored math (icon height, safe margins) stays
+// in one place (hero.ts) rather than duplicated here.
+function buildCompactRightMarkup(x: number, y: number, colors: BrandColors): string {
+  // 36, not a smaller number: buildVillaIconMarkup always draws in its
+  // fixed 36x36 local box (no scale transform applied here, unlike
+  // buildFullMarkup) — using any other value here would silently misalign
+  // the icon's actual right edge from the intended safe-margin position x.
+  const iconSize = 36;
+  const iconLeft = x - iconSize;
+  const textRightX = iconLeft - 14;
+  const nameBaselineY = y + 23;
+
+  return `<g transform="translate(${iconLeft}, ${y})">${buildVillaIconMarkup(colors.icon)}</g>
+    <text x="${textRightX}" y="${nameBaselineY}" text-anchor="end" font-family="${SERIF_FONT_FAMILY}" font-size="24" font-weight="700" letter-spacing="0.3" fill="${colors.name}">${escapeXml(BRAND_NAME)}</text>`;
 }
 
 // Larger, more spaced-out lockup (icon above the wordmark, centered) for a
@@ -138,9 +171,15 @@ export function buildBrandMark(
   y: number,
   variant: BrandMarkVariant = "compact",
   tone: BrandMarkTone = "gold",
+  align: BrandMarkAlign = "left",
 ): BrandMarkResult {
   const colors = resolveColors(tone);
   const defs = colors.nameIsGradient ? goldGradientDefsMarkup() : "";
-  const markup = variant === "full" ? buildFullMarkup(x, y, colors) : buildCompactMarkup(x, y, colors);
+  const markup =
+    variant === "full"
+      ? buildFullMarkup(x, y, colors)
+      : align === "right"
+        ? buildCompactRightMarkup(x, y, colors)
+        : buildCompactLeftMarkup(x, y, colors);
   return { defs, markup };
 }

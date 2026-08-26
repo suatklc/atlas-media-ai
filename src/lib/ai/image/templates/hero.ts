@@ -6,19 +6,26 @@ import { buildCoverImageMarkup, renderSvgToPng } from "../resvg-renderer";
 const SAFE_PADDING_X = 64;
 const FALLBACK_HEADLINE = "Gayrimenkul İçeriği";
 
-// Fixed pixel margin from the canvas bottom edge, same convention as
-// SAFE_PADDING_X's fixed horizontal margin — not proportional to height, so
-// the CTA sits a consistent distance from the edge on any canvas size.
-// 1350 - 80 = 1270, the exact previous hardcoded ctaBaselineY.
-const CTA_BOTTOM_MARGIN = 80;
-const HEADLINE_GAP = 56; // widened slightly to give the larger CTA room to breathe
+// Brand hierarchy (Handoff — brand placement + premium overlay): the mark
+// now anchors the BOTTOM-RIGHT corner, never the top — the upper portion
+// of the photo stays completely clean. Headline and CTA stack above it,
+// left-aligned, on their own rows — never sharing a row with the brand —
+// so no collision math is ever needed between them; a safe vertical gap
+// alone guarantees separation regardless of headline length or brand
+// wordmark width. This is the reusable safe-region geometry requirement:
+// every offset below is a named gap/margin, not a one-off pixel hack, and
+// every one of them is expressed relative to the canvas's own edges so a
+// future non-4:5 canvas derives the same safe layout automatically.
+const SAFE_PADDING_BOTTOM = 64;
+const BRAND_ICON_SIZE = 36; // must match brand.ts's own fixed icon box
+const BRAND_TO_CTA_GAP = 34;
+const CTA_TO_HEADLINE_GAP = 40;
 
 // Minimum scrim coverage as a fraction of canvas height, not a fixed pixel
-// value — the previous hardcoded floor (700px) was tuned specifically for
-// the 1350px-tall Instagram canvas (1350 - 700 = 650px of guaranteed
-// coverage, ~48% of the canvas). Expressing it as a fraction reproduces
-// that same ~48% coverage on any canvas height instead of over- or
-// under-covering a shorter/taller one.
+// value — a safety net for a shorter/taller canvas than the 1080x1350
+// default (on this canvas, the content-based term below always wins in
+// practice for a normal 1-3 line headline; this only binds if content
+// ever needed less room than a sane visual minimum).
 const SCRIM_MIN_COVERAGE_FRACTION = 0.48;
 
 type HeroRenderInput = CompositionInput & {
@@ -54,12 +61,21 @@ function buildHeroOverlaySvg(
   const { lines, fontSize, lineHeight } = wrapHeadline(rawHeadline, availableWidth);
   const cta = (rawCta || "").trim();
 
-  // Bottom-anchored layout: the CTA's position is constant regardless of
-  // headline length; the headline block grows upward from a fixed gap above
-  // it. This keeps the composition stable across 1-3 line headlines instead
-  // of shifting the CTA/brand row around.
-  const ctaBaselineY = height - CTA_BOTTOM_MARGIN;
-  const headlineLastBaselineY = ctaBaselineY - HEADLINE_GAP;
+  // Bottom-up safe-region stack, brand row anchored first: brand sits in
+  // its own row, its safe margins fixed to the canvas edges; CTA sits a
+  // fixed gap above the brand row's TOP (never its baseline — using the
+  // icon's own top edge as the boundary means CTA can never visually
+  // touch the icon even though the wordmark itself is shorter); headline
+  // sits a fixed gap above the CTA baseline and grows upward with line
+  // count. Every element is on its own row — headline/CTA never share a
+  // row with the brand — so no horizontal collision math is needed at
+  // all; a vertical gap alone guarantees separation regardless of
+  // headline length or brand wordmark width. Reusable across canvas
+  // sizes: every offset is a named margin/gap relative to width/height,
+  // never a value tuned for one specific render.
+  const brandIconTopY = height - SAFE_PADDING_BOTTOM - BRAND_ICON_SIZE;
+  const ctaBaselineY = brandIconTopY - BRAND_TO_CTA_GAP;
+  const headlineLastBaselineY = ctaBaselineY - CTA_TO_HEADLINE_GAP;
   const headlineFirstBaselineY = headlineLastBaselineY - (lines.length - 1) * lineHeight;
   const scrimTop = Math.max(
     height * (1 - SCRIM_MIN_COVERAGE_FRACTION),
@@ -79,13 +95,23 @@ function buildHeroOverlaySvg(
     ? `<text x="${SAFE_PADDING_X}" y="${ctaBaselineY}" font-family="${FONT_STACK}" font-size="36" font-weight="700" fill="${GOLD}">${escapeXml(cta)}</text>`
     : "";
 
-  const brand = buildBrandMark(SAFE_PADDING_X, 56);
+  // Bottom-right corner, never top — see the brand-hierarchy comment above
+  // the safe-region constants. align="right" anchors the mark's own right
+  // edge at the safe margin regardless of "SUAT KILIÇ"'s rendered width.
+  const brand = buildBrandMark(width - SAFE_PADDING_X, brandIconTopY, "compact", "gold", "right");
 
   return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     <defs>
+      <!-- Three stops, not two: a longer, more gradual fade (and a lower
+           peak opacity than the previous 0.88) reads as an atmospheric
+           photographic vignette rather than a flat dark panel dropped onto
+           the photo — the "premium editorial, not a UI block" requirement.
+           Still reaches enough contrast at the very bottom for the
+           headline/CTA/brand text sitting on top of it. -->
       <linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%" stop-color="#09090b" stop-opacity="0" />
-        <stop offset="100%" stop-color="#09090b" stop-opacity="0.88" />
+        <stop offset="55%" stop-color="#09090b" stop-opacity="0.34" />
+        <stop offset="100%" stop-color="#09090b" stop-opacity="0.74" />
       </linearGradient>
       ${brand.defs}
     </defs>
@@ -94,11 +120,11 @@ function buildHeroOverlaySvg(
 
     <rect x="0" y="${scrimTop}" width="${width}" height="${height - scrimTop}" fill="url(#scrim)" />
 
-    ${brand.markup}
-
     <text font-family="${FONT_STACK}" font-size="${fontSize}" font-weight="700" fill="#f4f4f5" letter-spacing="-0.5">${headlineTspans}</text>
 
     ${ctaMarkup}
+
+    ${brand.markup}
   </svg>`;
 }
 
