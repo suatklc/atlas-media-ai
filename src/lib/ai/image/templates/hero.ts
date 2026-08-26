@@ -17,9 +17,18 @@ const FALLBACK_HEADLINE = "Gayrimenkul İçeriği";
 // every one of them is expressed relative to the canvas's own edges so a
 // future non-4:5 canvas derives the same safe layout automatically.
 const SAFE_PADDING_BOTTOM = 64;
-const BRAND_ICON_SIZE = 36; // must match brand.ts's own fixed icon box
+// Micro-polish (Handoff): matches brand.ts's compact-right icon, which
+// grew from 36 to 48 (~33%) for mobile legibility — kept as its own
+// constant here (rather than imported) since this file's own bottom-up
+// layout math needs the icon's reserved height, and brand.ts's internal
+// sizing is otherwise an implementation detail this file shouldn't reach
+// into.
+const BRAND_ICON_SIZE = 48;
 const BRAND_TO_CTA_GAP = 34;
-const CTA_TO_HEADLINE_GAP = 40;
+// Widened from 40 for a touch more breathing room between headline and
+// CTA (Handoff micro-polish) — brand's own gap (BRAND_TO_CTA_GAP) is
+// unaffected, since the task asked specifically for headline/CTA spacing.
+const CTA_TO_HEADLINE_GAP = 50;
 
 // Minimum scrim coverage as a fraction of canvas height, not a fixed pixel
 // value — a safety net for a shorter/taller canvas than the 1080x1350
@@ -34,19 +43,132 @@ type HeroRenderInput = CompositionInput & {
 
 type HeadlineLayout = { lines: string[]; fontSize: number; lineHeight: number };
 
+// --- Balanced headline wrapping (Handoff micro-polish) ---
+//
+// shared.ts's layoutAtSize (still used everywhere else — educational.ts,
+// this file's own CTA/supporting text) wraps GREEDILY: it fills each line
+// to the character budget before moving to the next word, which for a
+// headline like "Villa Almadan Önce Kontrol Listesi" produces "Villa
+// Almadan Önce Kontrol" / "Listesi" — a long line followed by a short
+// orphan word. This block is a headline-specific alternative that instead
+// finds the word-boundary split whose lines are most EVENLY sized, kept
+// local to this file (not added to shared.ts) since nothing else in the
+// pipeline asked for this behavior and shared.ts also drives
+// educational.ts's layout, which this task does not touch.
+//
+// estimateMaxCharsPerLine mirrors shared.ts's own layoutAtSize formula
+// exactly (same heuristic average-glyph-width constant) — duplicated
+// rather than imported/exported, to keep every change in this task
+// contained to this one file. No real font-metrics engine is available in
+// resvg-wasm ahead of a full render pass, and none is needed: like the
+// original, this only has to stay proportionally correct across headline
+// lengths, not be pixel-exact — and it operates on the exact same width
+// budget as the rest of this pipeline, not a browser text-layout API.
+function estimateMaxCharsPerLine(availableWidth: number, fontSize: number): number {
+  return Math.max(6, Math.floor(availableWidth / (fontSize * 0.56)));
+}
+
+function wordGroupLength(words: string[], start: number, end: number): number {
+  let total = 0;
+  for (let k = start; k < end; k += 1) {
+    total += words[k].length + (k > start ? 1 : 0);
+  }
+  return total;
+}
+
+// Every 1..3-line grouping of `words` whose EVERY line fits within
+// maxCharsPerLine, ranked by (fewest lines, then most balanced — smallest
+// gap between the longest and shortest line). Explicit 1/2/3-line cases
+// only, not a generic N-line search: headline wrapping in this codebase
+// is already capped at 3 lines (maxLines), so there's no reason to
+// generalize further. Returns null when no such grouping exists — the
+// caller falls back to the existing greedy layoutAtSize in that case, so
+// a pathological headline still never overflows or loses a word
+// mid-line.
+function findBalancedWrap(words: string[], maxCharsPerLine: number, maxLines: number): string[] | null {
+  const wholeLength = wordGroupLength(words, 0, words.length);
+  if (wholeLength <= maxCharsPerLine) {
+    return [words.join(" ")];
+  }
+  if (maxLines < 2) {
+    return null;
+  }
+
+  let best2: { lines: string[]; spread: number } | null = null;
+  for (let i = 1; i < words.length; i += 1) {
+    const lengths = [wordGroupLength(words, 0, i), wordGroupLength(words, i, words.length)];
+    if (lengths.some((len) => len > maxCharsPerLine)) continue;
+    const spread = Math.max(...lengths) - Math.min(...lengths);
+    if (!best2 || spread < best2.spread) {
+      best2 = { lines: [words.slice(0, i).join(" "), words.slice(i).join(" ")], spread };
+    }
+  }
+  if (best2) {
+    return best2.lines;
+  }
+  if (maxLines < 3) {
+    return null;
+  }
+
+  let best3: { lines: string[]; spread: number } | null = null;
+  for (let i = 1; i < words.length - 1; i += 1) {
+    for (let j = i + 1; j < words.length; j += 1) {
+      const lengths = [wordGroupLength(words, 0, i), wordGroupLength(words, i, j), wordGroupLength(words, j, words.length)];
+      if (lengths.some((len) => len > maxCharsPerLine)) continue;
+      const spread = Math.max(...lengths) - Math.min(...lengths);
+      if (!best3 || spread < best3.spread) {
+        best3 = {
+          lines: [words.slice(0, i).join(" "), words.slice(i, j).join(" "), words.slice(j).join(" ")],
+          spread,
+        };
+      }
+    }
+  }
+  return best3 ? best3.lines : null;
+}
+
+function wrapBalancedHeadline(
+  text: string,
+  availableWidth: number,
+  fontSize: number,
+  maxLines: number,
+): { lines: string[]; truncated: boolean } {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) {
+    return { lines: [text], truncated: false };
+  }
+
+  const maxCharsPerLine = estimateMaxCharsPerLine(availableWidth, fontSize);
+  const balanced = findBalancedWrap(words, maxCharsPerLine, maxLines);
+  if (balanced) {
+    return { lines: balanced, truncated: false };
+  }
+
+  // No word-boundary grouping keeps every line within budget at maxLines
+  // lines — fall back to shared.ts's own greedy-fill + ellipsis-truncate
+  // layoutAtSize (proven, already used everywhere else in this pipeline)
+  // rather than reimplementing that same truncation behavior here.
+  return layoutAtSize(text, availableWidth, fontSize, maxLines);
+}
+
 // Two discrete size tiers, not indefinite shrinking: try the larger, more
 // readable size at up to 2 lines first; only step down to the smaller size
 // (up to 3 lines) if the headline doesn't fit there. Readability over fitting
 // every character — a very long headline still ends in a clean ellipsis.
+// Tier-selection logic itself is unchanged; only the underlying wrapping
+// (wrapBalancedHeadline vs. the old direct layoutAtSize call) changed, so
+// this never shrinks the font more aggressively than before to force two
+// lines — a balanced 2-line fit is exactly as likely to succeed as the
+// old greedy one was (often more so, since every split is considered).
 function wrapHeadline(rawHeadline: string, availableWidth: number): HeadlineLayout {
   const headline = (rawHeadline || "").trim() || FALLBACK_HEADLINE;
 
-  const large = layoutAtSize(headline, availableWidth, 54, 2);
+  const large = wrapBalancedHeadline(headline, availableWidth, 54, 2);
   if (!large.truncated) {
     return { lines: large.lines, fontSize: 54, lineHeight: 64 };
   }
 
-  const small = layoutAtSize(headline, availableWidth, 44, 3);
+  const small = wrapBalancedHeadline(headline, availableWidth, 44, 3);
   return { lines: small.lines, fontSize: 44, lineHeight: 54 };
 }
 

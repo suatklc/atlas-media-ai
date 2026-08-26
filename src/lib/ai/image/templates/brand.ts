@@ -40,6 +40,15 @@ const SERIF_FONT_FAMILY = "'Playfair Display'";
 export const GOLD = "#c9a568";
 export const GOLD_LIGHT = "#e8cf9e";
 export const GOLD_DEEP = "#a9793e";
+// Brighter gold, scoped to the compact-right (hero.ts) placement only —
+// NOT used by the shared GOLD/GOLD_LIGHT/GOLD_DEEP exports above, which
+// hero.ts's own CTA text and educational.ts's numbered point badges also
+// depend on. Micro-polish (Handoff): "too small and too faint on mobile"
+// calls for more contrast specifically on the brand mark, without
+// shifting the color of anything else that already reads fine.
+const BRIGHT_GOLD = "#dcb87a";
+const BRIGHT_GOLD_LIGHT = "#f5e3b8";
+const BRIGHT_GOLD_DEEP = "#b8894a";
 // Deep navy — not used by the compact mark itself (no background chip;
 // see the "avoid boxy/UI-looking elements" note below), but exported for
 // a future full-lockup/solid-panel context (e.g. a carousel cover slide)
@@ -71,6 +80,15 @@ function goldGradientDefsMarkup(): string {
   return `<linearGradient id="brandGoldWordmark" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="${GOLD_LIGHT}" />
       <stop offset="100%" stop-color="${GOLD_DEEP}" />
+    </linearGradient>`;
+}
+
+// Same purpose as goldGradientDefsMarkup, brighter stops, for the
+// compact-right placement only.
+function brightGoldGradientDefsMarkup(): string {
+  return `<linearGradient id="brandGoldWordmarkBright" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="${BRIGHT_GOLD_LIGHT}" />
+      <stop offset="100%" stop-color="${BRIGHT_GOLD_DEEP}" />
     </linearGradient>`;
 }
 
@@ -130,17 +148,25 @@ function buildCompactLeftMarkup(x: number, y: number, colors: BrandColors): stri
 // the caller's own bottom-anchored math (icon height, safe margins) stays
 // in one place (hero.ts) rather than duplicated here.
 function buildCompactRightMarkup(x: number, y: number, colors: BrandColors): string {
-  // 36, not a smaller number: buildVillaIconMarkup always draws in its
-  // fixed 36x36 local box (no scale transform applied here, unlike
-  // buildFullMarkup) — using any other value here would silently misalign
-  // the icon's actual right edge from the intended safe-margin position x.
-  const iconSize = 36;
+  // 48 (36 * 1.33): a scale() transform on buildVillaIconMarkup's own
+  // fixed 36x36 box, the same technique buildFullMarkup already uses —
+  // stroke-width scales proportionally along with it (no separate
+  // stroke-width tuning needed), which is exactly what "too small and too
+  // faint on mobile" calls for: both size and stroke boldness increase
+  // together. Text/gaps scaled by the same 1.33 factor for proportional
+  // balance (14->18, 23->31, font-size 24->32).
+  const iconSize = 48;
   const iconLeft = x - iconSize;
-  const textRightX = iconLeft - 14;
-  const nameBaselineY = y + 23;
+  const textRightX = iconLeft - 18;
+  const nameBaselineY = y + 31;
+  // Brighter than the shared GOLD/gradient (see BRIGHT_GOLD* above) only
+  // when tone is actually gold — the "light" (off-white) tone is already
+  // maximally high-contrast and needs no separate bright variant.
+  const iconColor = colors.nameIsGradient ? BRIGHT_GOLD : colors.icon;
+  const nameFill = colors.nameIsGradient ? "url(#brandGoldWordmarkBright)" : colors.name;
 
-  return `<g transform="translate(${iconLeft}, ${y})">${buildVillaIconMarkup(colors.icon)}</g>
-    <text x="${textRightX}" y="${nameBaselineY}" text-anchor="end" font-family="${SERIF_FONT_FAMILY}" font-size="24" font-weight="700" letter-spacing="0.3" fill="${colors.name}">${escapeXml(BRAND_NAME)}</text>`;
+  return `<g transform="translate(${iconLeft}, ${y}) scale(${iconSize / 36})">${buildVillaIconMarkup(iconColor)}</g>
+    <text x="${textRightX}" y="${nameBaselineY}" text-anchor="end" font-family="${SERIF_FONT_FAMILY}" font-size="32" font-weight="700" letter-spacing="0.3" fill="${nameFill}">${escapeXml(BRAND_NAME)}</text>`;
 }
 
 // Larger, more spaced-out lockup (icon above the wordmark, centered) for a
@@ -174,12 +200,13 @@ export function buildBrandMark(
   align: BrandMarkAlign = "left",
 ): BrandMarkResult {
   const colors = resolveColors(tone);
+
+  if (variant === "compact" && align === "right") {
+    const defs = colors.nameIsGradient ? brightGoldGradientDefsMarkup() : "";
+    return { defs, markup: buildCompactRightMarkup(x, y, colors) };
+  }
+
   const defs = colors.nameIsGradient ? goldGradientDefsMarkup() : "";
-  const markup =
-    variant === "full"
-      ? buildFullMarkup(x, y, colors)
-      : align === "right"
-        ? buildCompactRightMarkup(x, y, colors)
-        : buildCompactLeftMarkup(x, y, colors);
+  const markup = variant === "full" ? buildFullMarkup(x, y, colors) : buildCompactLeftMarkup(x, y, colors);
   return { defs, markup };
 }
