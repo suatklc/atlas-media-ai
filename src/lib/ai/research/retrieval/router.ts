@@ -1,5 +1,6 @@
 import type { NormalizedResearchResult, RetrievalOptions, RetrievalQuery } from "./types";
 import { fetchTcmbAnnouncements } from "./providers/tcmb";
+import { fetchTkgmAnnouncements } from "./providers/tkgm";
 
 const DEFAULT_MAX_RESULTS = 20;
 
@@ -7,13 +8,35 @@ const DEFAULT_MAX_RESULTS = 20;
 // publishing/router.ts, which each pick exactly ONE provider per request):
 // research legitimately wants results from every relevant adapter
 // combined, not one chosen source. Each adapter already isolates its own
-// per-feed failures (see providers/tcmb.ts); this wraps every adapter call
-// in its own catch too, so one adapter throwing outright can never fail
-// the others. Adding a future adapter (Resmî Gazete, TÜİK, TKGM, Sarıyer
-// Belediyesi — see sourceQuality.ts's TIER_1 allowlist, already prepared
-// for them) means adding one more entry to this array; nothing else here
-// changes.
-const ADAPTERS: Array<() => Promise<NormalizedResearchResult[]>> = [fetchTcmbAnnouncements];
+// per-feed/per-page failures (see providers/tcmb.ts, providers/tkgm.ts);
+// this wraps every adapter call in its own catch too, so one adapter
+// throwing outright can never fail the others.
+//
+// providers/resmiGazete.ts exists, is parsing-correct (its extraction
+// logic was verified against real, live-captured HTML), and is
+// deliberately NOT registered here: live validation found that Node's
+// native fetch() cannot complete a TLS handshake to
+// www.resmigazete.gov.tr — `UNABLE_TO_VERIFY_LEAF_SIGNATURE` — while the
+// exact same request via curl (which uses the OS's own certificate
+// store, not Node's bundled one) succeeds. TCMB and TKGM, fetched the
+// same way in the same run, both succeed, so this is specific to Resmî
+// Gazete's certificate chain, not a general environment problem. Working
+// around this would mean disabling TLS verification (a real security
+// regression for content whose entire value is coming from a verified
+// official source) or bundling a specific CA trust anchor without being
+// able to safely confirm it's the correct one in this task — see the
+// Phase 3 final report. Register fetchResmiGazeteAnnouncements here only
+// once a safe fix is confirmed.
+//
+// TÜİK (veriportali.tuik.gov.tr — a JS-rendered SPA with no discoverable
+// public JSON API within a safe, non-invasive inspection) and Sarıyer
+// Belediyesi (sariyer.bel.tr — also a full JS SPA; every path serves an
+// identical shell) were investigated and left out for a different
+// reason: no server-rendered content is reachable via fetch at all.
+//
+// Adding a real, live-validated future adapter means adding one more
+// entry to this array; nothing else here changes.
+const ADAPTERS: Array<() => Promise<NormalizedResearchResult[]>> = [fetchTcmbAnnouncements, fetchTkgmAnnouncements];
 
 function normalizeForMatch(text: string): string {
   return text.toLocaleLowerCase("tr-TR");

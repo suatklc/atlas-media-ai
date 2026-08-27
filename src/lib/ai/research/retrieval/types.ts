@@ -1,4 +1,4 @@
-import type { ResearchSource } from "../types";
+import type { ContentOpportunity, ResearchSource } from "../types";
 
 // Phase 2 (Current Content Engine — live research foundation): the raw
 // retrieval-stage contract. Deliberately NOT a new source-description
@@ -30,4 +30,29 @@ export type RetrievalQuery = {
 
 export type RetrievalOptions = {
   maxResults?: number;
+};
+
+// Phase 3 (Official Source Expansion + Topic Diversity): the minimum
+// deterministic topic-family concept needed to diversify a research
+// shortlist across genuinely different kinds of current information —
+// NOT a second ContentIntent taxonomy. ContentIntent (content/types.ts)
+// still owns final content format/purpose; TopicFamily exists only for
+// discover.ts's own ranking/diversity logic and is never read by
+// buildContentPlan or anything downstream of it.
+export type TopicFamily =
+  | "market-data"
+  | "credit-interest"
+  | "regulation-property"
+  | "local-regional"
+  | "investment-education";
+
+// discoverCurrentContentOpportunities' actual return shape: every field a
+// real ContentOpportunity already has, plus the topicFamily hint discover
+// .ts used to diversify the shortlist. A RankedContentOpportunity is
+// still a valid ContentOpportunity wherever one is expected (buildSeedMessage,
+// buildContentPlan, isContentOpportunity) — this only ADDS a field, never
+// changes or removes one, so research/types.ts and research/opportunity.ts
+// (Phase 1's stable contract) need no change at all.
+export type RankedContentOpportunity = ContentOpportunity & {
+  topicFamily: TopicFamily;
 };
