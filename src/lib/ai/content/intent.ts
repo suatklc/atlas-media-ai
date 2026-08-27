@@ -160,9 +160,45 @@ const CREATION_SIGNALS = [
   "prepare",
 ];
 
-// Fixed declaration order — the deterministic tie-break when more than one
-// subject category matches: listing, educational, comparison, market-stats,
-// announcement, in that order. First match wins.
+// Bug fix (Handoff — content-intent priority false-positive): "listing"
+// previously mixed SUBJECT nouns (villa, daire, ev, mülk, konut, arsa,
+// residence, property, properties, estate, rezidans, "konut projesi") with
+// genuine listing PURPOSE/action signals (ilan, satılık, kiralık). Since
+// listing was checked first and a bare subject noun was enough to match
+// it, any message merely mentioning a property type — regardless of its
+// actual purpose (education, market analysis, comparison) — was
+// misclassified as "listing". A property noun describes WHAT the content
+// is about, not WHY the user wants it; it must never by itself prove
+// listing intent. The fix: "listing" now contains ONLY purpose/action
+// signals — a message needs one of these, not merely a property noun, to
+// resolve as "listing". Property nouns are no longer matched against any
+// category at all here (they still reach the model as ordinary message
+// text; this file only decides structured-content-plan intent). A few
+// purpose phrasings genuinely missing from the original list are added
+// (satışa çıkar/sun, kiraya ver, portföy, tanıtım) — the same class of
+// signal as the existing ilan/satılık/kiralık, not new vocabulary outside
+// that concept.
+//
+// A second, related fix: "market-stats" previously had no vocabulary for
+// price/rate/change/development/analysis language (fiyat, faiz, değişim,
+// gelişme, analiz), so a genuinely market-analysis message fell through
+// to whatever else matched — often "educational" via the generic verb
+// "anlat" ("explain"), which describes HOW a response should be phrased
+// more than WHAT category it belongs to. "market-stats" is now checked
+// before "educational" (moved up one position; "listing" stays first,
+// "comparison" stays directly after "educational" so an explicit
+// comparison request naturally accompanied by "anlat"/"hakkında" still
+// resolves "educational" first, unchanged from before — see
+// content-intent.test.mjs's "farkları anlat" case) so a message that
+// genuinely carries market-analysis vocabulary is classified as
+// market-stats even when it also contains a generic explanatory verb.
+// "educational"'s own vocabulary also gained "dikkat" ("[nelere] dikkat
+// edilmeli", "dikkat edilmesi gereken") — a common, generic Turkish
+// advisory/checklist phrasing pattern that had no existing trigger at all.
+//
+// Declaration order is still the deterministic tie-break when more than
+// one category matches: listing, market-stats, educational, comparison,
+// announcement. First match wins.
 const SUBJECT_SIGNALS: { intent: Exclude<ContentIntent, "none">; patterns: string[] }[] = [
   {
     intent: "listing",
@@ -170,26 +206,22 @@ const SUBJECT_SIGNALS: { intent: Exclude<ContentIntent, "none">; patterns: strin
       "ilan",
       "satılık",
       "kiralık",
-      "villa",
-      "daire",
-      "ev",
-      "mülk",
-      "konut",
-      "arsa",
-      "residence",
-      "property",
-      "properties",
-      "estate",
-      "rezidans",
-      "konut projesi",
+      "portföy",
+      "satışa çıkar",
+      "satışa sun",
+      "kiraya ver",
+      "tanıtım",
     ],
   },
   {
+    intent: "market-stats",
+    patterns: ["istatistik", "piyasa", "trend", "rapor", "veri", "fiyat", "faiz", "değişim", "gelişme", "analiz"],
+  },
+  {
     intent: "educational",
-    patterns: ["eğitici", "bilgilendirici", "öğret", "anlat", "ipuçları", "hakkında"],
+    patterns: ["eğitici", "bilgilendirici", "öğret", "anlat", "ipuçları", "hakkında", "dikkat"],
   },
   { intent: "comparison", patterns: ["karşılaştır", "fark"] },
-  { intent: "market-stats", patterns: ["istatistik", "piyasa", "trend", "rapor", "veri"] },
   { intent: "announcement", patterns: ["duyuru", "haber", "yeni hizmet", "yeni ofis", "açılış"] },
 ];
 

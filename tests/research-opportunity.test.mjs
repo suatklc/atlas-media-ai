@@ -102,7 +102,16 @@ const REGIONAL_OPPORTUNITY = {
   ],
   freshness: "recent",
   audience: "villa-buyer",
-  suggestedContentType: "listing",
+  // Corrected (Handoff — content-intent priority fix): this opportunity's
+  // topic/angle describe regional demand/supply-price dynamics — market
+  // information, not an actual "list this property for sale" request. It
+  // was originally authored as suggestedContentType: "listing", which
+  // caused buildSeedMessage's wording hint to inject explicit "satılık"
+  // (for-sale) language into the seed message — a genuine listing-purpose
+  // signal, not a subject-noun false positive, so it wasn't wrong given
+  // that hint, but the hint itself didn't match this fixture's actual
+  // content. Corrected to reflect what this opportunity is actually about.
+  suggestedContentType: "market-stats",
 };
 
 const REGULATORY_OPPORTUNITY = {
