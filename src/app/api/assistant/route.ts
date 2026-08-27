@@ -13,6 +13,7 @@ import { buildCreativeBrief } from "@/lib/ai/creative/brief";
 import { buildCreativeDirective } from "@/lib/ai/creative/directive";
 import { DEFAULT_PLATFORM, isPlatformId } from "@/lib/ai/platform/config";
 import { buildPlatformDirective } from "@/lib/ai/platform/copy";
+import { buildSeedMessage, buildResearchDirective, isContentOpportunity } from "@/lib/ai/research/opportunity";
 
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_HISTORY_MESSAGES = 10;
@@ -66,7 +67,18 @@ export async function POST(request: NextRequest) {
     return jsonError("Geçersiz istek gövdesi.", 400);
   }
 
-  const { message, history, platform } = body as { message?: unknown; history?: unknown; platform?: unknown };
+  const { message, history, platform, contentOpportunity: rawContentOpportunity } = body as {
+    message?: unknown;
+    history?: unknown;
+    platform?: unknown;
+    // Optional (Research -> Content Opportunity, Phase 1): when present and
+    // valid, its rendered seed message drives content planning and the
+    // Claude call in place of `message` below (see effectiveMessage) — see
+    // isContentOpportunity for the validation this goes through.
+    // `message` itself is still required and validated the same as always,
+    // regardless of whether this is present.
+    contentOpportunity?: unknown;
+  };
 
   if (typeof message !== "string" || message.trim().length === 0) {
     return jsonError("Mesaj boş olamaz.", 400);
@@ -87,6 +99,15 @@ export async function POST(request: NextRequest) {
     return jsonError("Geçersiz platform.", 400);
   }
   const selectedPlatform = isPlatformId(platform) ? platform : DEFAULT_PLATFORM;
+
+  // Optional (Research -> Content Opportunity, Phase 1): malformed/absent
+  // input silently falls back to undefined here (never a 400) since this is
+  // an additive enrichment, not a required part of the request contract —
+  // see isContentOpportunity for what "valid" means. When undefined,
+  // effectiveMessage is byte-identical to message.trim(), so every existing
+  // caller (no contentOpportunity field at all) behaves exactly as before.
+  const contentOpportunity = isContentOpportunity(rawContentOpportunity) ? rawContentOpportunity : undefined;
+  const effectiveMessage = contentOpportunity ? buildSeedMessage(contentOpportunity) : message.trim();
 
   const cleanHistory: ChatMessage[] = [];
   if (Array.isArray(history)) {
@@ -148,18 +169,18 @@ export async function POST(request: NextRequest) {
   lastRequestAt.set(user.id, now);
   inFlight.add(user.id);
 
-  const messages: ChatMessage[] = [...budgetedHistory, { role: "user", content: message.trim() }];
+  const messages: ChatMessage[] = [...budgetedHistory, { role: "user", content: effectiveMessage }];
 
-  const matchedKnowledge = matchTopics(message.trim(), knowledgeEntries);
+  const matchedKnowledge = matchTopics(effectiveMessage, knowledgeEntries);
   const systemContext = buildSystemContext(SYSTEM_PROMPT, matchedKnowledge);
 
-  const requestAssessment = assessRequest(message.trim(), matchedKnowledge);
+  const requestAssessment = assessRequest(effectiveMessage, matchedKnowledge);
   const reasoningDirective = buildReasoningDirective(requestAssessment);
   const finalSystemContext = reasoningDirective
     ? `${systemContext}\n\n${reasoningDirective}`
     : systemContext;
 
-  const contentPlan = buildContentPlan(message.trim());
+  const contentPlan = buildContentPlan(effectiveMessage);
   const contentDirective = buildContentDirective(contentPlan);
   const combinedSystemContext = contentDirective
     ? `${finalSystemContext}\n\n${contentDirective}`
@@ -171,13 +192,23 @@ export async function POST(request: NextRequest) {
     ? `${combinedSystemContext}\n\n${creativeDirective}`
     : combinedSystemContext;
 
+  // Optional (Research -> Content Opportunity, Phase 1): factual-grounding
+  // instructions — source attribution, date preservation, no invented
+  // statistics, prediction/fact separation — appended only when a valid
+  // ContentOpportunity was supplied; a no-op ("") otherwise, same pattern
+  // as every other optional directive above.
+  const researchDirective = contentOpportunity ? buildResearchDirective(contentOpportunity) : "";
+  const finalCombinedSystemContextWithResearch = researchDirective
+    ? `${finalCombinedSystemContext}\n\n${researchDirective}`
+    : finalCombinedSystemContext;
+
   // Always appended, unlike the directives above (which can be a no-op) —
   // every request has a resolved platform (default or explicit). The most
   // specific/last instruction: it only shapes phrasing/structure, never
   // what the content plan/creative brief already decided the response
   // should contain.
   const platformDirective = buildPlatformDirective(selectedPlatform);
-  const finalSystemContextWithPlatform = `${finalCombinedSystemContext}\n\n${platformDirective}`;
+  const finalSystemContextWithPlatform = `${finalCombinedSystemContextWithResearch}\n\n${platformDirective}`;
 
   const encoder = new TextEncoder();
   let released = false;
