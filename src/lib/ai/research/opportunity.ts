@@ -111,7 +111,13 @@ export function buildSeedMessage(opportunity: ContentOpportunity): string {
 // trailing (least-critical) lines rather than slicing mid-string. Unlike
 // those two, there is no "no-op" input case — a ContentOpportunity always
 // carries at least a topic, so this always returns a non-empty directive.
-const MAX_DIRECTIVE_CHARS = 900;
+// Raised from 900 (Grounded Content Safety): the new fact/interpretation
+// framework and social-copy-voice lines below are both required, protected
+// content — the previous budget would have forced them out via the
+// safe-truncation loop on nearly every real opportunity. Still a hard cap,
+// still safely truncated by dropping whole trailing (lowest-priority) lines
+// first, never mid-string.
+const MAX_DIRECTIVE_CHARS = 2200;
 
 const TIER_LABELS: Record<SourceTier, string> = {
   "official-authority": "resmi/kamu otoritesi",
@@ -144,6 +150,18 @@ export function buildResearchDirective(opportunity: ContentOpportunity): string 
     "Olgusal bilgiyi yalnızca sağlanan kaynaklara dayandır; 'X, Y tarihinde yayımlanan kaynağa göre...' biçiminde referans ver; tarihleri koru; kaynakların içermediği hiçbir istatistik, rakam veya iddia uydurma; güncel/değişken bilgiyi zamansız kesin gerçek gibi sunma; tahmin ve öngörüleri kesin olgudan açıkça ayır.",
   );
 
+  // Fact vs. interpretation framework (Grounded Content Safety): the line
+  // above stops invented statistics/dates; this stops a subtler failure —
+  // stating an unsupported LEGAL/PROCEDURAL claim as if the source itself
+  // established it (e.g. a headline about a title-deed dispute topic being
+  // silently expanded into "a TAKBİS query definitively reveals whether a
+  // property has a lawsuit/lien", which the source never said). Both lines
+  // are required and protected by requiredLineCount below — this is the
+  // core of Part 1's grounding requirement, not an optional refinement.
+  lines.push(
+    "Kaynağın açıkça belirttiği olguları kesin olgu olarak sun; kaynağın ötesine geçen her çıkarım veya yorumu 'Bu gelişme ... gündeme getiriyor/gösteriyor' gibi açıkça yorum/çerçeveleme ifadesiyle ayır. Kaynakta yer almayan hiçbir hukuki sonuç, prosedür, hak, istatistik, eşik değeri veya mevzuat gereği uydurma; bir başlıktan ayrıntılı bir hukuki kural çıkarma; kaynak açıkça belirtmedikçe belirli bir sorgu, belge veya kontrolün bir hukuki durumu kesin olarak ortaya çıkardığını iddia etme. Dış bilgi gerektiren öneriler varsa bunları kaynaklı hukuki olgu değil, genel ve ihtiyatlı bir durum tespiti önerisi olarak ifade et. Kanıt zayıfsa boşlukları doldurmaya çalışmak yerine dar kapsamlı ve doğru bir gönderi tercih et.",
+  );
+
   const requiredLineCount = lines.length;
 
   if (opportunity.sources.length > 0) {
@@ -162,6 +180,13 @@ export function buildResearchDirective(opportunity: ContentOpportunity): string 
 
   lines.push(
     "Hukuki/mevzuatla ilgili bilgi yalnızca genel bilgilendirme niteliğindedir; bireysel hukuki tavsiye olarak sunma; kesin işlemler için ilgili resmi kurum/uzmana yönlendirilmeli.",
+  );
+
+  // Social-copy voice (Grounded Content Safety, Part 1): lowest-priority
+  // line — style guidance, not an anti-fabrication rule — so it's the
+  // first dropped under truncation if the directive ever runs long.
+  lines.push(
+    "Üslup: kurumsal rapor tonu değil, profesyonel, net, güvenilir ve tüketici dostu bir sosyal medya sesi kullan; clickbait yok, gereksiz alarm/abartı yok. Kaynakta geçmeyen bir semt/mahalle (ör. yalnızca ulusal ölçekli bir kaynak için Zekeriyaköy/Sarıyer gibi) uydurup ekleme. 'X'den güncel duyuru', 'Bu neden önemli', 'Özetle' gibi kalıp başlıkları yalnızca yapısal olarak gerçekten gerekliyse kullan, her seferinde tekrarlama. Tercih edilen akış: dikkat çekici giriş -> kısa öz açıklama -> neden önemli olduğu -> (destekleniyorsa/ihtiyatla çerçevelenmiş) 2-4 pratik değerlendirme noktası -> kaynak ataması -> kısa ve net CTA.",
   );
 
   let directive = lines.join("\n");

@@ -19,6 +19,40 @@ const EDUCATIONAL_POINTS_MARKER = /\n?\[\[EDUCATIONAL_POINTS:\s*([^\]]*?)\s*\]\]
 const MAX_EDUCATIONAL_POINTS = 5;
 const MAX_FALLBACK_POINT_LENGTH = 200;
 
+// Real Multi-Slide Carousel: same bracket-marker shape as the two above, so
+// it's found/stripped the same deterministic way. Exactly 3 pipe-delimited
+// fields (what happened / why it matters / closing line) — the carousel
+// renderer's slide 2/3/5 body copy. No fallback parsing (unlike
+// extractEducationalPoints's line-structure fallbacks below): this marker
+// is only ever requested when creative/directive.ts's outputMode==="carousel"
+// branch fires, and the caller (generate-visual/route.ts) already treats an
+// absent/malformed result as "no carousel structure available" rather than
+// guessing one from prose.
+const CAROUSEL_STRUCTURE_MARKER = /\n?\[\[CAROUSEL_STRUCTURE:\s*([^\]]*?)\s*\]\]/i;
+const MAX_CAROUSEL_FIELD_LENGTH = 400;
+
+export type CarouselStructure = {
+  whatHappened: string;
+  whyItMatters: string;
+  cta: string;
+};
+
+export function extractCarouselStructure(responseText: string): CarouselStructure | undefined {
+  const match = responseText.match(CAROUSEL_STRUCTURE_MARKER);
+  if (!match) {
+    return undefined;
+  }
+  const fields = match[1]
+    .split("|")
+    .map((field) => field.trim().slice(0, MAX_CAROUSEL_FIELD_LENGTH))
+    .filter(Boolean);
+  if (fields.length < 3) {
+    return undefined;
+  }
+  const [whatHappened, whyItMatters, cta] = fields;
+  return { whatHappened, whyItMatters, cta };
+}
+
 const EDUCATIONAL_SECTION_PATTERN =
   /^(?:nokta|madde|adım|[iİ]pucu|kontrol)\s*(\d{1,2})(?:\s*[:.)-]\s*(.*))?$/iu;
 const NUMBERED_ITEM_PATTERN = /^\d{1,2}(?:[.)]|\s+-)\s+(.+)$/u;
@@ -195,10 +229,12 @@ export function extractVisualHeadlineMarker(text: string): {
   displayText: string;
   visualHeadline?: string;
   educationalPoints?: string[];
+  carouselStructure?: CarouselStructure;
 } {
   let working = text;
   let visualHeadline: string | undefined;
   const educationalPoints = extractEducationalPoints(text);
+  const carouselStructure = extractCarouselStructure(text);
 
   const headlineMatch = working.match(VISUAL_HEADLINE_MARKER);
   if (headlineMatch && typeof headlineMatch.index === "number") {
@@ -215,8 +251,15 @@ export function extractVisualHeadlineMarker(text: string): {
     working = `${before}${after}`;
   }
 
+  const structureMatch = working.match(CAROUSEL_STRUCTURE_MARKER);
+  if (structureMatch && typeof structureMatch.index === "number") {
+    const before = working.slice(0, structureMatch.index);
+    const after = working.slice(structureMatch.index + structureMatch[0].length);
+    working = `${before}${after}`;
+  }
+
   const displayText = working.replace(/\n{3,}/g, "\n\n").trim();
-  return { displayText, visualHeadline, educationalPoints };
+  return { displayText, visualHeadline, educationalPoints, carouselStructure };
 }
 
 // A short "Label:" (or "**Label:**") prefix at the start of a line — the

@@ -164,9 +164,22 @@ for (const [label, fixture] of FIXTURES) {
     const directive = opportunity.buildResearchDirective(fixture);
     assert.equal(typeof directive, "string");
     assert.ok(directive.length > 0);
-    assert.ok(directive.length <= 900, "research directive must respect its character cap");
+    // Raised from 900 to 2200 (Grounded Content Safety) to fit the new
+    // fact/interpretation grounding rule and social-copy-voice guidance —
+    // both required, protected content.
+    assert.ok(directive.length <= 2200, "research directive must respect its character cap");
     assert.match(directive, /\[Dahili araştırma zemini/);
     assert.match(directive, /uydurma/, "must instruct against inventing facts/statistics");
+    // Gap A grounding requirements: fact vs. interpretation framing, and no
+    // invented legal consequence/procedure from a bare headline/check.
+    assert.match(directive, /kesin olgu olarak sun/, "must require facts to be stated only as source-supported");
+    assert.match(directive, /gündeme getiriyor\/gösteriyor/, "must require explicit interpretation framing");
+    assert.match(directive, /hukuki sonuç, prosedür, hak/, "must forbid inventing legal consequences/procedures");
+    assert.match(
+      directive,
+      /bir sorgu, belge veya kontrolün bir hukuki durumu kesin olarak ortaya çıkardığını iddia etme/,
+      "must forbid claiming a specific check definitively reveals a legal condition unless the source says so",
+    );
     if (fixture.riskCaveat) {
       assert.ok(directive.includes(fixture.riskCaveat), "riskCaveat must influence the directive wording");
     }
@@ -294,9 +307,18 @@ test("assistant route: research integration is additive-only — behavior is byt
   // task depends on for "ordinary flow unchanged". (message as string) is
   // a safe cast, not a behavior change: the branch above already proved
   // `message` is a validated non-empty string whenever this branch runs.
+  // Updated (Real Multi-Slide Carousel): the format suffix is no longer a
+  // hardcoded "Tek görsel üret." — it's chosen by buildFormatSuffix from
+  // the user's own explicit visualFormat field, so Carousel selection is
+  // no longer silently forced to single-image framing. This is the
+  // deliberately changed behavior this task's own spec required.
   assert.match(
     routeSource,
-    /const effectiveMessage = contentOpportunity\s*\n\s*\? `\$\{buildSeedMessage\(contentOpportunity\)\} Tek görsel üret\.`\s*\n\s*: \(message as string\)\.trim\(\);/,
+    /const effectiveMessage = contentOpportunity\s*\n\s*\? `\$\{buildSeedMessage\(contentOpportunity\)\}\$\{buildFormatSuffix\(visualFormat\)\}`\s*\n\s*: \(message as string\)\.trim\(\);/,
+  );
+  assert.match(
+    routeSource,
+    /const visualFormat = isVisualFormat\(rawVisualFormat\) \? rawVisualFormat : "single";/,
   );
 
   // The research directive is a no-op ("") when contentOpportunity is

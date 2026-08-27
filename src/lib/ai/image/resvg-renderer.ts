@@ -123,6 +123,38 @@ export function buildCoverImageMarkup(baseImage: Buffer, width: number, height: 
   return `<image x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" href="data:${mimeType};base64,${base64}" />`;
 }
 
+// Additive variant for the Real Multi-Slide Carousel: reuses ONE generated
+// base image across multiple slides with a different pan/zoom per slide
+// (rather than generating a separate AI image per slide) — the "editorial
+// crop/detail" treatment the carousel task asked for. buildCoverImageMarkup
+// above is untouched and remains the single/hero/educational cover-fit
+// behavior; this is a new, independent function, not a modification of it.
+//
+// zoom >= 1 scales the image up before cover-fitting; anchorX/anchorY
+// (0..1) pick which part of that oversized image stays visible after the
+// enclosing <svg>'s own default overflow:hidden clips it to width/height —
+// 0/0 is the top-left of the zoomed image, 0.5/0.5 its center, 1/1 its
+// bottom-right. preserveAspectRatio="xMidYMid slice" still center-crops the
+// *source photo itself* to the (zoomed) target box first, exactly as
+// buildCoverImageMarkup does at zoom 1 — this only adds the pan offset on
+// top of that same, already-proven cover-fit behavior.
+export function buildPannedCoverImageMarkup(
+  baseImage: Buffer,
+  width: number,
+  height: number,
+  zoom: number,
+  anchorX: number,
+  anchorY: number,
+): string {
+  const mimeType = detectImageMimeType(baseImage);
+  const base64 = baseImage.toString("base64");
+  const scaledWidth = width * zoom;
+  const scaledHeight = height * zoom;
+  const x = -(scaledWidth - width) * Math.min(1, Math.max(0, anchorX));
+  const y = -(scaledHeight - height) * Math.min(1, Math.max(0, anchorY));
+  return `<image x="${x}" y="${y}" width="${scaledWidth}" height="${scaledHeight}" preserveAspectRatio="xMidYMid slice" href="data:${mimeType};base64,${base64}" />`;
+}
+
 // Renders a complete SVG string (base image + overlay markup, already
 // merged by the caller — see hero.ts/educational.ts) to PNG bytes at
 // exactly the SVG's own declared width/height. fitTo: "original" is

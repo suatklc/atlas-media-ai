@@ -1,4 +1,4 @@
-import type { ContentIntent } from "../content/types";
+import type { ContentIntent, OutputMode } from "../content/types";
 import type { CreativeBrief } from "./types";
 
 const MAX_DIRECTIVE_CHARS = 1250;
@@ -16,10 +16,17 @@ const MAX_DIRECTIVE_CHARS = 1250;
 // the specific line it governs (rather than one blanket claim in the shared
 // header) is what lets "Ana başlık" avoid being read as another visual-spec
 // instruction.
-// intent is optional and used only to gate the EDUCATIONAL_POINTS
-// instruction below (Package 5C) — every other line's behavior is
-// unaffected by it.
-export function buildCreativeDirective(brief: CreativeBrief | undefined, intent?: ContentIntent): string {
+// intent is optional and used to gate the EDUCATIONAL_POINTS instruction
+// below (Package 5C); outputMode is optional and used to additionally gate
+// EDUCATIONAL_POINTS (Real Multi-Slide Carousel — any carousel needs
+// per-slide "considerations" content, not just educational-intent content)
+// and to request the new CAROUSEL_STRUCTURE marker. Every other line's
+// behavior is unaffected by either.
+export function buildCreativeDirective(
+  brief: CreativeBrief | undefined,
+  intent?: ContentIntent,
+  outputMode?: OutputMode,
+): string {
   if (!brief) {
     return "";
   }
@@ -36,15 +43,31 @@ export function buildCreativeDirective(brief: CreativeBrief | undefined, intent?
 
   // Educational metadata is one indivisible contract: both required marker
   // instructions live in the same array item and are protected together by
-  // the truncation floor below. Other intents retain the headline-only
-  // contract used by their existing renderers.
-  if (intent === "educational") {
+  // the truncation floor below. Other intents/output modes retain the
+  // headline-only contract used by their existing renderers — UNLESS the
+  // resolved output is a carousel, which needs per-slide point content
+  // (the visual renderer's "considerations" slide) regardless of intent.
+  const needsPoints = intent === "educational" || outputMode === "carousel";
+  if (needsPoints) {
     lines.push(
       `Etiketler'den sonra bu sırayla iki ayrı meta satırını da zorunlu üret:\n[[VISUAL_HEADLINE: 4-10 kelime]]\n[[EDUCATIONAL_POINTS: nokta1 | nokta2 | nokta3 | nokta4 | nokta5]]\nMeta içinde tırnak/markdown/giriş yok; noktalar içerikten en fazla 5 kısa değer; hashtag/CTA/numara yok; nokta içinde "|" yok.`,
     );
   } else {
     lines.push(
       `Etiketler'den sonra meta satırı: [[VISUAL_HEADLINE: 4-10 kelime]]; tırnak/markdown/giriş ifadesi yok.`,
+    );
+  }
+
+  // Real Multi-Slide Carousel: a third, separate meta line carrying the
+  // 3-part slide narrative (what happened / why it matters / closing line)
+  // that EDUCATIONAL_POINTS alone can't express — those are 1-5 short
+  // takeaways for one "considerations" slide, not the cover/body/closing
+  // structure the carousel renderer needs. Requested only when the
+  // resolved output is actually a carousel; never affects the single-image
+  // path for any intent.
+  if (outputMode === "carousel") {
+    lines.push(
+      `Ayrıca bu üçüncü meta satırını da zorunlu üret:\n[[CAROUSEL_STRUCTURE: ne oldu | neden önemli | kapanış cümlesi]]\nÜç kısa değer tek satırda "|" ile ayrılmış olsun; "ne oldu" yalnızca kaynağa dayalı somut gelişmeyi 1-2 cümlede özetlesin; "neden önemli" alıcı/yatırımcı açısından pratik ilgiyi 1-2 cümlede açıklasın; "kapanış cümlesi" kısa ve iddiasız bir kapanış/özet cümlesi olsun; hiçbiri kesin hukuki tavsiye niteliğinde iddia içermesin; tırnak/markdown yok, değer içinde "|" yok.`,
     );
   }
 
@@ -67,10 +90,14 @@ export function buildCreativeDirective(brief: CreativeBrief | undefined, intent?
     directive = lines.join("\n");
   }
   if (directive.length > MAX_DIRECTIVE_CHARS) {
-    if (intent === "educational") {
-      // Defensive compact fallback for a future oversized brief: preserve
-      // the required pair intact rather than slicing either marker syntax.
-      directive = [lines[0], `Yapı sınırı: ${e.structureConstraint}`, lines[requiredLineCount - 1]].join("\n");
+    if (needsPoints) {
+      // Defensive compact fallback for a future oversized brief: keep the
+      // header plus every required line (Yapı sınırı, the marker line, and
+      // the CAROUSEL_STRUCTURE line when present) intact rather than
+      // slicing any marker syntax mid-string. lines[3..requiredLineCount-1]
+      // is exactly that required range regardless of which marker set was
+      // requested above.
+      directive = [lines[0], ...lines.slice(3, requiredLineCount)].join("\n");
     } else {
       directive = directive.slice(0, MAX_DIRECTIVE_CHARS);
     }

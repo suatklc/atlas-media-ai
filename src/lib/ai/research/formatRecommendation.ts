@@ -36,25 +36,34 @@ export function recommendVisualFormat(opportunity: ContentOpportunity): Recommen
     : "single";
 }
 
-// The user's own, always-overridable format choice (see the dashboard
-// component) is threaded through as the ContentOpportunity's own
-// suggestedContentType — no new backend field, no new ContentPlan path.
-// "carousel" forces the educational/checklist framing (-> the existing
-// EDUCATIONAL_CAROUSEL_01 template, dispatched to the existing educational
-// renderer by templates/select.ts, unmodified); "single" leaves the
-// opportunity's own research-stage classification exactly as-is — a
-// market-stats/announcement/listing opportunity keeps its own single-
-// insight framing, and an educational opportunity the user overrides to
-// "single" anyway is deliberately NOT force-reclassified to something
-// else (e.g. market-stats) — that would risk misrepresenting genuinely
-// regulatory/informational content as a market statistic merely to fit a
-// visual-format choice, which is a worse error than leaving it educational.
-export function buildOpportunityForFormat(
-  opportunity: ContentOpportunity,
-  format: RecommendedVisualFormat,
-): ContentOpportunity {
-  if (format === "carousel") {
-    return { ...opportunity, suggestedContentType: "educational" };
-  }
-  return opportunity;
+// --- Format <-> ContentIntent decoupling (Grounded Content Safety + Real
+// Multi-Slide Carousel) ---
+//
+// Replaces the previous buildOpportunityForFormat, which forced
+// suggestedContentType to "educational" whenever the user picked Carousel
+// — a hack that worked only because carousel visual generation didn't
+// really exist yet (every ContentOpportunity request was silently forced
+// to outputMode "single" regardless of format choice; see the old fixed
+// "Tek görsel üret." suffix this replaces). Now that generate-visual/
+// route.ts can actually render a carousel, ContentIntent and visual output
+// format are genuinely separate concerns: the opportunity's own
+// suggestedContentType (its real research-stage classification) is never
+// rewritten, and the user's Tek Görsel/Carousel choice instead travels as
+// its own explicit `visualFormat` request field, resolved to outputMode
+// via the exact same existing content/format.ts trigger-phrase mechanism
+// every ordinary chat message already uses — no new ContentPlan path, no
+// new outputMode authority.
+export function isVisualFormat(value: unknown): value is RecommendedVisualFormat {
+  return value === "single" || value === "carousel";
+}
+
+// content/format.ts's resolveOutputSpecification recognizes both phrases
+// today (SINGLE_PATTERNS/CAROUSEL_PATTERNS + COUNT_PATTERNS) — this is not
+// a new parsing path, only a deliberate choice of which existing trigger
+// phrase to append based on the user's explicit format field. "5 slaytlık"
+// pins slideCount to exactly 5 (checked before the bare "carousel" word —
+// see resolveOutputSpecification's own explicitCount-first precedence),
+// matching the carousel renderer's fixed 5-slide structure.
+export function buildFormatSuffix(format: RecommendedVisualFormat): string {
+  return format === "carousel" ? " 5 slaytlık carousel oluştur." : " Tek görsel üret.";
 }

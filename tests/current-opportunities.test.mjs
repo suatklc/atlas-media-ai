@@ -52,6 +52,16 @@ const plan = loadTypeScriptModule("src/lib/ai/content/plan.ts", (s) => ({
 })[s] ?? {});
 const opportunity = loadTypeScriptModule("src/lib/ai/research/opportunity.ts");
 
+// format.ts/opportunity.ts are loaded via loadTypeScriptModule's own vm
+// sandbox (a separate realm) — its return values have a different
+// Object.prototype than this file's, so assert.deepEqual would otherwise
+// fail with a spurious "not reference-equal" error despite identical
+// shape. Same fix already used by output-mode.test.mjs/educational-
+// metadata.test.mjs's own plain() helper.
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 function makeResult(overrides) {
   return {
     title: "Örnek Başlık",
@@ -234,20 +244,35 @@ test("format recommendation: listing/announcement/no-type default to Single Imag
 });
 
 // ============================================================
-// User format override is preserved
+// Format <-> ContentIntent decoupling (Grounded Content Safety + Real
+// Multi-Slide Carousel): buildOpportunityForFormat is gone — the format
+// choice must never rewrite suggestedContentType. isVisualFormat/
+// buildFormatSuffix are the new seam both routes use instead.
 // ============================================================
 
-test("format override: choosing Carousel forces suggestedContentType to educational regardless of the natural classification", () => {
-  const opportunity = { topic: "x", suggestedContentType: "market-stats" };
-  const overridden = formatRecommendation.buildOpportunityForFormat(opportunity, "carousel");
-  assert.equal(overridden.suggestedContentType, "educational");
+test("buildOpportunityForFormat no longer exists — format never rewrites ContentIntent", () => {
+  assert.equal(formatRecommendation.buildOpportunityForFormat, undefined);
 });
 
-test("format override: choosing Tek Görsel leaves the opportunity's natural suggestedContentType untouched", () => {
-  const opportunity = { topic: "x", suggestedContentType: "educational" };
-  const overridden = formatRecommendation.buildOpportunityForFormat(opportunity, "single");
-  assert.equal(overridden.suggestedContentType, "educational");
-  assert.deepEqual(Array.from(Object.keys(overridden)).sort(), Array.from(Object.keys(opportunity)).sort());
+test("isVisualFormat accepts only 'single'/'carousel' and rejects everything else", () => {
+  assert.equal(formatRecommendation.isVisualFormat("single"), true);
+  assert.equal(formatRecommendation.isVisualFormat("carousel"), true);
+  assert.equal(formatRecommendation.isVisualFormat("educational"), false);
+  assert.equal(formatRecommendation.isVisualFormat(undefined), false);
+  assert.equal(formatRecommendation.isVisualFormat(null), false);
+});
+
+test("buildFormatSuffix: single picks the existing Tek Görsel trigger phrase, carousel pins exactly 5 slides", () => {
+  assert.equal(formatRecommendation.buildFormatSuffix("single"), " Tek görsel üret.");
+  assert.equal(formatRecommendation.buildFormatSuffix("carousel"), " 5 slaytlık carousel oluştur.");
+  assert.deepEqual(
+    plain(format.resolveOutputSpecification(formatRecommendation.buildFormatSuffix("single"), "market-stats")),
+    { outputMode: "single", slideCount: 1 },
+  );
+  assert.deepEqual(
+    plain(format.resolveOutputSpecification(formatRecommendation.buildFormatSuffix("carousel"), "market-stats")),
+    { outputMode: "carousel", slideCount: 5 },
+  );
 });
 
 // ============================================================
@@ -255,21 +280,27 @@ test("format override: choosing Tek Görsel leaves the opportunity's natural sug
 // research/generation actions never publish.
 // ============================================================
 
-test("assistant route: message becomes optional exactly when a valid ContentOpportunity is present, and forces single-image framing", () => {
+test("assistant route: message becomes optional exactly when a valid ContentOpportunity is present, and the user's visualFormat picks the suffix", () => {
   const routeSource = fs.readFileSync(path.join(projectRoot, "src/app/api/assistant/route.ts"), "utf8");
   assert.match(routeSource, /if \(!contentOpportunity\) \{\s*\n\s*if \(typeof message !== "string"/);
-  assert.match(routeSource, /Tek görsel üret\./);
+  assert.match(routeSource, /const visualFormat = isVisualFormat\(rawVisualFormat\) \? rawVisualFormat : "single";/);
+  assert.match(
+    routeSource,
+    /const effectiveMessage = contentOpportunity\s*\n\s*\? `\$\{buildSeedMessage\(contentOpportunity\)\}\$\{buildFormatSuffix\(visualFormat\)\}`/,
+  );
   assert.match(
     routeSource,
     /const contentPlan = buildContentPlan\(effectiveMessage, contentOpportunity\?\.suggestedContentType\);/,
   );
 });
 
-test("generate-visual route: the same ContentOpportunity seam exists, and the pre-existing carousel-visual 422 guard is untouched", () => {
+test("generate-visual route: the same ContentOpportunity seam exists, and carousel is now a real branch — not the old 422 rejection", () => {
   const routeSource = fs.readFileSync(path.join(projectRoot, "src/app/api/generate-visual/route.ts"), "utf8");
   assert.match(routeSource, /isContentOpportunity\(rawContentOpportunity\)/);
-  assert.match(routeSource, /Tek görsel üret\./);
-  assert.match(routeSource, /contentPlan\.outputMode === "carousel"/);
+  assert.match(routeSource, /const visualFormat = isVisualFormat\(rawVisualFormat\) \? rawVisualFormat : "single";/);
+  assert.match(routeSource, /if \(contentPlan\.outputMode === "carousel"\) \{/);
+  assert.match(routeSource, /renderCarousel\(/);
+  assert.doesNotMatch(routeSource, /carousel görsel üretimi henüz desteklenmiyor/);
   assert.match(
     routeSource,
     /const contentPlan = buildContentPlan\(effectiveMessage, contentOpportunity\?\.suggestedContentType\);/,
@@ -301,13 +332,15 @@ test("normal manual Atlas content generation (no ContentOpportunity) still requi
 });
 
 // ============================================================
-// Functional confirmation (not just source-contract): the "Tek görsel
-// üret." suffix + intentOverride combination the routes now build
-// resolves outputMode "single" AND the overridden intent, for real,
-// through the actual buildContentPlan chain.
+// Functional confirmation (not just source-contract): buildFormatSuffix +
+// intentOverride resolve the user's REAL explicit choice — Carousel now
+// genuinely resolves outputMode "carousel" (generate-visual/route.ts can
+// render it for real), Tek Görsel resolves "single" — and the
+// opportunity's own suggestedContentType is NEVER rewritten by the format
+// choice, through the actual buildContentPlan chain.
 // ============================================================
 
-test("a Carousel-selected educational opportunity resolves outputMode 'single' (avoiding the carousel-visual 422) while keeping intent 'educational'", () => {
+test("a Carousel-selected educational opportunity resolves outputMode 'carousel' with exactly 5 slides, keeping intent 'educational' and NOT rewriting suggestedContentType", () => {
   const tkgmOpportunity = {
     topic: "Davalı Olduğu Halde Tapu Kütüğüne Tescil Edilen Ve Takbis'e Aktarılan Taşınmazlar Hakkında",
     angle: "Bu gelişmenin gayrimenkul alıcı ve yatırımcıları için pratik anlamı",
@@ -326,13 +359,33 @@ test("a Carousel-selected educational opportunity resolves outputMode 'single' (
     suggestedContentType: "educational",
   };
 
-  const overridden = formatRecommendation.buildOpportunityForFormat(tkgmOpportunity, "carousel");
-  const seed = `${opportunity.buildSeedMessage(overridden)} Tek görsel üret.`;
-  const contentPlan = plan.buildContentPlan(seed, overridden.suggestedContentType);
+  // The opportunity itself is never mutated — no buildOpportunityForFormat
+  // call at all, exactly what both routes now do.
+  const seed = `${opportunity.buildSeedMessage(tkgmOpportunity)}${formatRecommendation.buildFormatSuffix("carousel")}`;
+  const contentPlan = plan.buildContentPlan(seed, tkgmOpportunity.suggestedContentType);
 
   assert.equal(contentPlan.intent, "educational");
-  assert.equal(contentPlan.outputMode, "single", "must resolve single, not carousel, or generate-visual's 422 fires");
+  assert.equal(contentPlan.outputMode, "carousel", "the user's explicit Carousel choice must be authoritative");
+  assert.equal(contentPlan.slideCount, 5, "the carousel renderer's fixed 5-slide structure");
   assert.equal(contentPlan.template?.id, "EDUCATIONAL_CAROUSEL_01");
+  assert.equal(tkgmOpportunity.suggestedContentType, "educational", "the source object itself is untouched");
+});
+
+test("a Carousel-selected market-stats opportunity resolves outputMode 'carousel' while keeping its NATURAL market-stats intent (never forced to educational)", () => {
+  const tcmbOpportunity = {
+    topic: "Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)",
+    angle: "Bu gelişmenin gayrimenkul alıcı ve yatırımcıları için pratik anlamı",
+    whyNow: "Türkiye Cumhuriyet Merkez Bankası (TCMB) tarafından yayımlandı",
+    keyFacts: [],
+    sources: [],
+    freshness: "recent",
+    suggestedContentType: "market-stats",
+  };
+  const seed = `${opportunity.buildSeedMessage(tcmbOpportunity)}${formatRecommendation.buildFormatSuffix("carousel")}`;
+  const contentPlan = plan.buildContentPlan(seed, tcmbOpportunity.suggestedContentType);
+
+  assert.equal(contentPlan.intent, "market-stats", "Carousel selection must never force educational intent");
+  assert.equal(contentPlan.outputMode, "carousel");
 });
 
 test("a Tek Görsel-selected market-stats opportunity resolves outputMode 'single' and keeps its natural market-stats intent", () => {
@@ -354,9 +407,8 @@ test("a Tek Görsel-selected market-stats opportunity resolves outputMode 'singl
     suggestedContentType: "market-stats",
   };
 
-  const kept = formatRecommendation.buildOpportunityForFormat(tcmbOpportunity, "single");
-  const seed = `${opportunity.buildSeedMessage(kept)} Tek görsel üret.`;
-  const contentPlan = plan.buildContentPlan(seed, kept.suggestedContentType);
+  const seed = `${opportunity.buildSeedMessage(tcmbOpportunity)}${formatRecommendation.buildFormatSuffix("single")}`;
+  const contentPlan = plan.buildContentPlan(seed, tcmbOpportunity.suggestedContentType);
 
   assert.equal(contentPlan.intent, "market-stats");
   assert.equal(contentPlan.outputMode, "single");

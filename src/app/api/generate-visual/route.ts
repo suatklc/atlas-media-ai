@@ -14,10 +14,13 @@ import {
 import { PLATFORM_CONFIGS, DEFAULT_PLATFORM, isPlatformId } from "@/lib/ai/platform/config";
 import { composeInstagramPost } from "@/lib/ai/image/compose";
 import { selectVisualTemplateId } from "@/lib/ai/image/templates/select";
+import { renderCarousel, type CarouselSlideText } from "@/lib/ai/image/templates/carousel";
 import { uploadGeneratedImage } from "@/lib/supabase/storage";
 import { buildPublishableCaption } from "@/lib/ai/creative/caption";
 import { resolveEducationalPoints } from "@/lib/ai/content/educational-points";
+import { resolveCarouselStructure } from "@/lib/ai/content/carousel-structure";
 import { buildSeedMessage, isContentOpportunity } from "@/lib/ai/research/opportunity";
+import { isVisualFormat, buildFormatSuffix } from "@/lib/ai/research/formatRecommendation";
 
 const MAX_MESSAGE_LENGTH = 4000;
 // Kept aligned with AIAssistantPanel.tsx's own extractor bound — a full
@@ -37,6 +40,30 @@ const LISTING_SAFETY_PROMPT_SUFFIX =
   " Bu görsel belirli bir mülkün belgesel niteliğinde fotoğrafı değildir; genel/kavramsal bir emlak pazarlama görselidir ve belirli bir mülkü temsil ettiği izlenimi vermemelidir.";
 
 const LISTING_DISCLAIMER = "Temsili görseldir; gerçek mülkü göstermez.";
+
+// Real Multi-Slide Carousel: slide 5's fixed micro-CTA — deterministic
+// rather than model-generated, so the closing slide's final line is never
+// at risk of an invented legal/procedural claim (see the grounding rules
+// in research/opportunity.ts). Shown on every carousel regardless of
+// intent; unrelated to ctaForIntent below, which only ever gates the
+// SINGLE-image hero/educational on-image CTA badge and is unchanged.
+const CAROUSEL_FIXED_CTA = "Detaylar İçin Mesaj Bırakın";
+const MAX_CAROUSEL_CONSIDERATIONS = 4;
+
+// Presentational-only: "publisher · 12 Ağustos 2026" subtle attribution
+// shown on the carousel's "what happened" slide (Part 2's own "publisher/
+// date subtly shown" requirement). Falls back to omitting the date rather
+// than showing an invalid one; returns undefined (no line at all) if the
+// opportunity carried no source.
+function buildCarouselSourceLabel(source: { publisher: string; publishedAt: string } | undefined): string | undefined {
+  if (!source) return undefined;
+  const date = new Date(source.publishedAt);
+  if (Number.isNaN(date.getTime())) {
+    return source.publisher;
+  }
+  const formatted = date.toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" });
+  return `${source.publisher} · ${formatted}`;
+}
 
 // Server-side-only benchmark override: an env var naming a key in the
 // allowlisted IMAGE_MODEL_CONFIGS (media/config.ts) — never an arbitrary
@@ -174,11 +201,28 @@ export async function POST(request: NextRequest) {
     return jsonError("Geçersiz istek gövdesi.", 400);
   }
 
-  const { message, headline, content, educationalPoints, assistantResponseText, platform, contentOpportunity: rawContentOpportunity } = body as {
+  const {
+    message,
+    headline,
+    content,
+    educationalPoints,
+    carouselStructure: rawCarouselStructure,
+    assistantResponseText,
+    platform,
+    contentOpportunity: rawContentOpportunity,
+    visualFormat: rawVisualFormat,
+  } = body as {
     message?: unknown;
     headline?: unknown;
     content?: unknown;
     educationalPoints?: unknown;
+    // Optional (Real Multi-Slide Carousel): the client's own already-
+    // extracted {whatHappened, whyItMatters, cta} from the completed
+    // assistant response's [[CAROUSEL_STRUCTURE: ...]] marker — see
+    // resolveCarouselStructure, which defensively re-derives it from
+    // assistantResponseText if this is absent/malformed. Unused for
+    // outputMode "single".
+    carouselStructure?: unknown;
     assistantResponseText?: unknown;
     platform?: unknown;
     // Optional (Handoff — Current Content Opportunities UI): when present
@@ -187,6 +231,10 @@ export async function POST(request: NextRequest) {
     // the intentOverride passed to buildContentPlan below. `message` is
     // required only when this is absent/invalid.
     contentOpportunity?: unknown;
+    // Optional (Real Multi-Slide Carousel): mirrors assistant/route.ts's
+    // own visualFormat field exactly — must be sent identically for the
+    // same opportunity so both requests resolve the same outputMode.
+    visualFormat?: unknown;
   };
 
   const contentOpportunity = isContentOpportunity(rawContentOpportunity) ? rawContentOpportunity : undefined;
@@ -213,14 +261,12 @@ export async function POST(request: NextRequest) {
   const platformConfig = PLATFORM_CONFIGS[isPlatformId(platform) ? platform : DEFAULT_PLATFORM];
 
   // effectiveMessage: byte-identical to the prior message.trim() whenever
-  // contentOpportunity is absent (the cast is safe — the guard above
-  // already validated `message` as a non-empty string in that branch).
-  // When present, the fixed Turkish suffix forces single-image framing —
-  // see assistant/route.ts's own identical seam for why (carousel visual
-  // generation is not supported below regardless — see the outputMode
-  // check that follows).
+  // contentOpportunity is absent. When present, mirrors assistant/route.ts's
+  // own visualFormat seam exactly — see that route for why ContentIntent
+  // and visual output format are resolved independently here.
+  const visualFormat = isVisualFormat(rawVisualFormat) ? rawVisualFormat : "single";
   const effectiveMessage = contentOpportunity
-    ? `${buildSeedMessage(contentOpportunity)} Tek görsel üret.`
+    ? `${buildSeedMessage(contentOpportunity)}${buildFormatSuffix(visualFormat)}`
     : (message as string).trim();
 
   const safeHeadline = sanitizeHeadline(headline);
@@ -231,13 +277,6 @@ export async function POST(request: NextRequest) {
   // as it did for the Claude/content path. Absent a ContentOpportunity,
   // this is `undefined` and behavior is entirely unchanged.
   const contentPlan = buildContentPlan(effectiveMessage, contentOpportunity?.suggestedContentType);
-
-  if (contentPlan.outputMode === "carousel") {
-    return jsonError(
-      "Carousel metni oluşturulabilir, ancak carousel görsel üretimi henüz desteklenmiyor.",
-      422,
-    );
-  }
 
   const creativeBrief = buildCreativeBrief(contentPlan);
   const safeEducationalPoints = resolveEducationalPoints(
@@ -280,6 +319,97 @@ export async function POST(request: NextRequest) {
     console.error("Base image upload error:", error);
     logVisualGenerationDiagnostic("base image upload (Supabase storage)", error);
     return jsonError("Görsel kaydedilemedi. Lütfen tekrar deneyin.", 502);
+  }
+
+  // Real Multi-Slide Carousel: a genuine branch, not the previous 422
+  // rejection — the base image above is generated exactly once, the same
+  // way the single-image path always has; only what happens to it below
+  // differs. Returns before reaching any single-image-only step (compose/
+  // select template/single upload/single persist/single response).
+  if (contentPlan.outputMode === "carousel") {
+    const slideCarouselStructure = resolveCarouselStructure(
+      contentPlan.outputMode,
+      rawCarouselStructure,
+      assistantResponseText,
+    );
+    if (!slideCarouselStructure) {
+      return jsonError(
+        "Carousel için gerekli içerik yapısı oluşturulamadı. Lütfen içeriği tekrar oluşturun.",
+        422,
+      );
+    }
+
+    const slideText: CarouselSlideText = {
+      cover: safeHeadline,
+      whatHappened: slideCarouselStructure.whatHappened,
+      whyItMatters: slideCarouselStructure.whyItMatters,
+      considerations: safeEducationalPoints.slice(0, MAX_CAROUSEL_CONSIDERATIONS),
+      closingLine: slideCarouselStructure.cta,
+      fixedCta: CAROUSEL_FIXED_CTA,
+      sourceLabel: buildCarouselSourceLabel(contentOpportunity?.sources[0]),
+    };
+
+    let slideBuffers: Buffer[];
+    try {
+      slideBuffers = await renderCarousel(generated.bytes, platformConfig.dimensions, slideText);
+    } catch (error) {
+      console.error("Carousel composition error:", error);
+      logVisualGenerationDiagnostic("carousel composition (resvg)", error);
+      return jsonError("Carousel görselleri oluşturulamadı. Lütfen tekrar deneyin.", 502);
+    }
+
+    const uploadedSlides: { slide: number; imageUrl: string }[] = [];
+    try {
+      for (let index = 0; index < slideBuffers.length; index += 1) {
+        const uploaded = await uploadGeneratedImage(supabase, user.id, slideBuffers[index], "image/png");
+        uploadedSlides.push({ slide: index + 1, imageUrl: uploaded.url });
+      }
+    } catch (error) {
+      console.error("Carousel slide upload error:", error);
+      logVisualGenerationDiagnostic("carousel slide upload (Supabase storage)", error);
+      return jsonError("Görseller kaydedilemedi. Lütfen tekrar deneyin.", 502);
+    }
+
+    // Persistence limitation (reported, not silently worked around): the
+    // generated_posts schema (0002_generated_posts.sql migration) has
+    // exactly one final_image_url/base_image_url column — one row was
+    // never designed to hold 5 images, and this task explicitly excludes a
+    // schema migration. final_image_url stores the cover slide (a real,
+    // representative thumbnail for the existing history UI); the full
+    // ordered 5-slide list lives in the existing schemaless metadata jsonb
+    // column instead — the smallest safe seam, not a redesign.
+    try {
+      const { error: insertError } = await supabase.from("generated_posts").insert({
+        user_id: user.id,
+        content: sanitizeContent(content) ?? effectiveMessage,
+        visual_headline: safeHeadline,
+        final_image_url: uploadedSlides[0].imageUrl,
+        base_image_url: uploadedBase.url,
+        metadata: {
+          outputMode: "carousel",
+          carouselImages: uploadedSlides,
+          isConceptual: isListing,
+          disclaimer: isListing ? LISTING_DISCLAIMER : null,
+          platform: platformConfig.id,
+          aspectRatio: platformConfig.aspectRatio,
+          dimensions: platformConfig.dimensions,
+        },
+      });
+      if (insertError) {
+        console.error("Generation history insert error:", insertError);
+      }
+    } catch (error) {
+      console.error("Generation history insert error:", error);
+    }
+
+    return Response.json({
+      outputMode: "carousel",
+      images: uploadedSlides,
+      baseImageUrl: uploadedBase.url,
+      isConceptual: isListing,
+      disclaimer: isListing ? LISTING_DISCLAIMER : null,
+      format: { aspectRatio: platformConfig.aspectRatio, dimensions: platformConfig.dimensions },
+    });
   }
 
   // creativeBrief being non-null already implies contentPlan.template is
@@ -350,6 +480,7 @@ export async function POST(request: NextRequest) {
   }
 
   return Response.json({
+    outputMode: "single",
     imageUrl: uploadedFinal.url,
     baseImageUrl: uploadedBase.url,
     isConceptual: isListing,

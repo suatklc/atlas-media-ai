@@ -14,6 +14,7 @@ import { buildCreativeDirective } from "@/lib/ai/creative/directive";
 import { DEFAULT_PLATFORM, isPlatformId } from "@/lib/ai/platform/config";
 import { buildPlatformDirective } from "@/lib/ai/platform/copy";
 import { buildSeedMessage, buildResearchDirective, isContentOpportunity } from "@/lib/ai/research/opportunity";
+import { isVisualFormat, buildFormatSuffix } from "@/lib/ai/research/formatRecommendation";
 
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_HISTORY_MESSAGES = 10;
@@ -67,7 +68,7 @@ export async function POST(request: NextRequest) {
     return jsonError("Geçersiz istek gövdesi.", 400);
   }
 
-  const { message, history, platform, contentOpportunity: rawContentOpportunity } = body as {
+  const { message, history, platform, contentOpportunity: rawContentOpportunity, visualFormat: rawVisualFormat } = body as {
     message?: unknown;
     history?: unknown;
     platform?: unknown;
@@ -78,6 +79,13 @@ export async function POST(request: NextRequest) {
     // is required and validated exactly as before ONLY when this is
     // absent/invalid — see below.
     contentOpportunity?: unknown;
+    // Optional (Real Multi-Slide Carousel): the user's explicit Tek
+    // Görsel/Carousel choice for a ContentOpportunity-driven request —
+    // see buildFormatSuffix. Ignored for an ordinary chat message (no
+    // contentOpportunity), which controls format via its own message text
+    // exactly as before. Missing/invalid safely defaults to "single" —
+    // today's only prior behavior for every existing caller.
+    visualFormat?: unknown;
   };
 
   // Optional (Research -> Content Opportunity): malformed/absent input
@@ -117,19 +125,18 @@ export async function POST(request: NextRequest) {
   // effectiveMessage: byte-identical to the prior message.trim() whenever
   // contentOpportunity is absent (the cast is safe — the guard above
   // already proved `message` is a validated non-empty string in that
-  // branch). When present, the EXISTING carousel-visual-generation gap
-  // (generate-visual/route.ts still rejects outputMode "carousel" — see
-  // that file's own unchanged 422) means every ContentOpportunity-driven
-  // request forces single-image framing via this fixed Turkish suffix, so
-  // the workflow this feeds (Current Content Opportunities UI) actually
-  // completes end to end regardless of which visual format the user picks
-  // in that UI — that choice instead changes suggestedContentType itself
-  // (the frontend sends it already adjusted), not this suffix. This is the
-  // smallest integration change for a real, pre-existing limitation, not a
-  // new one introduced here; content/format.ts's own SINGLE_PATTERNS is
-  // what recognizes this exact phrase.
+  // branch). When present, the user's own explicit visualFormat choice
+  // (Real Multi-Slide Carousel) picks which existing content/format.ts
+  // trigger phrase to append — "single" behaves exactly as the old fixed
+  // "Tek görsel üret." suffix always did; "carousel" now resolves
+  // outputMode "carousel" for real, since generate-visual/route.ts can
+  // actually render one (see that route). ContentIntent is NEVER derived
+  // from this suffix or from visualFormat — it still comes only from
+  // contentOpportunity.suggestedContentType via intentOverride below,
+  // completely independent of which format phrase is appended here.
+  const visualFormat = isVisualFormat(rawVisualFormat) ? rawVisualFormat : "single";
   const effectiveMessage = contentOpportunity
-    ? `${buildSeedMessage(contentOpportunity)} Tek görsel üret.`
+    ? `${buildSeedMessage(contentOpportunity)}${buildFormatSuffix(visualFormat)}`
     : (message as string).trim();
 
   const cleanHistory: ChatMessage[] = [];
@@ -218,7 +225,7 @@ export async function POST(request: NextRequest) {
     : finalSystemContext;
 
   const creativeBrief = buildCreativeBrief(contentPlan);
-  const creativeDirective = buildCreativeDirective(creativeBrief, contentPlan.intent);
+  const creativeDirective = buildCreativeDirective(creativeBrief, contentPlan.intent, contentPlan.outputMode);
   const finalCombinedSystemContext = creativeDirective
     ? `${combinedSystemContext}\n\n${creativeDirective}`
     : combinedSystemContext;

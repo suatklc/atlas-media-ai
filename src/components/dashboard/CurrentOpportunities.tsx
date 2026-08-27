@@ -6,8 +6,8 @@ import { Sparkles, Loader2, ExternalLink, ImagePlus, RefreshCw } from "lucide-re
 import type { RankedContentOpportunity } from "@/lib/ai/research/retrieval/types";
 import { describeFreshnessBand } from "@/lib/ai/research/freshnessBand";
 import { describeContentType } from "@/lib/ai/research/contentTypeLabel";
-import { recommendVisualFormat, buildOpportunityForFormat } from "@/lib/ai/research/formatRecommendation";
-import { buildPublishableCaption, extractVisualHeadlineMarker } from "@/lib/ai/creative/caption";
+import { recommendVisualFormat } from "@/lib/ai/research/formatRecommendation";
+import { buildPublishableCaption, extractVisualHeadlineMarker, type CarouselStructure } from "@/lib/ai/creative/caption";
 import { DEFAULT_PLATFORM } from "@/lib/ai/platform/config";
 
 // Current Content Opportunities — the first user-facing surface for the
@@ -34,12 +34,17 @@ type GeneratedContent = {
   displayText: string;
   visualHeadline?: string;
   educationalPoints?: string[];
+  carouselStructure?: CarouselStructure;
   assistantResponseText: string;
 };
 
+type CarouselSlideImage = { slide: number; imageUrl: string };
+
 type GeneratedVisual = {
   status: "loading" | "done" | "error";
+  outputMode?: "single" | "carousel";
   imageUrl?: string;
+  images?: CarouselSlideImage[];
   isConceptual?: boolean;
   disclaimer?: string | null;
   error?: string;
@@ -118,7 +123,11 @@ export default function CurrentOpportunities() {
 
   async function handleGenerateContent() {
     if (selectedIndex === null) return;
-    const opportunity = buildOpportunityForFormat(opportunities[selectedIndex], formatChoice);
+    // The opportunity itself travels through unmodified — its own
+    // suggestedContentType (research-stage classification) is never
+    // rewritten to fit a visual-format choice. The user's Tek Görsel/
+    // Carousel choice instead travels as its own explicit field.
+    const opportunity = opportunities[selectedIndex];
 
     setIsGenerating(true);
     setGenerationError(null);
@@ -129,7 +138,11 @@ export default function CurrentOpportunities() {
       const response = await fetch("/api/assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contentOpportunity: opportunity, platform: DEFAULT_PLATFORM }),
+        body: JSON.stringify({
+          contentOpportunity: opportunity,
+          visualFormat: formatChoice,
+          platform: DEFAULT_PLATFORM,
+        }),
       });
 
       if (!response.ok || !response.body) {
@@ -151,10 +164,16 @@ export default function CurrentOpportunities() {
         throw new Error("Yanıt alınamadı. Lütfen tekrar deneyin.");
       }
 
-      const { visualHeadline, educationalPoints } = extractVisualHeadlineMarker(fullText);
+      const { visualHeadline, educationalPoints, carouselStructure } = extractVisualHeadlineMarker(fullText);
       const displayText = buildPublishableCaption(fullText);
 
-      setGeneratedContent({ displayText, visualHeadline, educationalPoints, assistantResponseText: fullText });
+      setGeneratedContent({
+        displayText,
+        visualHeadline,
+        educationalPoints,
+        carouselStructure,
+        assistantResponseText: fullText,
+      });
     } catch (err) {
       setGenerationError(err instanceof Error ? err.message : "İçerik oluşturulamadı. Lütfen tekrar deneyin.");
     } finally {
@@ -164,7 +183,7 @@ export default function CurrentOpportunities() {
 
   async function handleGenerateVisual() {
     if (selectedIndex === null || !generatedContent) return;
-    const opportunity = buildOpportunityForFormat(opportunities[selectedIndex], formatChoice);
+    const opportunity = opportunities[selectedIndex];
 
     setVisual({ status: "loading" });
 
@@ -174,22 +193,30 @@ export default function CurrentOpportunities() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contentOpportunity: opportunity,
+          visualFormat: formatChoice,
           headline: generatedContent.visualHeadline || FALLBACK_HEADLINE,
           content: generatedContent.displayText,
           educationalPoints: generatedContent.educationalPoints,
+          carouselStructure: generatedContent.carouselStructure,
           assistantResponseText: generatedContent.assistantResponseText,
           platform: DEFAULT_PLATFORM,
         }),
       });
 
       const data = await response.json().catch(() => null);
-      if (!response.ok || typeof data?.imageUrl !== "string") {
+      const isCarousel = data?.outputMode === "carousel";
+      const hasValidPayload = isCarousel
+        ? Array.isArray(data?.images) && data.images.length > 0
+        : typeof data?.imageUrl === "string";
+      if (!response.ok || !hasValidPayload) {
         throw new Error(data?.error || "Görsel oluşturulamadı. Lütfen tekrar deneyin.");
       }
 
       setVisual({
         status: "done",
-        imageUrl: data.imageUrl,
+        outputMode: isCarousel ? "carousel" : "single",
+        imageUrl: isCarousel ? undefined : data.imageUrl,
+        images: isCarousel ? data.images : undefined,
         isConceptual: data.isConceptual,
         disclaimer: data.disclaimer,
       });
@@ -405,7 +432,37 @@ export default function CurrentOpportunities() {
                 </p>
               )}
 
-              {visual?.status === "done" && visual.imageUrl && (
+              {visual?.status === "done" && visual.outputMode === "carousel" && visual.images && (
+                <div className="mt-3 w-full">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
+                    {visual.images
+                      .slice()
+                      .sort((a, b) => a.slide - b.slide)
+                      .map((slide) => (
+                        <div key={slide.slide} className="overflow-hidden rounded-lg border border-zinc-800">
+                          {/* eslint-disable-next-line @next/next/no-img-element -- dynamic external Supabase Storage URL, same pattern as AIAssistantPanel.tsx */}
+                          <img
+                            src={slide.imageUrl}
+                            alt={`Slayt ${slide.slide}`}
+                            className="h-auto w-full object-contain"
+                          />
+                          <p className="bg-zinc-950 px-1.5 py-1 text-center text-[10px] text-zinc-500">
+                            Slayt {slide.slide}/5
+                          </p>
+                        </div>
+                      ))}
+                  </div>
+                  {visual.isConceptual && visual.disclaimer && (
+                    <p className="mt-1 text-[11px] text-zinc-500">{visual.disclaimer}</p>
+                  )}
+                  <p className="mt-2 text-[11px] text-zinc-500">
+                    Bu içerik taslak olarak kaydedildi. Yayınlamak için aşağıdaki “Oluşturulan Gönderiler”
+                    bölümünden onaylamanız gerekir.
+                  </p>
+                </div>
+              )}
+
+              {visual?.status === "done" && visual.outputMode !== "carousel" && visual.imageUrl && (
                 <div className="mt-3 w-full max-w-sm">
                   {/* eslint-disable-next-line @next/next/no-img-element -- dynamic external Supabase Storage URL, same pattern as AIAssistantPanel.tsx */}
                   <img
