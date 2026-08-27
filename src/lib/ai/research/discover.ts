@@ -277,6 +277,33 @@ function scoreOpportunity(opportunity: RankedContentOpportunity, keywords: strin
   return tierScore + freshnessScore + relevance + practicalBonus;
 }
 
+// ============================================================
+// Recurring-series suppression (Handoff — quality gate before UI): a
+// SHORTLIST-only concept — never applied at retrieval/storage (deduped
+// results still all exist as distinct opportunities; this only decides
+// which ones may occupy the small final shortlist). Real live data
+// exposed the concrete case this addresses: TCMB republishes the same
+// recurring "Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)" /
+// "(2026-23)" / "(2025-63)" title, differing only by its trailing
+// "(YYYY-NN)" event code — four technically-distinct, technically-non-
+// duplicate events (Phase 3's own title/URL dedup correctly does NOT
+// collapse them) that nonetheless all represent the SAME recurring
+// announcement series for shortlist purposes, and let one prolific series
+// crowd out every other family. Deliberately narrow: only a single
+// TRAILING parenthetical group is stripped (the exact, verified pattern
+// TCMB's own titles use for their event code) — not a general fuzzy/
+// similarity matcher, no embeddings, and never touching any parenthetical
+// content that isn't at the very end of the title (a mid-title
+// parenthetical could be genuinely meaningful, e.g. an amount or a
+// clarifying aside, and must not be stripped).
+function deriveSeriesKey(title: string): string {
+  return title
+    .replace(/\s*\([^)]*\)\s*$/u, "")
+    .toLocaleLowerCase("tr-TR")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Fixed, documented priority order for the "one guaranteed slot per
 // family" pass below — matches this task's own conceptual description
 // (strongest market-data, then credit-interest, then regulation-property,
@@ -313,7 +340,19 @@ const DIVERSITY_QUALITY_FLOOR = 4;
 // highest-value opportunities left over, regardless of family. Quality
 // and freshness still govern the fill pass — diversity only ever WIDENS
 // which families can appear, it never forces a weak entry in and never
-// excludes a strong one.
+// excludes a strong one. Recurring-series suppression (deriveSeriesKey,
+// above) applies throughout both passes: once one entry from a series has
+// a slot, every other entry sharing its series key is skipped for the
+// rest of this call — in EITHER pass — so a single prolific recurring
+// announcement (TCMB's own "Faiz Oranlarına İlişkin..." series is the
+// live-observed case) can occupy at most one shortlist slot, never four.
+// The initial sort's tie-break (equal score -> more recent publishedAt
+// wins) is what makes "prefer the newest item from a recurring series"
+// deterministic rather than incidentally depending on an adapter's own
+// feed ordering. If suppression (by family floor or by series) leaves
+// fewer than `limit` genuinely distinct, qualifying opportunities, fewer
+// than `limit` are returned — this function never pads a short result
+// with a same-series repeat merely to hit the requested count.
 export function rankContentOpportunities(
   opportunities: RankedContentOpportunity[],
   keywords: string[],
@@ -321,27 +360,40 @@ export function rankContentOpportunities(
 ): RankedContentOpportunity[] {
   const scored = opportunities
     .map((opportunity) => ({ opportunity, score: scoreOpportunity(opportunity, keywords) }))
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const aDate = a.opportunity.sources[0]?.publishedAt ?? "";
+      const bDate = b.opportunity.sources[0]?.publishedAt ?? "";
+      if (aDate !== bDate) return aDate < bDate ? 1 : -1;
+      return 0;
+    });
 
   const picked: RankedContentOpportunity[] = [];
   const pickedSet = new Set<RankedContentOpportunity>();
+  const pickedSeriesKeys = new Set<string>();
+
+  function isAvailable(entry: (typeof scored)[number]): boolean {
+    return !pickedSet.has(entry.opportunity) && !pickedSeriesKeys.has(deriveSeriesKey(entry.opportunity.topic));
+  }
+
+  function pick(entry: (typeof scored)[number]): void {
+    picked.push(entry.opportunity);
+    pickedSet.add(entry.opportunity);
+    pickedSeriesKeys.add(deriveSeriesKey(entry.opportunity.topic));
+  }
 
   for (const family of FAMILY_PRIORITY) {
     if (picked.length >= limit) break;
-    const best = scored.find(
-      (entry) => entry.opportunity.topicFamily === family && !pickedSet.has(entry.opportunity),
-    );
+    const best = scored.find((entry) => entry.opportunity.topicFamily === family && isAvailable(entry));
     if (best && best.score >= DIVERSITY_QUALITY_FLOOR) {
-      picked.push(best.opportunity);
-      pickedSet.add(best.opportunity);
+      pick(best);
     }
   }
 
   for (const entry of scored) {
     if (picked.length >= limit) break;
-    if (pickedSet.has(entry.opportunity)) continue;
-    picked.push(entry.opportunity);
-    pickedSet.add(entry.opportunity);
+    if (!isAvailable(entry)) continue;
+    pick(entry);
   }
 
   return picked.slice(0, limit);

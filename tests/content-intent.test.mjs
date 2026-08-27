@@ -26,6 +26,17 @@ function loadTypeScriptModule(relativePath, dependencyLoader = () => ({})) {
 
 const intent = loadTypeScriptModule("src/lib/ai/content/intent.ts");
 
+// Full ContentPlan chain — same convention tests/output-mode.test.mjs and
+// tests/research-retrieval.test.mjs already use — needed for the
+// buildContentPlan intentOverride seam tests below.
+const goal = loadTypeScriptModule("src/lib/ai/content/goal.ts");
+const audience = loadTypeScriptModule("src/lib/ai/content/audience.ts");
+const format = loadTypeScriptModule("src/lib/ai/content/format.ts");
+const templates = loadTypeScriptModule("src/lib/ai/content/templates.ts");
+const plan = loadTypeScriptModule("src/lib/ai/content/plan.ts", (s) => ({
+  "./intent": intent, "./goal": goal, "./audience": audience, "./format": format, "./templates": templates,
+})[s] ?? {});
+
 // ============================================================
 // Boundary-matching regressions (from the prior substring-collision fix)
 // ============================================================
@@ -205,4 +216,48 @@ test("transform-meta exclusions still veto content planning", () => {
 
 test("no creation signal still resolves to none", () => {
   assert.equal(intent.detectContentIntent("merhaba nasılsın"), "none");
+});
+
+// ============================================================
+// buildContentPlan's intentOverride seam (Handoff — research-opportunity
+// quality gate before UI): a ContentOpportunity's own grounded
+// suggestedContentType must win over whatever detectContentIntent would
+// have derived from the synthetic seed message text, WITHOUT touching
+// ordinary user-message classification at all (no override argument ->
+// completely unchanged, pre-existing behavior).
+// ============================================================
+
+test("intentOverride: an explicit override wins over what the message text alone would classify as", () => {
+  // The exact real seed message (verbatim, from a live TKGM opportunity's
+  // real buildSeedMessage output) contains "gelişme" (a market-stats
+  // trigger, in "güncel gelişmelere dayanan") and resolves to market-stats
+  // via detectContentIntent alone — the real, live-observed bug this seam
+  // fixes. With the override, the opportunity's own "educational" wins.
+  const seed =
+    "bilgilendirici ve eğitici Davalı Olduğu Halde Tapu Kütüğüne Tescil Edilen Ve Takbis'e Aktarılan Taşınmazlar Hakkında hakkında güncel gelişmelere dayanan içerik hazırla. Açı: Bu gelişmenin gayrimenkul alıcı ve yatırımcıları için pratik anlamı. Güncellik nedeni: Tapu ve Kadastro Genel Müdürlüğü (TKGM) — Duyurular tarafından 2026-08-12 tarihinde yayımlandı. Bilinmesi gerekenler: Davalı Olduğu Halde Tapu Kütüğüne Tescil Edilen Ve Takbis'e Aktarılan Taşınmazlar Hakkında.";
+  const withoutOverride = plan.buildContentPlan(seed);
+  assert.equal(withoutOverride.intent, "market-stats", "sanity check: this seed really does collide without the seam");
+
+  const withOverride = plan.buildContentPlan(seed, "educational");
+  assert.equal(withOverride.intent, "educational");
+  assert.equal(withOverride.template?.id, "EDUCATIONAL_CAROUSEL_01");
+});
+
+test("intentOverride: a market-stats override resolves to the market-stats template", () => {
+  const seed = "piyasa istatistiklerine dayanan Faiz Oranlarına İlişkin Basın Duyurusu hakkında içerik hazırla.";
+  const result = plan.buildContentPlan(seed, "market-stats");
+  assert.equal(result.intent, "market-stats");
+  assert.equal(result.template?.id, "INFOGRAPHIC_01");
+});
+
+test("intentOverride: absent (ordinary user messages) leaves detectContentIntent completely unchanged", () => {
+  // Same two cases the task lists explicitly.
+  assert.equal(
+    plan.buildContentPlan("Villa alırken dikkat edilmesi gereken 5 konu hakkında içerik hazırla").intent,
+    "educational",
+  );
+  assert.equal(
+    plan.buildContentPlan("Zekeriyaköy'de satılık villa için ilan hazırla").intent,
+    "listing",
+  );
 });

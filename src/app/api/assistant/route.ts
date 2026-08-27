@@ -180,7 +180,15 @@ export async function POST(request: NextRequest) {
     ? `${systemContext}\n\n${reasoningDirective}`
     : systemContext;
 
-  const contentPlan = buildContentPlan(effectiveMessage);
+  // Research-opportunity intent seam (Handoff — quality gate before UI):
+  // when a valid ContentOpportunity drove this request, its own grounded
+  // suggestedContentType is passed straight through as buildContentPlan's
+  // override — never re-derived from the synthetic seed message text,
+  // which can otherwise collide with an unrelated keyword trigger. Absent
+  // a ContentOpportunity (every ordinary chat message), this is
+  // `undefined` and buildContentPlan's own detectContentIntent call runs
+  // exactly as it always has.
+  const contentPlan = buildContentPlan(effectiveMessage, contentOpportunity?.suggestedContentType);
   const contentDirective = buildContentDirective(contentPlan);
   const combinedSystemContext = contentDirective
     ? `${finalSystemContext}\n\n${contentDirective}`

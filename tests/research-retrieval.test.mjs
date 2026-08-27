@@ -621,3 +621,60 @@ test("diversified ranking respects the requested limit", () => {
   const ranked = discover.rankContentOpportunities(built, ["faiz"], 3);
   assert.equal(ranked.length, 3);
 });
+
+// ============================================================
+// Phase 4: recurring-series/event-family suppression — the exact
+// live-observed case: TCMB's own "Faiz Oranlarına İlişkin Basın
+// Duyurusu (YYYY-NN)" title recurs across genuinely distinct events
+// (Phase 3's title/URL dedup correctly keeps them as separate
+// opportunities), but a current-content SHORTLIST should not let one
+// prolific recurring series occupy more than one slot.
+// ============================================================
+
+test("recurring series: the real 'Faiz Oranlarına İlişkin Basın Duyurusu (...)' series occupies at most one shortlist slot", () => {
+  const now = new Date("2026-08-27T00:00:00.000Z");
+  const results = [
+    makeResult({ title: "Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)", url: "https://www.tcmb.gov.tr/x/duy2026-28", publishedAt: "2026-07-23T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "Faiz Oranlarına İlişkin Basın Duyurusu (2026-23)", url: "https://www.tcmb.gov.tr/x/duy2026-23", publishedAt: "2026-06-11T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "Faiz Oranlarına İlişkin Basın Duyurusu (2025-63)", url: "https://www.tcmb.gov.tr/x/duy2025-63", publishedAt: "2025-12-11T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "Faiz Oranlarına İlişkin Basın Duyurusu (2025-55)", url: "https://www.tcmb.gov.tr/x/duy2025-55", publishedAt: "2025-10-23T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "Davalı Olduğu Halde Tapu Kütüğüne Tescil Edilen Ve Takbis'e Aktarılan Taşınmazlar Hakkında", url: "https://www.tkgm.gov.tr/x/tapu-uyusmazlik", publishedAt: "2026-08-12T00:00:00.000Z", tier: "official-authority" }),
+  ];
+  const built = discover.buildContentOpportunities(results, now);
+  const ranked = discover.rankContentOpportunities(built, ["faiz", "tapu"], 5);
+
+  const faizEntries = ranked.filter((o) => o.topic.startsWith("Faiz Oranlarına İlişkin Basın Duyurusu"));
+  assert.equal(faizEntries.length, 1, "the recurring series must occupy at most one shortlist slot");
+  // The newest instance of the series must be the one kept.
+  assert.equal(faizEntries[0].topic, "Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)");
+  // The genuinely different TKGM opportunity must still get its own slot.
+  assert.ok(ranked.some((o) => o.topic.startsWith("Davalı Olduğu Halde")));
+});
+
+test("recurring series: quality > count — fewer than the requested limit is returned rather than padding with the same series", () => {
+  const now = new Date("2026-08-27T00:00:00.000Z");
+  // Every candidate belongs to the SAME recurring series — only one can
+  // ever occupy a shortlist slot, so a limit of 5 must return 1, not 5.
+  const results = Array.from({ length: 5 }, (_, i) =>
+    makeResult({
+      title: `Faiz Oranlarına İlişkin Basın Duyurusu (2026-${20 + i})`,
+      url: `https://www.tcmb.gov.tr/x/duy2026-${20 + i}`,
+      publishedAt: `2026-0${7 - i}-15T00:00:00.000Z`,
+      tier: "official-authority",
+    }),
+  );
+  const built = discover.buildContentOpportunities(results, now);
+  const ranked = discover.rankContentOpportunities(built, ["faiz"], 5);
+  assert.equal(ranked.length, 1, "quality > count: must not pad the shortlist with repeats of the same series");
+});
+
+test("recurring series: distinct, non-recurring titles are never merged by the series key", () => {
+  const now = new Date("2026-08-27T00:00:00.000Z");
+  const results = [
+    makeResult({ title: "Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)", url: "https://www.tcmb.gov.tr/x/a", publishedAt: "2026-08-01T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "FAST Sistemi İşlem Tutar Limitinin Artırılması Hakkında Basın Duyurusu (2026-36)", url: "https://www.tcmb.gov.tr/x/b", publishedAt: "2026-08-24T00:00:00.000Z", tier: "official-authority" }),
+  ];
+  const built = discover.buildContentOpportunities(results, now);
+  const ranked = discover.rankContentOpportunities(built, ["faiz"], 5);
+  assert.equal(ranked.length, 2, "two genuinely different recurring-title series must both be kept");
+});
