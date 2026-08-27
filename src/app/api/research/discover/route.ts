@@ -12,6 +12,13 @@ import { discoverCurrentContentOpportunities } from "@/lib/ai/research/discover"
 // entry point, per this task's own scope instruction.
 const MAX_LIMIT = 10;
 const DEFAULT_LIMIT = 5;
+// Hard freshness rule (Handoff — Current Content Opportunities UI): this
+// is the ONE caller that applies discoverCurrentContentOpportunities'
+// maxAgeDays cutoff — "Güncel İçerik Fırsatları" must actually mean
+// current; material older than 30 days is excluded before ranking, never
+// merely down-ranked, so it can never appear in this dashboard surface
+// "to fill the list."
+const MAX_OPPORTUNITY_AGE_DAYS = 30;
 
 function jsonError(message: string, status: number) {
   return Response.json({ error: message }, { status });
@@ -52,7 +59,10 @@ export async function POST(request: NextRequest) {
       : DEFAULT_LIMIT;
 
   try {
-    const opportunities = await discoverCurrentContentOpportunities({ limit });
+    const opportunities = await discoverCurrentContentOpportunities({
+      limit,
+      maxAgeDays: MAX_OPPORTUNITY_AGE_DAYS,
+    });
     return Response.json({ opportunities });
   } catch (error) {
     console.error("Research discovery error:", error instanceof Error ? error.message : String(error));

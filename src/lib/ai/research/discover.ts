@@ -412,6 +412,19 @@ export type DiscoverCurrentOpportunitiesOptions = {
   profile?: BusinessProfile;
   limit?: number;
   now?: Date;
+  // Hard cutoff (Handoff — Current Content Opportunities UI): when set, any
+  // retrieval result whose publishedAt is missing, unparsable, in the
+  // future, or older than this many days is excluded BEFORE opportunities
+  // are even built — not merely down-ranked. This is deliberately a
+  // SEPARATE concept from the existing internal freshness classification
+  // (classifyFreshness's breaking/recent/evergreen-adjacent, still used for
+  // scoring/display and unchanged) — "evergreen-adjacent" is an acceptable
+  // internal bucket for material older than 30 days, but this UI surface
+  // must never present that material as a CURRENT opportunity merely to
+  // fill a shortlist. Optional and undefined by default so every existing
+  // caller (tests, any other future consumer) is completely unaffected;
+  // the dashboard-facing route is the one caller that sets it.
+  maxAgeDays?: number;
 };
 
 // retrieveCurrentInformation is asked for a generously large CANDIDATE
@@ -430,12 +443,29 @@ export type DiscoverCurrentOpportunitiesOptions = {
 // family-blind cap doing it first.
 const CANDIDATE_POOL_SIZE = 200;
 
+// Hard age cutoff (see DiscoverCurrentOpportunitiesOptions.maxAgeDays) —
+// missing/unparsable/future dates are excluded here too: an unknown
+// publication date is never treated as "within" any age window, matching
+// the "do not falsely label it current" requirement.
+function isWithinMaxAge(publishedAt: string, now: Date, maxAgeDays: number): boolean {
+  if (!publishedAt) return false;
+  const published = new Date(publishedAt);
+  if (Number.isNaN(published.getTime())) return false;
+  const ageDays = (now.getTime() - published.getTime()) / (1000 * 60 * 60 * 24);
+  return ageDays >= 0 && ageDays <= maxAgeDays;
+}
+
 export async function discoverCurrentContentOpportunities(
   options: DiscoverCurrentOpportunitiesOptions = {},
 ): Promise<RankedContentOpportunity[]> {
   const profile = options.profile ?? ATLAS_DEFAULT_BUSINESS_PROFILE;
+  const now = options.now ?? new Date();
   const query = buildRetrievalQuery(profile);
   const results = await retrieveCurrentInformation(query, { maxResults: CANDIDATE_POOL_SIZE });
-  const opportunities = buildContentOpportunities(results, options.now ?? new Date());
+  const ageFiltered =
+    options.maxAgeDays !== undefined
+      ? results.filter((result) => isWithinMaxAge(result.publishedAt, now, options.maxAgeDays!))
+      : results;
+  const opportunities = buildContentOpportunities(ageFiltered, now);
   return rankContentOpportunities(opportunities, query.keywords, options.limit ?? 5);
 }

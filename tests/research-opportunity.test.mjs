@@ -272,8 +272,14 @@ test("global architecture files never reference Zekeriyaköy/Sarıyer by name", 
 test("assistant route: research integration is additive-only — behavior is byte-identical when contentOpportunity is absent", () => {
   const routeSource = fs.readFileSync(path.join(projectRoot, "src/app/api/assistant/route.ts"), "utf8");
 
-  // message validation (required, non-empty, max length) still runs
-  // unconditionally, before contentOpportunity is even read.
+  // message validation (required, non-empty, max length) still runs for
+  // every ordinary chat message — as of the Current Content Opportunities
+  // UI task, this check is scoped to `!contentOpportunity` (a valid
+  // ContentOpportunity now makes `message` itself optional, since it
+  // supplies its own seed message), but for every request that has NO
+  // contentOpportunity at all — every existing/ordinary caller — this
+  // exact validation still runs, unchanged.
+  assert.match(routeSource, /if \(!contentOpportunity\) \{/);
   assert.match(routeSource, /if \(typeof message !== "string" \|\| message\.trim\(\)\.length === 0\)/);
 
   // contentOpportunity is optional and defaults to undefined on anything
@@ -285,10 +291,12 @@ test("assistant route: research integration is additive-only — behavior is byt
 
   // effectiveMessage falls back to message.trim() byte-identically when
   // contentOpportunity is absent/invalid — the entire safety property this
-  // task depends on for "ordinary flow unchanged".
+  // task depends on for "ordinary flow unchanged". (message as string) is
+  // a safe cast, not a behavior change: the branch above already proved
+  // `message` is a validated non-empty string whenever this branch runs.
   assert.match(
     routeSource,
-    /const effectiveMessage = contentOpportunity \? buildSeedMessage\(contentOpportunity\) : message\.trim\(\);/,
+    /const effectiveMessage = contentOpportunity\s*\n\s*\? `\$\{buildSeedMessage\(contentOpportunity\)\} Tek görsel üret\.`\s*\n\s*: \(message as string\)\.trim\(\);/,
   );
 
   // The research directive is a no-op ("") when contentOpportunity is

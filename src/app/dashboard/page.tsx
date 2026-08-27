@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import DashboardShell from "@/components/layout/DashboardShell";
 import WelcomeSection from "@/components/dashboard/WelcomeSection";
 import AIAssistantPanel from "@/components/dashboard/AIAssistantPanel";
+import CurrentOpportunities from "@/components/dashboard/CurrentOpportunities";
 import GenerationHistory from "@/components/dashboard/GenerationHistory";
 import SocialAccounts from "@/components/dashboard/SocialAccounts";
 
@@ -41,6 +42,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     <DashboardShell user={authUser}>
       <WelcomeSection name={authUser.name} />
       <div className="mx-auto max-w-5xl space-y-8">
+        <CurrentOpportunities />
         <AIAssistantPanel />
         <SocialAccounts connectionStatus={metaConnection} />
         <GenerationHistory />

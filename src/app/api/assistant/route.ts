@@ -71,24 +71,38 @@ export async function POST(request: NextRequest) {
     message?: unknown;
     history?: unknown;
     platform?: unknown;
-    // Optional (Research -> Content Opportunity, Phase 1): when present and
-    // valid, its rendered seed message drives content planning and the
-    // Claude call in place of `message` below (see effectiveMessage) — see
-    // isContentOpportunity for the validation this goes through.
-    // `message` itself is still required and validated the same as always,
-    // regardless of whether this is present.
+    // Optional (Research -> Content Opportunity): when present and valid,
+    // its rendered seed message drives content planning and the Claude
+    // call in place of `message` below (see effectiveMessage) — see
+    // isContentOpportunity for the validation this goes through. `message`
+    // is required and validated exactly as before ONLY when this is
+    // absent/invalid — see below.
     contentOpportunity?: unknown;
   };
 
-  if (typeof message !== "string" || message.trim().length === 0) {
-    return jsonError("Mesaj boş olamaz.", 400);
-  }
+  // Optional (Research -> Content Opportunity): malformed/absent input
+  // silently falls back to undefined here (never a 400) since this is an
+  // additive enrichment, not a required part of the request contract — see
+  // isContentOpportunity for what "valid" means. Computed BEFORE the
+  // message-required check below, since a valid ContentOpportunity
+  // supplies its own seed message and makes `message` itself optional for
+  // this request (Handoff — Current Content Opportunities UI: this is the
+  // first real caller that omits `message` entirely).
+  const contentOpportunity = isContentOpportunity(rawContentOpportunity) ? rawContentOpportunity : undefined;
 
-  if (message.length > MAX_MESSAGE_LENGTH) {
-    return jsonError(
-      `Mesajınız çok uzun. En fazla ${MAX_MESSAGE_LENGTH} karakter girebilirsiniz.`,
-      400,
-    );
+  // Every ordinary chat message (no contentOpportunity at all) is
+  // completely unaffected by the branch below — this is exactly the same
+  // required/non-empty/length-bounded validation as before.
+  if (!contentOpportunity) {
+    if (typeof message !== "string" || message.trim().length === 0) {
+      return jsonError("Mesaj boş olamaz.", 400);
+    }
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      return jsonError(
+        `Mesajınız çok uzun. En fazla ${MAX_MESSAGE_LENGTH} karakter girebilirsiniz.`,
+        400,
+      );
+    }
   }
 
   // Missing/undefined -> Instagram (today's only prior behavior); anything
@@ -100,14 +114,23 @@ export async function POST(request: NextRequest) {
   }
   const selectedPlatform = isPlatformId(platform) ? platform : DEFAULT_PLATFORM;
 
-  // Optional (Research -> Content Opportunity, Phase 1): malformed/absent
-  // input silently falls back to undefined here (never a 400) since this is
-  // an additive enrichment, not a required part of the request contract —
-  // see isContentOpportunity for what "valid" means. When undefined,
-  // effectiveMessage is byte-identical to message.trim(), so every existing
-  // caller (no contentOpportunity field at all) behaves exactly as before.
-  const contentOpportunity = isContentOpportunity(rawContentOpportunity) ? rawContentOpportunity : undefined;
-  const effectiveMessage = contentOpportunity ? buildSeedMessage(contentOpportunity) : message.trim();
+  // effectiveMessage: byte-identical to the prior message.trim() whenever
+  // contentOpportunity is absent (the cast is safe — the guard above
+  // already proved `message` is a validated non-empty string in that
+  // branch). When present, the EXISTING carousel-visual-generation gap
+  // (generate-visual/route.ts still rejects outputMode "carousel" — see
+  // that file's own unchanged 422) means every ContentOpportunity-driven
+  // request forces single-image framing via this fixed Turkish suffix, so
+  // the workflow this feeds (Current Content Opportunities UI) actually
+  // completes end to end regardless of which visual format the user picks
+  // in that UI — that choice instead changes suggestedContentType itself
+  // (the frontend sends it already adjusted), not this suffix. This is the
+  // smallest integration change for a real, pre-existing limitation, not a
+  // new one introduced here; content/format.ts's own SINGLE_PATTERNS is
+  // what recognizes this exact phrase.
+  const effectiveMessage = contentOpportunity
+    ? `${buildSeedMessage(contentOpportunity)} Tek görsel üret.`
+    : (message as string).trim();
 
   const cleanHistory: ChatMessage[] = [];
   if (Array.isArray(history)) {

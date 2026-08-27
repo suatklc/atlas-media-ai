@@ -17,6 +17,7 @@ import { selectVisualTemplateId } from "@/lib/ai/image/templates/select";
 import { uploadGeneratedImage } from "@/lib/supabase/storage";
 import { buildPublishableCaption } from "@/lib/ai/creative/caption";
 import { resolveEducationalPoints } from "@/lib/ai/content/educational-points";
+import { buildSeedMessage, isContentOpportunity } from "@/lib/ai/research/opportunity";
 
 const MAX_MESSAGE_LENGTH = 4000;
 // Kept aligned with AIAssistantPanel.tsx's own extractor bound — a full
@@ -173,24 +174,33 @@ export async function POST(request: NextRequest) {
     return jsonError("Geçersiz istek gövdesi.", 400);
   }
 
-  const { message, headline, content, educationalPoints, assistantResponseText, platform } = body as {
+  const { message, headline, content, educationalPoints, assistantResponseText, platform, contentOpportunity: rawContentOpportunity } = body as {
     message?: unknown;
     headline?: unknown;
     content?: unknown;
     educationalPoints?: unknown;
     assistantResponseText?: unknown;
     platform?: unknown;
+    // Optional (Handoff — Current Content Opportunities UI): when present
+    // and valid, drives content planning the same way assistant/route.ts's
+    // own ContentOpportunity seam already does — see effectiveMessage and
+    // the intentOverride passed to buildContentPlan below. `message` is
+    // required only when this is absent/invalid.
+    contentOpportunity?: unknown;
   };
 
-  if (typeof message !== "string" || message.trim().length === 0) {
-    return jsonError("Mesaj boş olamaz.", 400);
-  }
+  const contentOpportunity = isContentOpportunity(rawContentOpportunity) ? rawContentOpportunity : undefined;
 
-  if (message.length > MAX_MESSAGE_LENGTH) {
-    return jsonError(
-      `Mesajınız çok uzun. En fazla ${MAX_MESSAGE_LENGTH} karakter girebilirsiniz.`,
-      400,
-    );
+  if (!contentOpportunity) {
+    if (typeof message !== "string" || message.trim().length === 0) {
+      return jsonError("Mesaj boş olamaz.", 400);
+    }
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      return jsonError(
+        `Mesajınız çok uzun. En fazla ${MAX_MESSAGE_LENGTH} karakter girebilirsiniz.`,
+        400,
+      );
+    }
   }
 
   // Missing/undefined -> Instagram (today's only prior behavior); anything
@@ -202,8 +212,25 @@ export async function POST(request: NextRequest) {
   }
   const platformConfig = PLATFORM_CONFIGS[isPlatformId(platform) ? platform : DEFAULT_PLATFORM];
 
+  // effectiveMessage: byte-identical to the prior message.trim() whenever
+  // contentOpportunity is absent (the cast is safe — the guard above
+  // already validated `message` as a non-empty string in that branch).
+  // When present, the fixed Turkish suffix forces single-image framing —
+  // see assistant/route.ts's own identical seam for why (carousel visual
+  // generation is not supported below regardless — see the outputMode
+  // check that follows).
+  const effectiveMessage = contentOpportunity
+    ? `${buildSeedMessage(contentOpportunity)} Tek görsel üret.`
+    : (message as string).trim();
+
   const safeHeadline = sanitizeHeadline(headline);
-  const contentPlan = buildContentPlan(message.trim());
+  // Research-opportunity intent seam (mirrors assistant/route.ts): a valid
+  // ContentOpportunity's own grounded suggestedContentType is passed
+  // straight through as buildContentPlan's override, never re-derived from
+  // effectiveMessage's text — the same keyword-collision risk applies here
+  // as it did for the Claude/content path. Absent a ContentOpportunity,
+  // this is `undefined` and behavior is entirely unchanged.
+  const contentPlan = buildContentPlan(effectiveMessage, contentOpportunity?.suggestedContentType);
 
   if (contentPlan.outputMode === "carousel") {
     return jsonError(
@@ -223,7 +250,7 @@ export async function POST(request: NextRequest) {
     return jsonError("Bu istek için görsel oluşturulamıyor.", 422);
   }
 
-  const basePrompt = buildImagePrompt(creativeBrief, message.trim(), contentPlan.intent);
+  const basePrompt = buildImagePrompt(creativeBrief, effectiveMessage, contentPlan.intent);
   if (!basePrompt) {
     return jsonError("Bu istek için görsel oluşturulamıyor.", 422);
   }
@@ -303,7 +330,7 @@ export async function POST(request: NextRequest) {
   try {
     const { error: insertError } = await supabase.from("generated_posts").insert({
       user_id: user.id,
-      content: sanitizeContent(content) ?? message.trim(),
+      content: sanitizeContent(content) ?? effectiveMessage,
       visual_headline: safeHeadline,
       final_image_url: uploadedFinal.url,
       base_image_url: uploadedBase.url,
