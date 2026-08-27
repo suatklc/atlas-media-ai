@@ -236,8 +236,8 @@ export default function CurrentOpportunities() {
   const selectedOpportunity = selectedIndex !== null ? opportunities[selectedIndex] : null;
 
   return (
-    <section className="animate-fade-up rounded-xl border border-indigo-500/20 bg-zinc-900/50 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section className="animate-fade-up rounded-xl border border-zinc-800 bg-zinc-900/50">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-5 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400">
             <Sparkles className="h-[18px] w-[18px]" />
@@ -268,27 +268,28 @@ export default function CurrentOpportunities() {
         </button>
       </div>
 
+      <div className="space-y-4 px-5 py-4">
       {searchError && (
-        <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
           {searchError}
         </p>
       )}
 
       {!hasSearched && !isSearching && !searchError && (
-        <p className="mt-4 text-sm text-zinc-500">
+        <p className="text-sm text-zinc-500">
           Son 30 gün içindeki güvenilir kaynaklardan güncel gayrimenkul fırsatlarını bulmak için yukarıdaki butona
           tıklayın.
         </p>
       )}
 
       {hasSearched && !isSearching && opportunities.length === 0 && !searchError && (
-        <p className="mt-4 text-sm text-zinc-500">
+        <p className="text-sm text-zinc-500">
           Şu anda son 30 gün içinde yeterince güçlü güncel içerik bulunamadı.
         </p>
       )}
 
       {opportunities.length > 0 && (
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           {opportunities.map((opportunity, index) => {
             const source = opportunity.sources[0];
             const freshness = source ? describeFreshnessBand(source.publishedAt, new Date()) : undefined;
@@ -351,7 +352,7 @@ export default function CurrentOpportunities() {
       )}
 
       {selectedOpportunity && (
-        <div className="mt-5 rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+        <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
           <p className="text-xs font-medium text-zinc-400">Seçilen fırsat</p>
           <p className="mt-1 text-sm font-medium text-white">{selectedOpportunity.topic}</p>
           {selectedOpportunity.riskCaveat && (
@@ -439,14 +440,14 @@ export default function CurrentOpportunities() {
                       .slice()
                       .sort((a, b) => a.slide - b.slide)
                       .map((slide) => (
-                        <div key={slide.slide} className="overflow-hidden rounded-lg border border-zinc-800">
+                        <div key={slide.slide} className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
                           {/* eslint-disable-next-line @next/next/no-img-element -- dynamic external Supabase Storage URL, same pattern as AIAssistantPanel.tsx */}
                           <img
                             src={slide.imageUrl}
                             alt={`Slayt ${slide.slide}`}
-                            className="h-auto w-full object-contain"
+                            className="aspect-[4/5] w-full object-cover"
                           />
-                          <p className="bg-zinc-950 px-1.5 py-1 text-center text-[10px] text-zinc-500">
+                          <p className="px-1.5 py-1 text-center text-[10px] text-zinc-500">
                             Slayt {slide.slide}/5
                           </p>
                         </div>
@@ -483,6 +484,7 @@ export default function CurrentOpportunities() {
           )}
         </div>
       )}
+      </div>
     </section>
   );
 }

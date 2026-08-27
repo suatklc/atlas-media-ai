@@ -8,7 +8,7 @@ export default function WelcomeSection({ name }: WelcomeSectionProps) {
   const firstName = name.split(" ")[0];
 
   return (
-    <section className="animate-fade-up mb-8">
+    <section className="animate-fade-up mb-6">
       <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
         {formatLongDateTR(new Date())}
       </p>
@@ -17,10 +17,7 @@ export default function WelcomeSection({ name }: WelcomeSectionProps) {
       </h1>
       <p className="mt-1.5 text-sm text-zinc-400">
         İlan metinleri, sosyal medya içerikleri ve müşteri mesajlarını{" "}
-        <span className="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text font-medium text-transparent">
-          Atlas
-        </span>{" "}
-        ile hızlıca hazırlayın.
+        <span className="font-medium text-indigo-400">Atlas</span> ile hızlıca hazırlayın.
       </p>
     </section>
   );

@@ -508,7 +508,7 @@ export default function AIAssistantPanel() {
   }
 
   return (
-    <section className="animate-fade-up flex flex-col rounded-xl border border-indigo-500/20 bg-zinc-900/50">
+    <section className="animate-fade-up flex flex-col rounded-xl border border-zinc-800 bg-zinc-900/50">
       <div className="flex items-center gap-3 border-b border-zinc-800 px-5 py-4">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400">
           <Bot className="h-[18px] w-[18px]" />

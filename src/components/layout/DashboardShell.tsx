@@ -16,7 +16,7 @@ export default function DashboardShell({ children, user }: DashboardShellProps) 
   return (
     <div className="min-h-screen bg-zinc-950">
       <Sidebar open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} user={user} />
-      <div className="lg:pl-64">
+      <div className="lg:pl-60">
         <Topbar onMenuClick={() => setMobileNavOpen(true)} user={user} />
         <main className="p-4 sm:p-6 lg:p-8">{children}</main>
       </div>

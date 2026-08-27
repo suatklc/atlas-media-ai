@@ -9,7 +9,7 @@ type TopbarProps = {
 
 export default function Topbar({ onMenuClick, user }: TopbarProps) {
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-zinc-800 bg-zinc-950/80 px-4 backdrop-blur sm:px-6 lg:px-8">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b border-zinc-800 bg-zinc-950/80 px-4 backdrop-blur sm:px-6 lg:px-8">
       <button
         type="button"
         onClick={onMenuClick}
@@ -42,7 +42,7 @@ export default function Topbar({ onMenuClick, user }: TopbarProps) {
 
         <button
           type="button"
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-semibold text-white transition-transform hover:scale-105"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-500 text-xs font-semibold text-white transition-colors hover:bg-indigo-400"
           aria-label={`${user.name} hesap menüsü`}
           title={user.name}
         >
