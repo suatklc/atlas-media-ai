@@ -234,6 +234,13 @@ export default function CurrentOpportunities() {
   }
 
   const selectedOpportunity = selectedIndex !== null ? opportunities[selectedIndex] : null;
+  // Empty state (pre-search guidance or "nothing found") is a single short
+  // line — the same generous py-4 the populated grid/selected-opportunity
+  // panel need reads as wasted space there. searchError and a non-empty
+  // opportunities list both render real content, so only the true
+  // empty-guidance case gets the tighter padding — populated cards are
+  // never affected.
+  const isEmptyGuidanceOnly = opportunities.length === 0 && !searchError;
 
   return (
     <section className="animate-fade-up rounded-xl border border-zinc-800 bg-zinc-900/50">
@@ -268,7 +275,7 @@ export default function CurrentOpportunities() {
         </button>
       </div>
 
-      <div className="space-y-4 px-5 py-4">
+      <div className={`space-y-4 px-5 ${isEmptyGuidanceOnly ? "py-3" : "py-4"}`}>
       {searchError && (
         <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
           {searchError}

@@ -40,12 +40,14 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   return (
     <DashboardShell user={authUser}>
-      <WelcomeSection name={authUser.name} />
-      <div className="mx-auto max-w-5xl space-y-6">
-        <CurrentOpportunities />
-        <AIAssistantPanel />
-        <SocialAccounts connectionStatus={metaConnection} />
-        <GenerationHistory />
+      <div className="mx-auto max-w-5xl">
+        <WelcomeSection name={authUser.name} />
+        <div className="space-y-6">
+          <CurrentOpportunities />
+          <AIAssistantPanel />
+          <SocialAccounts connectionStatus={metaConnection} />
+          <GenerationHistory />
+        </div>
       </div>
     </DashboardShell>
   );
