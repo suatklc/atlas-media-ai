@@ -445,6 +445,82 @@ const DIVERSITY_QUALITY_FLOOR = 4;
 // it at the cost of returning fewer opportunities than genuinely qualify.
 const FAMILY_SOFT_CAP = 2;
 
+// ============================================================
+// Semantic near-duplicate detection (Current Content Radar V1) — beyond
+// deriveSeriesKey's exact-trailing-parenthetical scheme. Now that Layer 2
+// (providers/economyNews.ts) can report a DIFFERENTLY-WORDED story about
+// the SAME underlying development a Layer 1 official adapter already
+// found (e.g. AA covering the same TCMB rate decision the TCMB adapter
+// pulled directly), exact-title/series matching alone would let both
+// through as "distinct" opportunities. This is a deliberately simple,
+// deterministic heuristic — Jaccard token overlap on normalized title
+// words — not an embeddings/fuzzy-similarity system (explicitly out of
+// scope): cheap, bounded (compared only against already-picked entries,
+// never the whole pool, since `scored` is walked best-first throughout
+// rankContentOpportunities below).
+//
+// Tuning (carried over from the same heuristic developed and verified
+// against this project's own test suite in an earlier, now-paused
+// experiment — reused here as-is, independent of anything else from that
+// experiment): official Turkish announcement titles share a lot of
+// generic bureaucratic vocabulary regardless of actual topic — "Basın
+// Duyurusu" (press release), "İlişkin" (regarding), "Hakkında" (about) —
+// which a naive stopword list doesn't catch (these are ordinary nouns,
+// not grammatical particles) and which can inflate similarity between two
+// GENUINELY DIFFERENT press releases past a naive threshold. Both the
+// expanded stopword list below and the minimum-token-count guard exist
+// specifically to avoid that false positive — a genuine duplicate pair
+// shares SPECIFIC content words (entity names, the actual subject), not
+// just procedural boilerplate.
+const SEMANTIC_TITLE_STOPWORDS = new Set([
+  "ile", "için", "olan", "olarak", "veya", "ve", "bir", "bu", "da", "de",
+  "hakkında", "üzerine", "göre", "daha", "ne", "mi", "mı", "mu", "mü",
+  "ilişkin", "basın", "duyurusu", "duyuru", "açıklaması", "açıklandı",
+  "yayımlandı", "genel", "resmi",
+]);
+
+function titleTokenSet(title: string): Set<string> {
+  return new Set(
+    normalizedTitle(title)
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .filter((token) => token.length > 3 && !SEMANTIC_TITLE_STOPWORDS.has(token)),
+  );
+}
+
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersection = 0;
+  for (const token of a) {
+    if (b.has(token)) intersection += 1;
+  }
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+const SEMANTIC_DUPLICATE_THRESHOLD = 0.6;
+const SEMANTIC_DUPLICATE_WINDOW_DAYS = 4;
+// Below this many meaningful tokens on EITHER side, similarity is too
+// unreliable to trust (a short, generically-worded title can trivially
+// share most of its 2-3 remaining words with an unrelated one) — skip the
+// semantic check entirely rather than risk a false collapse; exact-title/
+// series-key matching elsewhere still catches true duplicates of short
+// titles.
+const SEMANTIC_MIN_TOKEN_COUNT = 4;
+
+function isSameUnderlyingDevelopment(a: RankedContentOpportunity, b: RankedContentOpportunity): boolean {
+  const aDate = a.sources[0]?.publishedAt ?? "";
+  const bDate = b.sources[0]?.publishedAt ?? "";
+  if (aDate && bDate) {
+    const ageDiffDays = Math.abs(new Date(aDate).getTime() - new Date(bDate).getTime()) / (1000 * 60 * 60 * 24);
+    if (ageDiffDays > SEMANTIC_DUPLICATE_WINDOW_DAYS) return false;
+  }
+  const aTokens = titleTokenSet(a.topic);
+  const bTokens = titleTokenSet(b.topic);
+  if (aTokens.size < SEMANTIC_MIN_TOKEN_COUNT || bTokens.size < SEMANTIC_MIN_TOKEN_COUNT) return false;
+  return jaccardSimilarity(aTokens, bTokens) >= SEMANTIC_DUPLICATE_THRESHOLD;
+}
+
 export function rankContentOpportunities(
   opportunities: RankedContentOpportunity[],
   keywords: string[],
@@ -466,7 +542,13 @@ export function rankContentOpportunities(
   const familyCounts = new Map<TopicFamily, number>();
 
   function isAvailable(entry: (typeof scored)[number]): boolean {
-    return !pickedSet.has(entry.opportunity) && !pickedSeriesKeys.has(deriveSeriesKey(entry.opportunity.topic));
+    if (pickedSet.has(entry.opportunity)) return false;
+    if (pickedSeriesKeys.has(deriveSeriesKey(entry.opportunity.topic))) return false;
+    // scored is walked best-first throughout every pass below, so the
+    // first occurrence of a semantic cluster is always the one already
+    // picked — checking against `picked` (not the whole pool) keeps this
+    // O(n * limit), never O(n^2).
+    return !picked.some((already) => isSameUnderlyingDevelopment(already, entry.opportunity));
   }
 
   function pick(entry: (typeof scored)[number]): void {

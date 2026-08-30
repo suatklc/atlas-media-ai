@@ -3,6 +3,7 @@ import { fetchTcmbAnnouncements } from "./providers/tcmb";
 import { fetchTkgmAnnouncements } from "./providers/tkgm";
 import { fetchResmiGazeteAnnouncements } from "./providers/resmiGazete";
 import { fetchCsbAnnouncements } from "./providers/csb";
+import { fetchEconomyNewsAnnouncements } from "./providers/economyNews";
 
 const DEFAULT_MAX_RESULTS = 20;
 
@@ -43,6 +44,15 @@ const DEFAULT_MAX_RESULTS = 20;
 //   duyurular) serves an identical, byte-for-byte JS SPA shell with no
 //   server-rendered content at all.
 //
+// Current Content Radar V1 — Layer 2 (news/market attention):
+// providers/economyNews.ts adds AA Economy + Dünya RSS, both live-
+// verified reachable and filtered through relevance.ts's own
+// PROPERTY_MARKET_RELEVANCE_KEYWORDS before a single entry reaches this
+// pipeline. It is a plain NormalizedResearchResult[]-shaped adapter, the
+// exact same shape as the four Layer 1 adapters above — no special
+// merge/wiring was needed anywhere in discover.ts; it flows through the
+// identical retrieve -> dedupe -> rank pipeline as every other source.
+//
 // Adding a real, live-validated future adapter means adding one more
 // entry to this array; nothing else here changes.
 const ADAPTERS: Array<() => Promise<NormalizedResearchResult[]>> = [
@@ -50,6 +60,7 @@ const ADAPTERS: Array<() => Promise<NormalizedResearchResult[]>> = [
   fetchTkgmAnnouncements,
   fetchResmiGazeteAnnouncements,
   fetchCsbAnnouncements,
+  fetchEconomyNewsAnnouncements,
 ];
 
 function normalizeForMatch(text: string): string {

@@ -68,3 +68,59 @@ export const REAL_ESTATE_RELEVANCE_KEYWORDS = [
   "mekansal plan",
   "çevre düzeni planı",
 ];
+
+// Current Content Radar V1 (Layer 2 — news/market attention): AA
+// Economy and Dünya are GENERAL economy/business feeds, not property-only
+// like Resmî Gazete/ÇŞİDB's own government remit — a bare "faiz" or
+// "enflasyon" story from these feeds is routinely about something with no
+// real-estate angle at all (corporate lending, FX, a CPI methodology
+// note), and letting either word alone qualify would turn Layer 2 into a
+// generic economy-news reader, exactly what this task's own product rule
+// forbids. Two tiers, same hasAnyWordBoundaryMatch mechanism as above:
+//
+// 1. Standalone-sufficient terms (first block below) — inherently about
+//    property/land/construction/rental; a single match is real-estate
+//    relevance on its own, no further qualification needed.
+// 2. Compound phrases (second block) — this is how "interest rates /
+//    inflation when materially relevant to housing" is encoded: rather
+//    than bare "faiz"/"enflasyon"/"yatırım" (too broad on a general
+//    economy feed), only the SPECIFIC housing-finance/property-market
+//    phrasing counts ("konut kredisi", "kira artış", "gayrimenkul
+//    yatırım", ...) — the same word-boundary matcher already handles
+//    multi-word phrases correctly (see "kentsel dönüşüm" above), so this
+//    needs no new matching logic, only a differently-scoped keyword list.
+export const PROPERTY_MARKET_RELEVANCE_KEYWORDS = [
+  // Core property/land/construction — standalone sufficient
+  "tapu",
+  "kadastro",
+  "imar",
+  "gayrimenkul",
+  "arsa",
+  "arazi",
+  "parsel",
+  "konut",
+  "inşaat",
+  "kentsel dönüşüm",
+  "emlak",
+  "mülk",
+  // Rental market — standalone sufficient
+  "kira",
+  "kiralık",
+  "kiracı",
+  "ev sahibi",
+  // Housing finance — standalone sufficient (mortgage-specific terms,
+  // never generic "kredi"/"faiz" alone)
+  "konut kredisi",
+  "ipotek",
+  // Contextual economic terms — only counts when the source's own title
+  // ties it to housing/property via one of these specific phrases
+  "konut fiyat",
+  "konut satış",
+  "konut talebi",
+  "konut arzı",
+  "kira artış",
+  "kira geliri",
+  "gayrimenkul yatırım",
+  "emlak vergisi",
+  "konut vergisi",
+];

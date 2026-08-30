@@ -636,12 +636,195 @@ test("csb.ts: a page with no relevant items returns an empty list, not filler", 
 });
 
 // ============================================================
-// Research Breadth Expansion v2: retrieval/router.ts registers all 4
+// Current Content Radar V1 (Layer 2): providers/economyNews.ts — AA
+// Economy + Dünya RSS. Modeled on real RSS 2.0 structure (CDATA-wrapped
+// title, RFC 822 pubDate) — the same shape both live feeds were confirmed
+// to return during this task's own investigation.
+// ============================================================
+
+const AA_ECONOMY_FIXTURE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<title>AA Ekonomi</title>
+<item>
+  <title><![CDATA[Kira sözleşmelerinin e-Devlet üzerinden hazırlanmasının zorunlu olması öngörülüyor]]></title>
+  <link>https://www.aa.com.tr/tr/ekonomi/kira-sozlesmeleri-1</link>
+  <pubDate>Sun, 30 Aug 2026 13:01:54 +0300</pubDate>
+</item>
+<item>
+  <title><![CDATA[Ayçiçeği üreticisinin yüzü rekolte artışı beklentisiyle gülüyor]]></title>
+  <link>https://www.aa.com.tr/tr/ekonomi/aycicegi-1</link>
+  <pubDate>Sun, 30 Aug 2026 11:01:59 +0300</pubDate>
+</item>
+</channel></rss>`;
+
+const DUNYA_FIXTURE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<title>Dünya Gazetesi</title>
+<item>
+  <title><![CDATA[Kira sözleşmelerinde yeni dönem]]></title>
+  <link>https://www.dunya.com/ekonomi/kira-sozlesmelerinde-yeni-donem</link>
+  <pubDate>Sun, 30 Aug 2026 13:07:00 +0300</pubDate>
+</item>
+<item>
+  <title><![CDATA[Galatasaray Rafael Leao'yu kadrosuna kattı]]></title>
+  <link>https://www.dunya.com/spor/galatasaray-leao</link>
+  <pubDate>Sun, 30 Aug 2026 13:21:00 +0300</pubDate>
+</item>
+</channel></rss>`;
+
+function makeMultiUrlMockFetch(responsesByUrl) {
+  return async (url) => {
+    const key = String(url);
+    const entry = responsesByUrl[key];
+    if (!entry) throw new Error(`no mock configured for ${key}`);
+    if (entry.error) throw entry.error;
+    return {
+      ok: entry.ok ?? true,
+      status: entry.status ?? 200,
+      headers: { get: (name) => (name.toLowerCase() === "content-type" ? (entry.contentType ?? "application/rss+xml; charset=UTF-8") : null) },
+      arrayBuffer: async () => new TextEncoder().encode(entry.body).buffer,
+    };
+  };
+}
+
+const AA_URL = "https://www.aa.com.tr/tr/rss/default?cat=ekonomi";
+const DUNYA_URL = "https://www.dunya.com/rss";
+
+test("economyNews.ts: extracts relevant items from both feeds, dropping unrelated ones (rent/kira qualifies, sunflower harvest and football do not)", async () => {
+  const economyNews = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/economyNews.ts",
+    (specifier) => {
+      if (specifier === "../types") return {};
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../relevance") return relevance;
+      return {};
+    },
+    {
+      fetch: makeMultiUrlMockFetch({
+        [AA_URL]: { body: AA_ECONOMY_FIXTURE_RSS },
+        [DUNYA_URL]: { body: DUNYA_FIXTURE_RSS },
+      }),
+      URL,
+      TextEncoder,
+      Buffer,
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      console: { error: () => {}, log: () => {}, warn: () => {} },
+    },
+  );
+
+  const results = await economyNews.fetchEconomyNewsAnnouncements();
+  assert.equal(results.length, 2, "only the two genuinely rent/property-relevant items should survive across both feeds");
+  assert.ok(results.every((r) => /kira/i.test(r.title)));
+  assert.ok(results.some((r) => r.publisher === "Anadolu Ajansı (AA)"));
+  assert.ok(results.some((r) => r.publisher === "Dünya Gazetesi"));
+  assert.ok(results.every((r) => r.tier === "financial-news"));
+  const aaResult = results.find((r) => r.publisher === "Anadolu Ajansı (AA)");
+  assert.equal(aaResult.publishedAt, new Date("2026-08-30T13:01:54+03:00").toISOString());
+});
+
+test("economyNews.ts: a bare interest-rate/inflation story with no housing angle is correctly excluded (generic economy content is not Layer 2 material)", async () => {
+  const genericEconomyRss = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<item>
+  <title><![CDATA[TCMB faiz kararını açıkladı]]></title>
+  <link>https://www.aa.com.tr/tr/ekonomi/tcmb-faiz-karari</link>
+  <pubDate>Sun, 30 Aug 2026 14:00:00 +0300</pubDate>
+</item>
+<item>
+  <title><![CDATA[Enflasyon verileri açıklandı]]></title>
+  <link>https://www.aa.com.tr/tr/ekonomi/enflasyon</link>
+  <pubDate>Sun, 30 Aug 2026 14:10:00 +0300</pubDate>
+</item>
+</channel></rss>`;
+  const economyNews = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/economyNews.ts",
+    (specifier) => {
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../relevance") return relevance;
+      return {};
+    },
+    {
+      fetch: makeMultiUrlMockFetch({
+        [AA_URL]: { body: genericEconomyRss },
+        [DUNYA_URL]: { body: "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel></channel></rss>" },
+      }),
+      URL,
+      TextEncoder,
+      Buffer,
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      console: { error: () => {}, log: () => {}, warn: () => {} },
+    },
+  );
+
+  const results = await economyNews.fetchEconomyNewsAnnouncements();
+  assert.deepEqual(Array.from(results), [], "bare faiz/enflasyon with no housing-specific phrase must not qualify Layer 2");
+});
+
+test("economyNews.ts: one feed failing never breaks the other — the AA outage still leaves Dünya's real entry", async () => {
+  const economyNews = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/economyNews.ts",
+    (specifier) => {
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../relevance") return relevance;
+      return {};
+    },
+    {
+      fetch: makeMultiUrlMockFetch({
+        [AA_URL]: { error: new Error("simulated network failure") },
+        [DUNYA_URL]: { body: DUNYA_FIXTURE_RSS },
+      }),
+      URL,
+      TextEncoder,
+      Buffer,
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      console: { error: () => {}, log: () => {}, warn: () => {} },
+    },
+  );
+
+  const results = await economyNews.fetchEconomyNewsAnnouncements();
+  assert.equal(results.length, 1);
+  assert.equal(results[0].publisher, "Dünya Gazetesi");
+});
+
+test("economyNews.ts: both feeds failing returns an empty list, never throws", async () => {
+  const economyNews = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/economyNews.ts",
+    (specifier) => {
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../relevance") return relevance;
+      return {};
+    },
+    {
+      fetch: async () => {
+        throw new Error("simulated total outage");
+      },
+      URL,
+      TextEncoder,
+      Buffer,
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      console: { error: () => {}, log: () => {}, warn: () => {} },
+    },
+  );
+
+  const results = await economyNews.fetchEconomyNewsAnnouncements();
+  assert.deepEqual(Array.from(results), []);
+});
+
+// ============================================================
+// Current Content Radar V1: retrieval/router.ts registers all 5
 // adapters, and one throwing/hanging adapter can never break the others
 // or the overall discovery request.
 // ============================================================
 
-test("retrieval/router.ts registers all 4 live adapters (tcmb, tkgm, resmiGazete, csb)", () => {
+test("retrieval/router.ts registers all 5 live adapters (tcmb, tkgm, resmiGazete, csb, economyNews)", () => {
   const routerSource = fs.readFileSync(
     path.join(projectRoot, "src/lib/ai/research/retrieval/router.ts"),
     "utf8",
@@ -650,6 +833,7 @@ test("retrieval/router.ts registers all 4 live adapters (tcmb, tkgm, resmiGazete
   assert.match(routerSource, /fetchTkgmAnnouncements/);
   assert.match(routerSource, /fetchResmiGazeteAnnouncements/);
   assert.match(routerSource, /fetchCsbAnnouncements/);
+  assert.match(routerSource, /fetchEconomyNewsAnnouncements/);
 });
 
 test("retrieveCurrentInformation: one adapter throwing never breaks the others — the combined result still includes every working adapter's entries", async () => {
@@ -676,15 +860,19 @@ test("retrieveCurrentInformation: one adapter throwing never breaks the others �
       if (specifier === "./providers/csb") {
         return { fetchCsbAnnouncements: async () => [makeResult({ title: "İmar Planı Onaylandı", url: "https://csb.gov.tr/x/b" })] };
       }
+      if (specifier === "./providers/economyNews") {
+        return { fetchEconomyNewsAnnouncements: async () => [makeResult({ title: "Kira Sözleşmelerinde Yeni Dönem", url: "https://www.dunya.com/x/c" })] };
+      }
       return {};
     },
     { console: { error: () => {}, log: () => {}, warn: () => {} } },
   );
 
-  const results = await router.retrieveCurrentInformation({ keywords: ["faiz", "imar"] });
-  assert.equal(results.length, 2, "both working adapters' entries must survive two other adapters throwing");
+  const results = await router.retrieveCurrentInformation({ keywords: ["faiz", "imar", "kira"] });
+  assert.equal(results.length, 3, "all three working adapters' entries must survive two other adapters throwing");
   assert.ok(results.some((r) => r.title === "TCMB Faiz Duyurusu"));
   assert.ok(results.some((r) => r.title === "İmar Planı Onaylandı"));
+  assert.ok(results.some((r) => r.title === "Kira Sözleşmelerinde Yeni Dönem"));
 });
 
 // ============================================================
@@ -905,6 +1093,91 @@ test("recurring series: quality > count — fewer than the requested limit is re
   const built = discover.buildContentOpportunities(results, now);
   const ranked = discover.rankContentOpportunities(built, ["faiz"], 5);
   assert.equal(ranked.length, 1, "quality > count: must not pad the shortlist with repeats of the same series");
+});
+
+// ============================================================
+// Current Content Radar V1: semantic near-duplicate detection — a second
+// SOURCE (Layer 2, providers/economyNews.ts) can report a differently-
+// worded story about the SAME underlying development a Layer 1 official
+// adapter already found. deriveSeriesKey's exact-trailing-parenthetical
+// scheme does not catch this (the titles aren't near-identical strings);
+// this is the Jaccard-token-overlap layer that does.
+// ============================================================
+
+test("semantic near-duplicate: the same TCMB rate decision reported by both TCMB directly and AA (differently worded) collapses to one shortlist slot", () => {
+  const now = new Date("2026-08-27T00:00:00.000Z");
+  const results = [
+    makeResult({
+      title: "Merkez Bankası Politika Faizini Yüzde 37'de Sabit Tuttu",
+      url: "https://www.tcmb.gov.tr/x/faiz-karari-2026-30",
+      publishedAt: "2026-08-25T10:00:00.000Z",
+      tier: "official-authority",
+    }),
+    makeResult({
+      title: "Merkez Bankası Politika Faizini Yüzde 37 Seviyesinde Sabit Bıraktı",
+      url: "https://www.aa.com.tr/tr/ekonomi/merkez-bankasi-faiz-1",
+      publishedAt: "2026-08-25T11:30:00.000Z",
+      tier: "financial-news",
+    }),
+    makeResult({
+      title: "Kira Sözleşmelerinde Yeni Dönem Başlıyor",
+      url: "https://www.dunya.com/x/kira-yeni-donem",
+      publishedAt: "2026-08-25T12:00:00.000Z",
+      tier: "financial-news",
+    }),
+  ];
+  const built = discover.buildContentOpportunities(results, now);
+  const ranked = discover.rankContentOpportunities(built, ["faiz", "kira"], 5);
+
+  const faizEntries = ranked.filter((o) => /faiz/i.test(o.topic));
+  assert.equal(faizEntries.length, 1, "the same rate decision reported by two sources must collapse to one opportunity");
+  // Higher-tier (official-authority) source wins the shared slot over the
+  // same-scoring-tie financial-news report of the identical development.
+  assert.equal(faizEntries[0].sources[0].tier, "official-authority");
+  // The genuinely distinct rental story must still get its own slot.
+  assert.ok(ranked.some((o) => /kira/i.test(o.topic)));
+});
+
+test("semantic near-duplicate: two genuinely different official announcements that merely share bureaucratic boilerplate ('İlişkin', 'Basın Duyurusu') are NOT collapsed", () => {
+  const now = new Date("2026-08-27T00:00:00.000Z");
+  const results = [
+    makeResult({
+      title: "Faiz Oranlarına İlişkin Basın Duyurusu",
+      url: "https://www.tcmb.gov.tr/x/duy-a",
+      publishedAt: "2026-08-25T00:00:00.000Z",
+      tier: "official-authority",
+    }),
+    makeResult({
+      title: "Faiz Kararına İlişkin İkinci Basın Duyurusu",
+      url: "https://www.tcmb.gov.tr/x/duy-b",
+      publishedAt: "2026-08-25T00:00:00.000Z",
+      tier: "official-authority",
+    }),
+  ];
+  const built = discover.buildContentOpportunities(results, now);
+  const ranked = discover.rankContentOpportunities(built, ["faiz"], 5);
+  assert.equal(ranked.length, 2, "genuinely distinct announcements must not be collapsed merely for sharing generic administrative vocabulary");
+});
+
+test("semantic near-duplicate: differently-worded but textually-similar titles published more than 4 days apart are never collapsed", () => {
+  const now = new Date("2026-08-27T00:00:00.000Z");
+  const results = [
+    makeResult({
+      title: "Merkez Bankası Politika Faizini Yüzde 37'de Sabit Tuttu",
+      url: "https://www.tcmb.gov.tr/x/faiz-karari-2026-30",
+      publishedAt: "2026-08-25T10:00:00.000Z",
+      tier: "official-authority",
+    }),
+    makeResult({
+      title: "Merkez Bankası Politika Faizini Yüzde 37 Seviyesinde Sabit Bıraktı",
+      url: "https://www.aa.com.tr/tr/ekonomi/merkez-bankasi-faiz-eski-haber",
+      publishedAt: "2026-08-10T10:00:00.000Z",
+      tier: "financial-news",
+    }),
+  ];
+  const built = discover.buildContentOpportunities(results, now);
+  const ranked = discover.rankContentOpportunities(built, ["faiz"], 5);
+  assert.equal(ranked.length, 2, "textually-similar titles more than 4 days apart are treated as distinct — never assumed to be the same event, since being 15 days apart makes them plausibly two different rate decisions");
 });
 
 // ============================================================

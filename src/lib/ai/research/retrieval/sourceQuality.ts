@@ -27,13 +27,22 @@ const TIER_1_OFFICIAL_DOMAINS = [
   "sariyer.bel.tr",
 ];
 
-// TIER 2/3/4 allowlists are intentionally empty today — no primary-data,
-// financial-news, or specialist adapter is actually integrated yet (only
-// the Tier-1 TCMB adapter is live; see the Phase 2 final report's "exact
-// live sources" section). A future adapter for one of these tiers adds its
-// domain(s) here — this function's own logic never changes.
+// TIER 2 allowlist is intentionally still empty — no primary-data source
+// (e.g. a dedicated real-estate price-index publisher) has been verified
+// and integrated yet.
 const TIER_2_PRIMARY_DATA_DOMAINS: string[] = [];
-const TIER_3_FINANCIAL_NEWS_DOMAINS: string[] = [];
+
+// TIER 3 (Current Content Radar V1 — Layer 2 news/market-attention
+// adapter, providers/economyNews.ts): only the domains this V1 actually
+// retrieves from. Deliberately NOT pre-populated with other reputable
+// outlets (e.g. Bloomberg HT) that aren't wired to a live adapter yet —
+// an unused domain in this list would misleadingly imply a source this
+// pipeline doesn't actually query.
+const TIER_3_FINANCIAL_NEWS_DOMAINS: string[] = [
+  "aa.com.tr", // Anadolu Ajansı — Turkey's national wire service
+  "dunya.com", // Dünya Gazetesi — established Turkish business/economy daily
+];
+
 const TIER_4_SPECIALIST_DOMAINS: string[] = [];
 
 function hostnameOf(url: string): string | null {
