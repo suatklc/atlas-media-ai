@@ -1,6 +1,6 @@
 import { type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { getAnthropicClient, AI_MODEL } from "@/lib/ai/client";
+import { getOpenAITextClient, AI_TEXT_MODEL } from "@/lib/ai/client";
 import { SYSTEM_PROMPT } from "@/lib/ai/system-prompt";
 import { knowledgeEntries } from "@/lib/ai/knowledge";
 import { matchTopics } from "@/lib/ai/knowledge/router";
@@ -189,9 +189,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let anthropic;
+  let openai;
   try {
-    anthropic = getAnthropicClient();
+    openai = getOpenAITextClient();
   } catch {
     return jsonError("Yapay zeka servisi şu anda kullanılamıyor.", 500);
   }
@@ -260,18 +260,30 @@ export async function POST(request: NextRequest) {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        const anthropicStream = anthropic.messages.stream({
-          model: AI_MODEL,
-          max_tokens: 4096,
-          system: finalSystemContextWithPlatform,
-          messages,
+        // Chat Completions, not Responses — the simplest, most direct
+        // streaming shape for a system-prompt + user/assistant-turn
+        // conversation, matching exactly what the Anthropic call above did
+        // (system string + messages array). max_completion_tokens, not the
+        // deprecated max_tokens, per the installed SDK's own current types.
+        const openaiStream = await openai.chat.completions.create({
+          model: AI_TEXT_MODEL,
+          max_completion_tokens: 4096,
+          stream: true,
+          messages: [{ role: "system", content: finalSystemContextWithPlatform }, ...messages],
         });
 
-        anthropicStream.on("text", (text) => {
-          controller.enqueue(encoder.encode(text));
-        });
-
-        await anthropicStream.finalMessage();
+        // Re-encoded into the exact same plain-UTF-8-byte ReadableStream
+        // the frontend already consumes via getReader()/TextDecoder — the
+        // browser never needs to know which provider produced this text,
+        // and every downstream marker ([[VISUAL_HEADLINE: ...]],
+        // [[CAROUSEL_STRUCTURE: ...]], etc.) is parsed from this same
+        // plain-text stream exactly as before.
+        for await (const chunk of openaiStream) {
+          const delta = chunk.choices[0]?.delta?.content;
+          if (delta) {
+            controller.enqueue(encoder.encode(delta));
+          }
+        }
         controller.close();
       } catch (error) {
         console.error("Assistant stream error:", error);
