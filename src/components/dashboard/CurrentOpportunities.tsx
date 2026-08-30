@@ -93,10 +93,16 @@ export default function CurrentOpportunities() {
     setVisual(null);
 
     try {
+      // Research Breadth Expansion: 5 -> 10 (the route's own MAX_LIMIT,
+      // unchanged) so a run that genuinely has 6-10 distinct, qualifying
+      // opportunities can actually show all of them — discoverContent
+      // OpportunitiesOptions.limit was always a ceiling, never a forced
+      // count, so this never pads a thin result; rankContentOpportunities
+      // still returns fewer when fewer genuinely qualify.
       const response = await fetch("/api/research/discover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limit: 5 }),
+        body: JSON.stringify({ limit: 10 }),
       });
       const data = await response.json().catch(() => null);
 

@@ -668,6 +668,112 @@ test("recurring series: quality > count — fewer than the requested limit is re
   assert.equal(ranked.length, 1, "quality > count: must not pad the shortlist with repeats of the same series");
 });
 
+// ============================================================
+// Research Breadth Expansion: new topic families (zoning-construction,
+// rental-housing), broadened keyword vocabulary, and the diversity soft
+// cap on the shortlist-fill pass.
+// ============================================================
+
+test("Turkish dotted-İ regression: a title that starts with the capitalized word (İmar, İstatistik) still classifies correctly — plain regex /i does not fold İ to i", () => {
+  const now = new Date("2026-08-27T00:00:00.000Z");
+  const results = [
+    makeResult({ title: "İmar Planı Değişikliği Onaylandı", url: "https://www.tkgm.gov.tr/x/imar-cap", tier: "official-authority", publishedAt: "2026-08-20T00:00:00.000Z" }),
+    makeResult({ title: "İstatistik Verileri Açıklandı", url: "https://www.tuik.gov.tr/x/istatistik-cap", tier: "official-authority", publishedAt: "2026-08-20T00:00:00.000Z" }),
+  ];
+  const built = discover.buildContentOpportunities(results, now);
+  assert.equal(built[0].topicFamily, "zoning-construction", "capitalized 'İmar' must still match the zoning-construction rule");
+  assert.equal(built[1].topicFamily, "market-data", "capitalized 'İstatistik' must still match the market-data rule");
+  // suggestContentType and buildRiskCaveat share the same bug class —
+  // both must also see through the capitalized form.
+  assert.equal(built[0].suggestedContentType, "educational");
+  assert.ok(built[0].riskCaveat, "a capitalized 'İmar' title must still receive the regulatory caveat");
+});
+
+test("topic family: zoning/construction content (imar) is now its own family, separate from tapu/kadastro regulation-property", () => {
+  const now = new Date("2026-08-27T00:00:00.000Z");
+  const results = [
+    makeResult({ title: "İmar Planı Değişikliği Onaylandı", url: "https://www.tkgm.gov.tr/x/imar", tier: "official-authority", publishedAt: "2026-08-20T00:00:00.000Z" }),
+  ];
+  const [built] = discover.buildContentOpportunities(results, now);
+  assert.equal(built.topicFamily, "zoning-construction");
+});
+
+test("topic family: rental-market content (kira) has its own family instead of falling through to the generic catch-all", () => {
+  const now = new Date("2026-08-27T00:00:00.000Z");
+  const results = [
+    makeResult({ title: "Kira Artış Oranlarına İlişkin Açıklama", url: "https://www.tcmb.gov.tr/x/kira", tier: "official-authority", publishedAt: "2026-08-20T00:00:00.000Z" }),
+  ];
+  const [built] = discover.buildContentOpportunities(results, now);
+  assert.equal(built.topicFamily, "rental-housing");
+});
+
+test("topic family: a pure tapu/kadastro title is still regulation-property, unaffected by imar's split into its own family", () => {
+  const now = new Date("2026-08-27T00:00:00.000Z");
+  const results = [
+    makeResult({ title: "Tapu Harcı Güncellemesi", url: "https://www.tkgm.gov.tr/x/harc", tier: "official-authority", publishedAt: "2026-08-20T00:00:00.000Z" }),
+  ];
+  const [built] = discover.buildContentOpportunities(results, now);
+  assert.equal(built.topicFamily, "regulation-property");
+});
+
+test("buildRetrievalQuery covers the expanded category vocabulary without dropping any original term", () => {
+  const query = discover.buildRetrievalQuery(businessProfile.ATLAS_DEFAULT_BUSINESS_PROFILE);
+  for (const term of ["konut", "faiz", "kredi", "tapu", "imar", "fiyat", "piyasa", "gayrimenkul"]) {
+    assert.ok(query.keywords.includes(term), `must keep original term: ${term}`);
+  }
+  for (const term of ["kira", "kadastro", "vergi", "enflasyon", "inşaat", "takbis"]) {
+    assert.ok(query.keywords.includes(term), `must add new category term: ${term}`);
+  }
+});
+
+test("category diversity: a rich multi-family pool spans at least 5 distinct families and no family exceeds the soft cap of 2", () => {
+  const now = new Date("2026-08-27T00:00:00.000Z");
+  const results = [
+    makeResult({ title: "Faiz Oranlarına İlişkin Basın Duyurusu (2026-30)", url: "https://www.tcmb.gov.tr/x/faiz-30", publishedAt: "2026-08-25T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "Kredi Faizlerinde Yeni Düzenleme", url: "https://www.tcmb.gov.tr/x/kredi-2", publishedAt: "2026-08-24T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "PPK Toplantı Özeti Yayımlandı", url: "https://www.tcmb.gov.tr/x/ppk-3", publishedAt: "2026-08-23T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "Tapu İşlemlerinde Yeni Uygulama Başladı", url: "https://www.tkgm.gov.tr/x/tapu-1", publishedAt: "2026-08-21T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "Kadastro Güncelleme Çalışmaları Tamamlandı", url: "https://www.tkgm.gov.tr/x/kadastro-1", publishedAt: "2026-08-20T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "İmar Planı Değişikliği Onaylandı", url: "https://www.tkgm.gov.tr/x/imar-1", publishedAt: "2026-08-19T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "Kira Artış Oranlarına İlişkin Açıklama", url: "https://www.tcmb.gov.tr/x/kira-1", publishedAt: "2026-08-18T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "Konut Satış İstatistikleri Açıklandı", url: "https://www.tuik.gov.tr/x/satis-1", publishedAt: "2026-08-17T00:00:00.000Z", tier: "official-authority" }),
+  ];
+  const built = discover.buildContentOpportunities(results, now);
+  const ranked = discover.rankContentOpportunities(
+    built,
+    ["faiz", "kredi", "tapu", "kadastro", "imar", "kira", "konut"],
+    6, // fewer than the 8-candidate pool, so the soft cap is genuinely exercised
+  );
+
+  assert.equal(ranked.length, 6);
+  const families = ranked.map((o) => o.topicFamily);
+  const uniqueFamilies = new Set(families);
+  assert.ok(uniqueFamilies.size >= 5, `expected at least 5 distinct families, got: ${[...uniqueFamilies].join(", ")}`);
+  for (const family of uniqueFamilies) {
+    assert.ok(
+      families.filter((f) => f === family).length <= 2,
+      `family ${family} exceeded the soft cap of 2 despite 8 candidates being available for a limit of 6`,
+    );
+  }
+});
+
+test("category diversity never forces a weak/stale zoning entry into the shortlist merely to fill a new family slot", () => {
+  const now = new Date("2026-08-27T00:00:00.000Z");
+  const results = [
+    makeResult({ title: "Faiz Oranlarına İlişkin Basın Duyurusu", url: "https://www.tcmb.gov.tr/x/faiz-strong", publishedAt: "2026-08-25T00:00:00.000Z", tier: "official-authority" }),
+    makeResult({ title: "Kredi Faizlerinde Yeni Düzenleme", url: "https://www.tcmb.gov.tr/x/kredi-strong", publishedAt: "2026-08-24T00:00:00.000Z", tier: "official-authority" }),
+    // Weak, stale, commentary-only zoning-construction entry — must not be
+    // forced in merely to represent its (new) family.
+    makeResult({ title: "İmar hakkında eski bir yorum yazısı", url: "https://random-blog.example/eski-imar-yorumu", publishedAt: "2020-01-01T00:00:00.000Z", tier: "commentary" }),
+  ];
+  const built = discover.buildContentOpportunities(results, now);
+  const ranked = discover.rankContentOpportunities(built, ["faiz", "kredi", "imar"], 2);
+
+  assert.equal(ranked.length, 2);
+  assert.ok(ranked.every((o) => o.topicFamily === "credit-interest"));
+  assert.ok(!ranked.some((o) => o.sources.some((s) => s.url.includes("random-blog.example"))));
+});
+
 test("recurring series: distinct, non-recurring titles are never merged by the series key", () => {
   const now = new Date("2026-08-27T00:00:00.000Z");
   const results = [

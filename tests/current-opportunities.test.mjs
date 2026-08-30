@@ -254,6 +254,26 @@ test("buildOpportunityForFormat no longer exists — format never rewrites Conte
   assert.equal(formatRecommendation.buildOpportunityForFormat, undefined);
 });
 
+// ============================================================
+// Research Breadth Expansion: the dashboard's own request must actually
+// ask for the 6-10 target range — the route already supported up to 10
+// (MAX_LIMIT), but the client hardcoded 5, capping every real run well
+// below the target regardless of how many genuine opportunities existed.
+// ============================================================
+
+test("CurrentOpportunities.tsx requests the route's own MAX_LIMIT (10), not the old hardcoded 5", () => {
+  const componentSource = fs.readFileSync(
+    path.join(projectRoot, "src/components/dashboard/CurrentOpportunities.tsx"),
+    "utf8",
+  );
+  const routeSource = fs.readFileSync(
+    path.join(projectRoot, "src/app/api/research/discover/route.ts"),
+    "utf8",
+  );
+  assert.match(componentSource, /body:\s*JSON\.stringify\(\{\s*limit:\s*10\s*\}\)/);
+  assert.match(routeSource, /MAX_LIMIT\s*=\s*10/, "the component's requested limit must match the route's real ceiling");
+});
+
 test("isVisualFormat accepts only 'single'/'carousel' and rejects everything else", () => {
   assert.equal(formatRecommendation.isVisualFormat("single"), true);
   assert.equal(formatRecommendation.isVisualFormat("carousel"), true);

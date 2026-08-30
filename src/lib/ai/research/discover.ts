@@ -22,12 +22,50 @@ import { retrieveCurrentInformation } from "./retrieval/router";
 // Business-profile-biased query construction
 // ============================================================
 
-// Base real-estate topic vocabulary — combined with, never replacing,
-// BusinessProfile's own expertise/geography terms. This is what keeps the
-// retrieval engine itself generic: a future BusinessProfile with a
-// different industry/geography changes what gets appended here, not this
-// function's logic, and never touches retrieval/router.ts or any adapter.
-const BASE_TOPIC_KEYWORDS = ["konut", "faiz", "kredi", "tapu", "imar", "fiyat", "piyasa", "gayrimenkul"];
+// Research Breadth Expansion: root cause of the "only 1-2 results" report
+// was NOT retrieval limits, filtering, or dedup — CANDIDATE_POOL_SIZE
+// below was already generous (200) and ranking/dedup were already correct.
+// It was that today's two live adapters (TCMB, TKGM) are FIXED official
+// feeds, not a real search API (see retrieval/router.ts's own comment:
+// "query" here means "keep the fixed entries these feeds already publish
+// that are textually relevant to these keywords", never a string actually
+// sent over the network) — so retrieveCurrentInformation's relevance
+// filter (router.ts: keep only entries where at least one keyword appears
+// in the title/snippet) was silently discarding genuinely current,
+// genuinely relevant entries from BOTH feeds' broader content (TCMB
+// publishes two feeds — general press releases, not just PPK rate
+// decisions; TKGM publishes both /duyurular AND /haberler) whenever their
+// titles used real-estate vocabulary this list didn't cover — "kira" had
+// no entry at all, "imar"/"inşaat"/"ruhsat" (zoning/construction),
+// "kadastro"/"takbis" (cadastre), "vergi"/"harç" (tax/fee), and
+// "enflasyon"/"endeks"/"istatistik"/"yatırım" (economic data) were all
+// absent. This is a query-diversification fix, not a new "search
+// portfolio": since the adapters accept no per-category query parameter,
+// "diversifying the query" here means broadening and CATEGORIZING the
+// single relevance-keyword vocabulary these fixed feeds are filtered
+// against — bounded, zero new network calls, same one retrieval pass.
+// Organized by category (loosely mirroring this task's own 8 content
+// categories) for readability/maintainability, flattened into one list for
+// buildRetrievalQuery below exactly as the old flat BASE_TOPIC_KEYWORDS
+// was — every original term (konut, faiz, kredi, tapu, imar, fiyat,
+// piyasa, gayrimenkul) is still present, unchanged in meaning.
+const TOPIC_KEYWORD_CATEGORIES: { category: string; keywords: string[] }[] = [
+  { category: "tapu-kadastro", keywords: ["tapu", "kadastro", "takbis", "tescil"] },
+  { category: "imar-yapilasma", keywords: ["imar", "inşaat", "ruhsat", "kentsel dönüşüm"] },
+  { category: "konut-piyasasi", keywords: ["konut", "satış", "fiyat"] },
+  { category: "kira", keywords: ["kira", "kiralık"] },
+  { category: "kredi-faiz", keywords: ["faiz", "kredi", "ipotek"] },
+  { category: "ekonomi-yatirim", keywords: ["enflasyon", "endeks", "istatistik", "yatırım"] },
+  { category: "vergi-mevzuat", keywords: ["vergi", "harç", "mevzuat", "yönetmelik"] },
+  { category: "piyasa-genel", keywords: ["piyasa", "gayrimenkul"] },
+];
+
+// Combined with, never replacing, BusinessProfile's own expertise/
+// geography terms. This is what keeps the retrieval engine itself
+// generic: a future BusinessProfile with a different industry/geography
+// changes what gets appended here, not this function's logic, and never
+// touches retrieval/router.ts or any adapter.
+const BASE_TOPIC_KEYWORDS = TOPIC_KEYWORD_CATEGORIES.flatMap((entry) => entry.keywords);
 
 export function buildRetrievalQuery(profile: BusinessProfile = ATLAS_DEFAULT_BUSINESS_PROFILE): RetrievalQuery {
   const geographyTerms = [profile.geography.primary, ...profile.geography.nearby];
@@ -102,6 +140,25 @@ export function classifyFreshness(publishedAt: string, now: Date): ContentOpport
   return "evergreen-adjacent";
 }
 
+// Research Breadth Expansion: found while adding the zoning-construction
+// family below — plain JS regex /i case-insensitivity does NOT correctly
+// fold the Turkish dotted capital İ to plain "i" (verified:
+// /imar/i.test("İmar Planı") is false; "İmar".toLowerCase() produces
+// "i̇mar" — i + a combining dot, not "imar"). Since real official Turkish
+// titles routinely capitalize their first word ("İmar Planı Değişikliği
+// Onaylandı"), every keyword-matching regex in this file that could start
+// a title (imar, istatistik, ...) was silently failing to match its own
+// most natural, common form — a pre-existing latent bug (not introduced by
+// this task, but surfaced by it), affecting suggestContentType,
+// classifyTopicFamily, and buildRiskCaveat's REGULATORY_PATTERN alike.
+// toLocaleLowerCase("tr-TR") is the correct fix (already the established
+// pattern elsewhere in this codebase, e.g. content/intent.ts's own
+// normalizedWord) — every pattern below now tests against this normalized
+// form instead of relying on the /i flag.
+function normalizedTitle(title: string): string {
+  return title.toLocaleLowerCase("tr-TR");
+}
+
 // ============================================================
 // suggestedContentType — a hint only, reusing the EXISTING ContentIntent
 // enum (content/types.ts), never a new one. Exactly like research/
@@ -121,8 +178,9 @@ const SUGGESTED_TYPE_RULES: { pattern: RegExp; type: ContentIntent }[] = [
 // news item is never, by itself, evidence that the user wants to
 // advertise a specific property for sale.
 function suggestContentType(title: string): ContentIntent {
+  const normalized = normalizedTitle(title);
   for (const rule of SUGGESTED_TYPE_RULES) {
-    if (rule.pattern.test(title)) return rule.type;
+    if (rule.pattern.test(normalized)) return rule.type;
   }
   return "educational";
 }
@@ -136,9 +194,24 @@ function suggestContentType(title: string): ContentIntent {
 // of the keyword triggers below.
 // ============================================================
 
+// Research Breadth Expansion: "imar" moved OUT of regulation-property's
+// own pattern into the new zoning-construction rule below (previously
+// conflated zoning/planning content with tapu/kadastro content under one
+// family — no existing test pinned "imar" to regulation-property, so this
+// is a safe, isolated split). "harç" (fee) added to regulation-property —
+// TKGM's own real announcement style ("Tapu Harcı Güncellemesi") is
+// exactly this category. Deliberately no "yapı" in the zoning pattern:
+// this codebase already has a documented, live-verified false-positive
+// case for that exact substring ("...Değişiklik Yapılmasına Dair
+// Yönetmelik" contains "Yapılmasına", a conjugated form of "yapmak", not
+// the noun "yapı" — see resmiGazete.ts/its own test) — omitting the word
+// avoids reintroducing that bug class rather than needing a Turkish word-
+// boundary regex for one topic-family hint.
 const TOPIC_FAMILY_RULES: { pattern: RegExp; family: TopicFamily }[] = [
   { pattern: /faiz|kredi|ppk|para politikası/i, family: "credit-interest" },
-  { pattern: /tapu|imar|kadastro|mevzuat|yönetmelik|kanun|resmî gazete|resmi gazete/i, family: "regulation-property" },
+  { pattern: /tapu|kadastro|mevzuat|yönetmelik|kanun|resmî gazete|resmi gazete|harç/i, family: "regulation-property" },
+  { pattern: /imar|inşaat|ruhsat|kentsel dönüşüm/i, family: "zoning-construction" },
+  { pattern: /kira|kiralık/i, family: "rental-housing" },
   { pattern: /endeks|istatistik|fiyat|satış|enflasyon/i, family: "market-data" },
   { pattern: /sarıyer|zekeriyaköy|uskumruköy|demirciköy|gümüşdere|kilyos|belediye/i, family: "local-regional" },
 ];
@@ -152,8 +225,9 @@ function hostnameOf(url: string): string {
 }
 
 function classifyTopicFamily(title: string, url: string): TopicFamily {
+  const normalized = normalizedTitle(title);
   for (const rule of TOPIC_FAMILY_RULES) {
-    if (rule.pattern.test(title)) return rule.family;
+    if (rule.pattern.test(normalized)) return rule.family;
   }
 
   const hostname = hostnameOf(url);
@@ -178,7 +252,7 @@ function buildRiskCaveat(sources: ResearchSource[], title: string): string | und
   if (allCommentary) {
     return "Bu bilgi yalnızca ikincil yorum kaynaklarına dayanmaktadır; doğrulanmış resmi veri olarak sunulmamalıdır.";
   }
-  if (REGULATORY_PATTERN.test(title)) {
+  if (REGULATORY_PATTERN.test(normalizedTitle(title))) {
     return "Bu bilgi genel bilgilendirme niteliğindedir; bireysel hukuki tavsiye değildir; güncel uygulama için ilgili resmi kurumla teyit edilmelidir.";
   }
   return undefined;
@@ -309,10 +383,16 @@ function deriveSeriesKey(title: string): string {
 // (strongest market-data, then credit-interest, then regulation-property,
 // then local-regional, then investment-education, then highest-value
 // remaining). Not a scoring weight, just a tie-break/traversal order.
+// Research Breadth Expansion: inserted the 2 new families (zoning-
+// construction, rental-housing) between regulation-property and
+// local-regional — every original family keeps its exact prior relative
+// order, so this is a pure insertion, not a reordering.
 const FAMILY_PRIORITY: TopicFamily[] = [
   "market-data",
   "credit-interest",
   "regulation-property",
+  "zoning-construction",
+  "rental-housing",
   "local-regional",
   "investment-education",
 ];
@@ -353,6 +433,18 @@ const DIVERSITY_QUALITY_FLOOR = 4;
 // fewer than `limit` genuinely distinct, qualifying opportunities, fewer
 // than `limit` are returned — this function never pads a short result
 // with a same-series repeat merely to hit the requested count.
+// Research Breadth Expansion: a soft per-family cap on the FILL pass only
+// (never on the guaranteed-slot pass above it, and never able to shrink
+// the final list) — the task's own "avoid returning 6 nearly identical
+// legal/tapu topics simply because they score highly individually"
+// requirement. 2 keeps the shortlist genuinely spread across categories
+// (e.g. 5 families x 2 already covers a limit of 10) while still allowing
+// a strong 3rd-in-family item when nothing else qualifies — pass 2b below
+// exists exactly for that "quality > diversity when there is no real
+// choice" fallback, so this can only ever prefer diversity, never enforce
+// it at the cost of returning fewer opportunities than genuinely qualify.
+const FAMILY_SOFT_CAP = 2;
+
 export function rankContentOpportunities(
   opportunities: RankedContentOpportunity[],
   keywords: string[],
@@ -371,6 +463,7 @@ export function rankContentOpportunities(
   const picked: RankedContentOpportunity[] = [];
   const pickedSet = new Set<RankedContentOpportunity>();
   const pickedSeriesKeys = new Set<string>();
+  const familyCounts = new Map<TopicFamily, number>();
 
   function isAvailable(entry: (typeof scored)[number]): boolean {
     return !pickedSet.has(entry.opportunity) && !pickedSeriesKeys.has(deriveSeriesKey(entry.opportunity.topic));
@@ -380,6 +473,8 @@ export function rankContentOpportunities(
     picked.push(entry.opportunity);
     pickedSet.add(entry.opportunity);
     pickedSeriesKeys.add(deriveSeriesKey(entry.opportunity.topic));
+    const family = entry.opportunity.topicFamily;
+    familyCounts.set(family, (familyCounts.get(family) ?? 0) + 1);
   }
 
   for (const family of FAMILY_PRIORITY) {
@@ -390,6 +485,21 @@ export function rankContentOpportunities(
     }
   }
 
+  // Pass 2a: fill remaining slots by score, but skip a family once it has
+  // reached FAMILY_SOFT_CAP — diversity-preferring, never quality-lowering
+  // (still walks `scored`, i.e. highest-score-first, within that
+  // constraint).
+  for (const entry of scored) {
+    if (picked.length >= limit) break;
+    if (!isAvailable(entry)) continue;
+    if ((familyCounts.get(entry.opportunity.topicFamily) ?? 0) >= FAMILY_SOFT_CAP) continue;
+    pick(entry);
+  }
+
+  // Pass 2b: only reached if slots still remain after 2a — i.e. every
+  // available family is already at its cap. Fills purely by score with no
+  // cap, so a genuinely thin/undiverse pool still returns as many real
+  // opportunities as qualify, never fewer merely to preserve diversity.
   for (const entry of scored) {
     if (picked.length >= limit) break;
     if (!isAvailable(entry)) continue;

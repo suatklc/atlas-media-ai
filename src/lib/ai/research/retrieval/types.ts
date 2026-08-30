@@ -39,10 +39,19 @@ export type RetrievalOptions = {
 // still owns final content format/purpose; TopicFamily exists only for
 // discover.ts's own ranking/diversity logic and is never read by
 // buildContentPlan or anything downstream of it.
+// Research Breadth Expansion: added "zoning-construction" (imar/inşaat/
+// ruhsat — previously folded into "regulation-property", which conflated
+// zoning with tapu/kadastro content) and "rental-housing" (kira — had no
+// family at all before, falling through to the generic catch-all). Every
+// pre-existing value keeps its exact name and, except for
+// "regulation-property" losing "imar" from its own pattern (see discover
+// .ts's TOPIC_FAMILY_RULES), its exact classification behavior.
 export type TopicFamily =
   | "market-data"
   | "credit-interest"
   | "regulation-property"
+  | "zoning-construction"
+  | "rental-housing"
   | "local-regional"
   | "investment-education";
 
