@@ -819,6 +819,87 @@ test("economyNews.ts: both feeds failing returns an empty list, never throws", a
 });
 
 // ============================================================
+// Current Content Radar V1 micro-fix (Defect 2): RSS-derived titles must
+// safely decode standard HTML/XML entities, including zero-padded
+// numeric character references — the real production defect: Dünya's
+// feed encoded an apostrophe as "&#039;" (not the bare "&#39;" the old
+// decoder only recognized), leaving "Şimşek&#039;ten" undecoded in the
+// UI.
+// ============================================================
+
+test("economyNews.ts: a zero-padded numeric entity (&#039;) decodes to a real apostrophe — the exact live production defect", async () => {
+  const rss = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<item>
+  <title><![CDATA[Kira sözleşmelerinde yeni dönem: Bakan Şimşek&#039;ten e-Devlet çağrısı]]></title>
+  <link>https://www.dunya.com/ekonomi/kira-sozlesmelerinde-yeni-donem</link>
+  <pubDate>Sun, 30 Aug 2026 13:07:00 +0300</pubDate>
+</item>
+</channel></rss>`;
+  const economyNews = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/economyNews.ts",
+    (specifier) => {
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../relevance") return relevance;
+      return {};
+    },
+    {
+      fetch: makeMultiUrlMockFetch({
+        [AA_URL]: { body: "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel></channel></rss>" },
+        [DUNYA_URL]: { body: rss },
+      }),
+      URL,
+      TextEncoder,
+      Buffer,
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      console: { error: () => {}, log: () => {}, warn: () => {} },
+    },
+  );
+
+  const results = await economyNews.fetchEconomyNewsAnnouncements();
+  assert.equal(results.length, 1);
+  assert.equal(results[0].title, "Kira sözleşmelerinde yeni dönem: Bakan Şimşek'ten e-Devlet çağrısı");
+});
+
+test("economyNews.ts: standard named entities (&amp; &quot;) and an unpadded numeric entity (&#39;) all decode correctly", async () => {
+  const rss = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<item>
+  <title><![CDATA[Konut &amp; Kira Piyasasında &quot;Yeni Dönem&quot; ve Emlak&#39;ın Rolü]]></title>
+  <link>https://www.dunya.com/ekonomi/entity-test</link>
+  <pubDate>Sun, 30 Aug 2026 13:07:00 +0300</pubDate>
+</item>
+</channel></rss>`;
+  const economyNews = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/economyNews.ts",
+    (specifier) => {
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../relevance") return relevance;
+      return {};
+    },
+    {
+      fetch: makeMultiUrlMockFetch({
+        [AA_URL]: { body: "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel></channel></rss>" },
+        [DUNYA_URL]: { body: rss },
+      }),
+      URL,
+      TextEncoder,
+      Buffer,
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      console: { error: () => {}, log: () => {}, warn: () => {} },
+    },
+  );
+
+  const results = await economyNews.fetchEconomyNewsAnnouncements();
+  assert.equal(results.length, 1);
+  assert.equal(results[0].title, "Konut & Kira Piyasasında \"Yeni Dönem\" ve Emlak'ın Rolü");
+});
+
+// ============================================================
 // Current Content Radar V1: retrieval/router.ts registers all 5
 // adapters, and one throwing/hanging adapter can never break the others
 // or the overall discovery request.
@@ -1178,6 +1259,77 @@ test("semantic near-duplicate: differently-worded but textually-similar titles p
   const built = discover.buildContentOpportunities(results, now);
   const ranked = discover.rankContentOpportunities(built, ["faiz"], 5);
   assert.equal(ranked.length, 2, "textually-similar titles more than 4 days apart are treated as distinct — never assumed to be the same event, since being 15 days apart makes them plausibly two different rate decisions");
+});
+
+// ============================================================
+// Current Content Radar V1 micro-fix: the real production case the
+// distinctive-signature check exists for — Dünya's and AA's own genuine
+// live titles about the SAME e-Devlet rental-contract story, worded too
+// differently (~0.14-0.23 Jaccard even after stemming) for the ratio
+// check alone to ever collapse them.
+// ============================================================
+
+test("distinctive-signature near-duplicate: the real production AA + Dünya e-Devlet rental-contract stories collapse to ONE opportunity", () => {
+  const now = new Date("2026-08-30T00:00:00.000Z");
+  const results = [
+    makeResult({
+      title: "Kira sözleşmelerinde yeni dönem: Bakan Şimşek'ten e-Devlet çağrısı",
+      url: "https://www.dunya.com/ekonomi/kira-sozlesmelerinde-yeni-donem",
+      publishedAt: "2026-08-30T13:07:00.000Z",
+      tier: "financial-news",
+    }),
+    makeResult({
+      title: "Kira sözleşmelerinin e-Devlet üzerinden hazırlanmasının zorunlu olması öngörülüyor",
+      url: "https://www.aa.com.tr/tr/ekonomi/kira-sozlesmeleri-1",
+      publishedAt: "2026-08-30T13:01:54.000Z",
+      tier: "financial-news",
+    }),
+  ];
+  const built = discover.buildContentOpportunities(results, now);
+  const ranked = discover.rankContentOpportunities(built, ["kira"], 5);
+  assert.equal(ranked.length, 1, "the same e-Devlet rental-contract story reported by two outlets must collapse to one opportunity");
+});
+
+test("distinctive-signature near-duplicate: two genuinely different rental/housing stories sharing only generic domain words (kira/konut/gayrimenkul) are NOT collapsed", () => {
+  const now = new Date("2026-08-30T00:00:00.000Z");
+  const results = [
+    makeResult({
+      title: "Öğrenci Kira Fiyatları Üniversite Şehirlerinde Yüzde 40 Arttı",
+      url: "https://www.dunya.com/ekonomi/ogrenci-kira-fiyatlari",
+      publishedAt: "2026-08-30T09:00:00.000Z",
+      tier: "financial-news",
+    }),
+    makeResult({
+      title: "Gayrimenkul Yatırımcıları Konut Projelerine Yöneldi",
+      url: "https://www.aa.com.tr/tr/ekonomi/gayrimenkul-yatirimcilari",
+      publishedAt: "2026-08-30T10:00:00.000Z",
+      tier: "financial-news",
+    }),
+  ];
+  const built = discover.buildContentOpportunities(results, now);
+  const ranked = discover.rankContentOpportunities(built, ["kira", "gayrimenkul", "konut"], 5);
+  assert.equal(ranked.length, 2, "two different stories must not collapse merely for sharing broad domain words — no distinctive-signature term is shared, and overall wording is otherwise unrelated");
+});
+
+test("distinctive-signature near-duplicate: even a shared distinctive term (e.g. 'sözleşme') does not collapse two stories more than 4 days apart", () => {
+  const now = new Date("2026-08-30T00:00:00.000Z");
+  const results = [
+    makeResult({
+      title: "Kira sözleşmelerinde yeni dönem: Bakan Şimşek'ten e-Devlet çağrısı",
+      url: "https://www.dunya.com/ekonomi/kira-sozlesmelerinde-yeni-donem",
+      publishedAt: "2026-08-30T13:07:00.000Z",
+      tier: "financial-news",
+    }),
+    makeResult({
+      title: "Kira sözleşmelerinin e-Devlet üzerinden hazırlanmasının zorunlu olması öngörülüyor",
+      url: "https://www.aa.com.tr/tr/ekonomi/kira-sozlesmeleri-eski-haber",
+      publishedAt: "2026-08-10T13:01:54.000Z",
+      tier: "financial-news",
+    }),
+  ];
+  const built = discover.buildContentOpportunities(results, now);
+  const ranked = discover.rankContentOpportunities(built, ["kira"], 5);
+  assert.equal(ranked.length, 2, "the date-window guard must still gate the distinctive-signature check, not only the ratio-based one — 20 days apart is too far to assume the same event");
 });
 
 // ============================================================

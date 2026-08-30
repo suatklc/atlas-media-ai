@@ -479,12 +479,39 @@ const SEMANTIC_TITLE_STOPWORDS = new Set([
   "yayımlandı", "genel", "resmi",
 ]);
 
+// Real production case (Current Content Radar V1 micro-fix): Turkish is
+// agglutinative — a single root takes a case/possessive suffix that
+// changes with the sentence's own grammar, e.g. "sözleşmelerinde" (in the
+// contracts) and "sözleşmelerinin" (of the contracts) are the SAME root
+// ("sözleşme") but, compared as exact strings, share zero characters at
+// the point the two forms diverge — plain Jaccard on whole words treats
+// them as completely unrelated tokens. STEM_LENGTH is a deliberately
+// crude, well-known heuristic for this class of language (not a real
+// morphological analyzer): truncate to the first few characters, where
+// the shared root lives, and let the inflectional suffix fall away. Kept
+// short (5) so it only merges genuine suffix variants of the same root,
+// not unrelated words that happen to start the same way over a longer
+// span.
+const STEM_LENGTH = 5;
+
+function stem(token: string): string {
+  return token.length <= STEM_LENGTH ? token : token.slice(0, STEM_LENGTH);
+}
+
+// Hyphens are now PRESERVED (not stripped to a space) specifically so a
+// compound like "e-Devlet" survives as one distinctive token instead of
+// being split into "e" (discarded, too short) and "devlet" (state/
+// government — on its own, a generic word that says nothing specific).
+// "e-devlet" is a genuinely narrow, specific reference (Turkey's e-
+// government portal); splitting it was throwing away exactly the kind of
+// distinctive signal isSameUnderlyingDevelopment below now depends on.
 function titleTokenSet(title: string): Set<string> {
   return new Set(
     normalizedTitle(title)
-      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .replace(/[^\p{L}\p{N}\s-]/gu, " ")
       .split(/\s+/)
-      .filter((token) => token.length > 3 && !SEMANTIC_TITLE_STOPWORDS.has(token)),
+      .filter((token) => token.length > 3 && !SEMANTIC_TITLE_STOPWORDS.has(token))
+      .map(stem),
   );
 }
 
@@ -508,6 +535,46 @@ const SEMANTIC_DUPLICATE_WINDOW_DAYS = 4;
 // titles.
 const SEMANTIC_MIN_TOKEN_COUNT = 4;
 
+// Real production case: two outlets can report the SAME underlying event
+// in wording similar enough for a human to recognize instantly, but too
+// DIFFERENT for the ratio-based Jaccard check above to ever clear 0.6 —
+// live-observed pair: Dünya's "Kira sözleşmelerinde yeni dönem: Bakan
+// Şimşek'ten e-Devlet çağrısı" (framed around the minister's call) vs
+// AA's "Kira sözleşmelerinin e-Devlet üzerinden hazırlanmasının zorunlu
+// olması öngörülüyor" (framed around the upcoming requirement) — overall
+// Jaccard on this pair is ~0.14-0.23 even after stemming, nowhere near
+// 0.6, yet both are unmistakably the same story once a human reads them.
+//
+// Rather than lowering SEMANTIC_DUPLICATE_THRESHOLD globally (which the
+// task this fix was written for explicitly rejected: it would risk
+// collapsing two DIFFERENT stories that merely share common domain words
+// like "konut"/"kira"/"gayrimenkul"), this is a SEPARATE, additional
+// check: sharing 2+ terms from a small, deliberately narrow ALLOW-list of
+// specific, low-ambiguity terms/entities is independent strong evidence
+// of the same event, regardless of the two titles' overall wording.
+//
+// This is an ALLOW-list, not "every word except a short deny-list of
+// generic terms" — a deny-list-shaped version of this check was tried
+// first and rejected: it let two clearly UNRELATED TCMB stories (e.g. a
+// governor's Davos remarks vs. the same governor's parliamentary
+// testimony) collapse merely for sharing organizational/title words like
+// "tcmb" and "başkanı", which recur across many unrelated stories and are
+// therefore NOT meaningfully distinctive even though neither belongs to
+// an obvious "generic housing word" list. Restricting the pool to a few
+// genuinely narrow, specific terms keeps the false-positive surface small
+// and reviewable, rather than "everything that isn't obviously generic."
+const DISTINCTIVE_SIGNATURE_TERMS = ["e-devlet", "sözleşme", "takbis", "ipotek"];
+const DISTINCTIVE_SIGNATURE_STEMS = new Set(DISTINCTIVE_SIGNATURE_TERMS.map(stem));
+const DISTINCTIVE_SIGNATURE_MINIMUM_MATCHES = 2;
+
+function sharedDistinctiveSignatureCount(aTokens: Set<string>, bTokens: Set<string>): number {
+  let count = 0;
+  for (const signature of DISTINCTIVE_SIGNATURE_STEMS) {
+    if (aTokens.has(signature) && bTokens.has(signature)) count += 1;
+  }
+  return count;
+}
+
 function isSameUnderlyingDevelopment(a: RankedContentOpportunity, b: RankedContentOpportunity): boolean {
   const aDate = a.sources[0]?.publishedAt ?? "";
   const bDate = b.sources[0]?.publishedAt ?? "";
@@ -518,7 +585,9 @@ function isSameUnderlyingDevelopment(a: RankedContentOpportunity, b: RankedConte
   const aTokens = titleTokenSet(a.topic);
   const bTokens = titleTokenSet(b.topic);
   if (aTokens.size < SEMANTIC_MIN_TOKEN_COUNT || bTokens.size < SEMANTIC_MIN_TOKEN_COUNT) return false;
-  return jaccardSimilarity(aTokens, bTokens) >= SEMANTIC_DUPLICATE_THRESHOLD;
+
+  if (jaccardSimilarity(aTokens, bTokens) >= SEMANTIC_DUPLICATE_THRESHOLD) return true;
+  return sharedDistinctiveSignatureCount(aTokens, bTokens) >= DISTINCTIVE_SIGNATURE_MINIMUM_MATCHES;
 }
 
 export function rankContentOpportunities(

@@ -74,12 +74,28 @@ async function fetchFeedText(url: string): Promise<string> {
   }
 }
 
+const NAMED_XML_ENTITIES: Record<string, string> = {
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+};
+
+// Decodes the standard XML predefined entities (&lt; &gt; &quot; &apos;
+// &amp;) plus numeric character references in both decimal (&#39;,
+// &#039;, any digit count/padding) and hexadecimal (&#x27;) form. A
+// decoder that only recognizes the bare literal string "&#39;" silently
+// fails on a zero-padded reference — the exact live production defect
+// this fixes: Dünya's own feed encoded an apostrophe as "&#039;" (not
+// "&#39;"), which reached the UI undecoded ("Şimşek&#039;ten" instead of
+// "Şimşek'ten"). &amp; is decoded LAST so a source that has already
+// double-escaped a character (e.g. "&amp;#39;") is never mis-decoded a
+// second time into something the source didn't actually mean.
 function decodeXmlEntities(value: string): string {
   return value
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&(lt|gt|quot|apos);/g, (_, name: string) => NAMED_XML_ENTITIES[name])
     .replace(/&amp;/g, "&");
 }
 
