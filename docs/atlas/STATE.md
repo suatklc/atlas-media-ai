@@ -4,7 +4,7 @@ This document reflects VERIFIED current state as of the commit below. It
 changes often — keep it short and current, not a historical changelog
 (see ARCHITECTURE.md/PRODUCT.md for durable structure/decisions).
 
-**HEAD commit:** `d665b5c`
+**HEAD commit:** `3b5f958f6317149a793dca996a8bf1baa32fbdcd`
 
 ## Completed
 
@@ -47,24 +47,71 @@ changes often — keep it short and current, not a historical changelog
   path, and the dashboard preview explicitly tells the user the result
   is a draft pending approval. **Must not be reopened casually — only a
   real, reproduced production regression justifies revisiting this.**
-  Next roadmap item: **live domain + responsive mobile/PWA usage.**
+- **CURRENT CONTENT RADAR V1 = FROZEN.** User-accepted via a real
+  production acceptance test performed by the user directly in Atlas
+  ("Güncel Konuları Bul") on commit `3b5f958f6317149a793dca996a8bf1baa32fbdcd`
+  — 4 genuinely distinct, useful opportunities returned (TCMB inflation
+  report, TKGM title-deed/TAKBİS topic, Dünya student rental-cost story,
+  Dünya e-Devlet rental-contract story), with the earlier duplicate AA
+  report of that same e-Devlet story correctly collapsed and the
+  `&#039;`-style HTML entity defect fixed. Architecture: two logical
+  discovery layers feeding the same existing ranking pipeline (retrieve →
+  dedupe → build opportunities → diversified rank) —
+  - **Layer 1 (fact/authority, unchanged):** TCMB, TKGM, Resmî Gazete,
+    ÇŞİDB.
+  - **Layer 2 (news/market attention, new this V1):** Anadolu Ajansı
+    Economy RSS + Dünya RSS (`retrieval/providers/economyNews.ts`),
+    relevance-filtered through a housing/property-scoped keyword set
+    (`relevance.ts`'s `PROPERTY_MARKET_RELEVANCE_KEYWORDS`) so a bare
+    economy/interest-rate story with no housing angle is excluded —
+    Layer 2 is deliberately NOT a generic economy-news reader.
+  - **Cross-source deterministic near-duplicate protection is active**
+    in `discover.ts`: a Jaccard token-overlap check (with Turkish-
+    suffix-tolerant stemming) plus a second, narrow allow-list
+    "distinctive shared term" check (e.g. `e-devlet`, `sözleşme`,
+    `takbis`, `ipotek`) for cases where two outlets report the same
+    event in wording too different for the ratio check alone — both
+    still gated by the existing 4-day publish-date window. No
+    embeddings, no AI, no external service.
+  - **RSS HTML entity normalization is active** in `economyNews.ts` —
+    decodes standard named entities and numeric character references
+    (decimal, zero-padded, and hex) before a title ever reaches the
+    opportunity/UI layer.
+  - **No new paid API or subscription was required for this V1** — both
+    Layer 2 sources are public, unauthenticated RSS feeds.
+  - The Anthropic web-search discovery experiment (`aiDiscovery.ts`/
+    `grounding.ts`, `stash@{0}`) **remains paused and is explicitly NOT
+    part of Current Content Radar V1** — do not conflate the two, and do
+    not pop/apply/drop that stash as part of this freeze.
+  - Google Trends, Pinterest/Pinterest Trends, "Bundle", and Bloomberg HT
+    were investigated and deliberately **excluded from V1** (no reliable,
+    ToS-safe, zero/low-cost integration path found, or — for Bloomberg HT
+    — simply not needed yet) — **do not add any of them unless future
+    real usage demonstrates an actual need**, not preemptively.
+  - **5–10 opportunities is a target range when enough strong material
+    exists, NOT a quota** — 4 genuinely distinct, high-quality
+    opportunities is an accepted, correct outcome on a normal day.
+    Quality and diversity always take priority over hitting a count.
+  - **Must not be reopened casually** — only (a) a real, reproduced
+    production regression, or (b) future real usage demonstrating a
+    material product limitation justifies revisiting this.
 
 ## Current known issues / limitations
 
-- Research source diversity: 4 live adapters now (TCMB, TKGM, Resmî
-  Gazete, ÇŞİDB — Resmî Gazete's TLS blocker was fixed and it's
-  registered; ÇŞİDB is new) — see ARCHITECTURE.md section B. TÜİK, BDDK,
-  and Sarıyer Belediyesi remain unintegrated (no reliable per-item
-  date/structure available). Real-world per-run opportunity count still
-  varies with what these official sources actually published recently —
-  quality/freshness rules mean a quiet period honestly returns fewer
+- Research source diversity: 5 live adapters now (Layer 1: TCMB, TKGM,
+  Resmî Gazete, ÇŞİDB; Layer 2: AA Economy + Dünya RSS) — see
+  ARCHITECTURE.md section B and the Current Content Radar V1 entry above.
+  TÜİK, BDDK, and Sarıyer Belediyesi remain unintegrated (no reliable
+  per-item date/structure available). Real-world per-run opportunity
+  count still varies with what these sources actually published recently
+  — quality/freshness rules mean a quiet period honestly returns fewer
   opportunities, not padded ones.
 - A separate, uncommitted "Current Topic Discovery v1" AI web-search
-  discovery layer (`aiDiscovery.ts`/`grounding.ts`) exists in the working
-  tree but is intentionally NOT merged into this state or frozen yet —
-  live-tested and functionally working, but paused pending a cost/
-  provider decision (see that task's own report). Not part of this
-  Carousel freeze; do not conflate the two.
+  discovery layer (`aiDiscovery.ts`/`grounding.ts`) still exists ONLY in
+  `stash@{0}` — intentionally NOT merged, live-tested and functionally
+  working but paused pending a cost/provider decision. Explicitly not
+  part of Current Content Radar V1 (see above) — do not conflate the two,
+  do not pop/apply/drop the stash.
 - 4 known pre-existing, unrelated test failures (confirmed non-regressing
   across the last several tasks — do not "fix" without investigating
   first, they're stale test mocks, not application bugs):
@@ -73,13 +120,16 @@ changes often — keep it short and current, not a historical changelog
   - `tests/output-mode.test.mjs` ×2 — `isContentOpportunity is not a
     function` (stale mock map, missing several real imports from an
     earlier refactor).
-- Full test suite: 234/238 passing (the 4 above).
+- Full test suite: 230/234 passing (the 4 above).
 
 ## Next work order (intentional — do not reorder without a genuine blocker)
 
 1. Claude Code persistent project memory — COMPLETE.
 2. Final Carousel quality validation — COMPLETE.
 3. Freeze Carousel V1 — COMPLETE (see above).
-4. **Make Atlas usable through a live domain + responsive mobile/PWA — NEXT.**
-5. Real usage test.
-6. Video / Reels generation.
+4. Live domain + responsive mobile/PWA usage — COMPLETE (audited, no
+   code changes required; verified reachable/healthy on the live Vercel
+   production URL, including from a phone).
+5. Real usage test — COMPLETE for Current Content Radar V1 (see above);
+   Carousel/Hero already covered by their own freezes.
+6. Video / Reels generation — not started.
