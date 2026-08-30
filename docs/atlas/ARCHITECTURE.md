@@ -24,25 +24,40 @@ rewritten to fit a visual-format choice.
 ## B. Research pipeline
 
 Live adapters (`src/lib/ai/research/retrieval/providers/`: `tcmb.ts`,
-`tkgm.ts`) → `retrieveCurrentInformation`
+`tkgm.ts`, `resmiGazete.ts`, `csb.ts`) → `retrieveCurrentInformation`
 (`retrieval/router.ts`, fan-out + relevance scoring)
 → `discover.ts` (`discoverCurrentContentOpportunities`) — builds and
   ranks `ContentOpportunity` objects, applies a 30-day freshness cutoff,
   topic-family diversification, recurring-series suppression
 → `/api/research/discover` → `CurrentOpportunities.tsx` dashboard card
 
-**Current limitations (verified in `retrieval/router.ts`):**
-- TÜİK (`veriportali.tuik.gov.tr`) not connected — JS-rendered SPA, no
-  discoverable public API.
-- Resmî Gazete adapter (`retrieval/providers/resmiGazete.ts`) exists and
-  is parsing-correct, but is NOT registered — Node's fetch cannot
-  complete a TLS handshake to `www.resmigazete.gov.tr`
-  (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`), while curl succeeds. Do not work
-  around by disabling TLS verification.
-- Sarıyer Belediyesi (`sariyer.bel.tr`) has no live adapter — full JS SPA,
-  no server-rendered content reachable via fetch.
-- Only 2 live sources today (TCMB, TKGM) → limited official-source
-  diversity.
+`resmiGazete.ts` and `csb.ts` are "mixed official source" adapters (their
+sites cover far more than real estate) and share a relevance filter —
+`retrieval/relevance.ts`'s `hasAnyWordBoundaryMatch` — before an entry
+becomes a candidate; `tcmb.ts`/`tkgm.ts` need no such filter (everything
+they publish is already in-domain). `resmiGazete.ts` fetches via
+`retrieval/secureFetch.ts` instead of plain `fetch()` — see that file for
+why (its own TLS trust-chain fix).
+
+**Current limitations (verified live):**
+- TÜİK: no adapter — `www.tuik.gov.tr`'s homepage server-renders a
+  bulletin slider (title + reference period) but no verifiable per-item
+  *publication* date; the surface that would have one
+  (`veriportali.tuik.gov.tr`) is a client-rendered SPA with no
+  server-rendered content. Fabricating a date was rejected as unsafe.
+- BDDK: reachable (same TLS fix as Resmî Gazete works for it too), but no
+  discoverable per-item news/announcement structure — its public site is
+  a statistical/PDF bulletin portal, not a discrete-development feed.
+- Sarıyer Belediyesi (`sariyer.bel.tr`) still has no live adapter — full
+  JS SPA, every route serves an identical shell, no server-rendered
+  content reachable via fetch.
+- 4 live sources today (TCMB, TKGM, Resmî Gazete, ÇŞİDB). Real-world
+  per-run yield still varies day to day — some sources are official
+  "mixed content" feeds that legitimately return zero relevant items on a
+  quiet day, and Resmî Gazete in particular has shown intermittent
+  hangs/timeouts under repeated access (absorbed by the existing
+  per-adapter timeout + graceful-failure handling, never surfaced to the
+  user as an error).
 
 ## C. Image pipeline
 

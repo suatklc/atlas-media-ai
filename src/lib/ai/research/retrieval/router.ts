@@ -1,6 +1,8 @@
 import type { NormalizedResearchResult, RetrievalOptions, RetrievalQuery } from "./types";
 import { fetchTcmbAnnouncements } from "./providers/tcmb";
 import { fetchTkgmAnnouncements } from "./providers/tkgm";
+import { fetchResmiGazeteAnnouncements } from "./providers/resmiGazete";
+import { fetchCsbAnnouncements } from "./providers/csb";
 
 const DEFAULT_MAX_RESULTS = 20;
 
@@ -12,31 +14,43 @@ const DEFAULT_MAX_RESULTS = 20;
 // this wraps every adapter call in its own catch too, so one adapter
 // throwing outright can never fail the others.
 //
-// providers/resmiGazete.ts exists, is parsing-correct (its extraction
-// logic was verified against real, live-captured HTML), and is
-// deliberately NOT registered here: live validation found that Node's
-// native fetch() cannot complete a TLS handshake to
-// www.resmigazete.gov.tr — `UNABLE_TO_VERIFY_LEAF_SIGNATURE` — while the
-// exact same request via curl (which uses the OS's own certificate
-// store, not Node's bundled one) succeeds. TCMB and TKGM, fetched the
-// same way in the same run, both succeed, so this is specific to Resmî
-// Gazete's certificate chain, not a general environment problem. Working
-// around this would mean disabling TLS verification (a real security
-// regression for content whose entire value is coming from a verified
-// official source) or bundling a specific CA trust anchor without being
-// able to safely confirm it's the correct one in this task — see the
-// Phase 3 final report. Register fetchResmiGazeteAnnouncements here only
-// once a safe fix is confirmed.
+// Research Breadth Expansion v2: providers/resmiGazete.ts is now
+// registered — its previous blocker (Node's fetch() rejecting
+// www.resmigazete.gov.tr with UNABLE_TO_VERIFY_LEAF_SIGNATURE) is fixed
+// via secureFetch.ts's scoped use of the OS's own trusted certificate
+// store (see that module's own comment) — never a TLS-verification
+// bypass. providers/csb.ts is new: the Ministry of Environment,
+// Urbanization and Climate Change's own /haberler news listing, live-
+// verified to be plain-fetch()-reachable (no TLS issue) and server-
+// rendered, filtered through the same real-estate relevance check as
+// Resmî Gazete (relevance.ts) since this ministry's news is not
+// exclusively real-estate content either.
 //
-// TÜİK (veriportali.tuik.gov.tr — a JS-rendered SPA with no discoverable
-// public JSON API within a safe, non-invasive inspection) and Sarıyer
-// Belediyesi (sariyer.bel.tr — also a full JS SPA; every path serves an
-// identical shell) were investigated and left out for a different
-// reason: no server-rendered content is reachable via fetch at all.
+// Investigated and rejected, with the exact reason (see the final report
+// for this task):
+// - TÜİK: the only server-rendered surface (www.tuik.gov.tr's homepage
+//   bulletin slider) has a title and reference PERIOD but no verifiable
+//   PUBLICATION date; the surface that would have one (veriportali.tuik
+//   .gov.tr's individual press pages) is a client-rendered SPA with no
+//   server-rendered content — confirmed live. Fabricating a date to work
+//   around this is exactly what this task's own rules forbid.
+// - BDDK: reachable (also needed the same TLS fix), but its public site
+//   is a statistical/PDF bulletin portal (weekly/monthly aggregate
+//   banking data) with no discoverable per-item news/announcement
+//   structure — extracting genuine mortgage-specific developments would
+//   need PDF parsing or fragile heuristic scraping.
+// - Sarıyer Belediyesi: re-confirmed live — every route (home/haberler/
+//   duyurular) serves an identical, byte-for-byte JS SPA shell with no
+//   server-rendered content at all.
 //
 // Adding a real, live-validated future adapter means adding one more
 // entry to this array; nothing else here changes.
-const ADAPTERS: Array<() => Promise<NormalizedResearchResult[]>> = [fetchTcmbAnnouncements, fetchTkgmAnnouncements];
+const ADAPTERS: Array<() => Promise<NormalizedResearchResult[]>> = [
+  fetchTcmbAnnouncements,
+  fetchTkgmAnnouncements,
+  fetchResmiGazeteAnnouncements,
+  fetchCsbAnnouncements,
+];
 
 function normalizeForMatch(text: string): string {
   return text.toLocaleLowerCase("tr-TR");

@@ -342,6 +342,10 @@ function makeMockFetch(html, { ok = true, status = 200, contentType = "text/html
   });
 }
 
+// Real relevance.ts, loaded once and reused by resmiGazete.ts's and
+// csb.ts's own tests below — both adapters import it for real.
+const relevance = loadTypeScriptModule("src/lib/ai/research/retrieval/relevance.ts");
+
 // Modeled directly on real resmigazete.gov.tr homepage markup (captured
 // during live investigation): the date heading, and three fihrist-item
 // entries chosen specifically to exercise the word-boundary fix — entry 2
@@ -357,6 +361,10 @@ const RESMI_GAZETE_FIXTURE_HTML = `
 <div class="fihrist-item mb-1"><a href="https://www.resmigazete.gov.tr/eskiler/2026/08/20260827-9.htm" data-modal="True">–– Elektrik Piyasasında Üretim Faaliyetinde Bulunmak Üzere Su Kullanım Hakkı Anlaşması</a></div>
 </body></html>`;
 
+// Research Breadth Expansion v2: resmiGazete.ts now fetches via
+// secureFetch.ts's fetchWithSystemTrust (node:https + a system-CA Agent)
+// instead of global fetch() — these two tests mock that module directly
+// instead of the global fetch, matching the real import.
 test("resmiGazete.ts: keeps a genuine tapu-related entry and rejects the real false-positive case ('yapılmasına' must not match 'yapı')", async () => {
   const resmiGazete = loadTypeScriptModule(
     "src/lib/ai/research/retrieval/providers/resmiGazete.ts",
@@ -364,9 +372,19 @@ test("resmiGazete.ts: keeps a genuine tapu-related entry and rejects the real fa
       if (specifier === "../types") return {};
       if (specifier === "../sourceQuality") return sourceQuality;
       if (specifier === "../turkishDate") return turkishDate;
+      if (specifier === "../relevance") return relevance;
+      if (specifier === "../secureFetch") {
+        return {
+          fetchWithSystemTrust: async () => ({
+            status: 200,
+            contentType: "text/html; charset=UTF-8",
+            text: RESMI_GAZETE_FIXTURE_HTML,
+          }),
+        };
+      }
       return {};
     },
-    { fetch: makeMockFetch(RESMI_GAZETE_FIXTURE_HTML), URL, TextEncoder, Buffer, AbortController, setTimeout, clearTimeout, console: { error: () => {}, log: () => {}, warn: () => {} } },
+    { console: { error: () => {}, log: () => {}, warn: () => {} } },
   );
 
   const results = await resmiGazete.fetchResmiGazeteAnnouncements();
@@ -383,16 +401,38 @@ test("resmiGazete.ts: a network failure is caught and returns an empty list, nev
     (specifier) => {
       if (specifier === "../sourceQuality") return sourceQuality;
       if (specifier === "../turkishDate") return turkishDate;
+      if (specifier === "../relevance") return relevance;
+      if (specifier === "../secureFetch") {
+        return {
+          fetchWithSystemTrust: async () => {
+            throw new Error("simulated TLS/network failure");
+          },
+        };
+      }
       return {};
     },
-    {
-      fetch: async () => {
-        throw new Error("simulated TLS/network failure");
-      },
-      URL,
-      TextEncoder,
-      console: { error: () => {}, log: () => {}, warn: () => {} },
+    { console: { error: () => {}, log: () => {}, warn: () => {} } },
+  );
+
+  const results = await resmiGazete.fetchResmiGazeteAnnouncements();
+  assert.deepEqual(Array.from(results), []);
+});
+
+test("resmiGazete.ts: a non-2xx status is treated as a failure and returns an empty list, never throws", async () => {
+  const resmiGazete = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/resmiGazete.ts",
+    (specifier) => {
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../turkishDate") return turkishDate;
+      if (specifier === "../relevance") return relevance;
+      if (specifier === "../secureFetch") {
+        return {
+          fetchWithSystemTrust: async () => ({ status: 503, contentType: "text/html", text: "" }),
+        };
+      }
+      return {};
     },
+    { console: { error: () => {}, log: () => {}, warn: () => {} } },
   );
 
   const results = await resmiGazete.fetchResmiGazeteAnnouncements();
@@ -446,6 +486,205 @@ test("tkgm.ts: an unparsable date is left as explicit unknown, never guessed", a
   const results = await tkgm.fetchTkgmAnnouncements();
   assert.ok(results.length > 0);
   assert.ok(results.every((r) => r.publishedAt === ""));
+});
+
+// ============================================================
+// Research Breadth Expansion v2: relevance.ts (shared word-boundary
+// filter, extracted out of resmiGazete.ts now that csb.ts needs it too)
+// ============================================================
+
+test("relevance.ts: word-boundary matching rejects the real 'yapılmasına' false-positive for 'yapı', case-insensitively", () => {
+  assert.equal(relevance.hasAnyWordBoundaryMatch("Değişiklik Yapılmasına Dair Yönetmelik", ["yapı"]), false);
+  assert.equal(relevance.hasAnyWordBoundaryMatch("Yeni Bir Yapı İnşa Edildi", ["yapı"]), true);
+});
+
+test("relevance.ts: REAL_ESTATE_RELEVANCE_KEYWORDS covers the property/zoning vocabulary both mixed-content adapters rely on", () => {
+  for (const term of ["tapu", "imar", "kadastro", "gayrimenkul", "kentsel dönüşüm"]) {
+    assert.ok(relevance.REAL_ESTATE_RELEVANCE_KEYWORDS.includes(term), `missing keyword: ${term}`);
+  }
+});
+
+// ============================================================
+// Research Breadth Expansion v2: csb.ts (Ministry of Environment,
+// Urbanization and Climate Change) — modeled directly on real
+// www.csb.gov.tr/haberler markup (captured during live investigation for
+// this task): the exact card structure, a genuine zoning-relevant item,
+// and an unrelated ministry item (this source covers environment/climate
+// far beyond real estate) that the relevance filter must reject.
+// ============================================================
+
+const CSB_FIXTURE_HTML = `
+<section><div class="mContainer"><div class="row">
+<div class="col-xxl-4 col-xl-4 col-lg-4 col-md-6 col-12">
+  <div class="haberler-card-wrapper">
+    <a href="https://csb.gov.tr/haberler/kentsel-donusum-projesi-baslatildi-306500" target="_self" class="haberler-card-image-wrapper">
+      <img src="https://webdosya.csb.gov.tr/x.jpg" class="img-fluid" alt="KENTSEL DÖNÜŞÜM" style="height: 225px;" loading="lazy">
+    </a>
+    <div class="haberler-card-body-wrapper">
+      <span class="date">28 Ağustos 2026</span>
+    </div>
+    <div class="haberler-card-footer-wrapper">
+      <p class="truncate-text-2"><a href="https://csb.gov.tr/haberler/kentsel-donusum-projesi-baslatildi-306500"
+          target="_self">YENİ KENTSEL DÖNÜŞÜM PROJESİ BAŞLATILDI</a>
+      </p>
+    </div>
+  </div>
+</div>
+<div class="col-xxl-4 col-xl-4 col-lg-4 col-md-6 col-12">
+  <div class="haberler-card-wrapper">
+    <a href="https://csb.gov.tr/haberler/cop31-baskani-kurum-katildi-306498" target="_self" class="haberler-card-image-wrapper">
+      <img src="https://webdosya.csb.gov.tr/y.jpg" class="img-fluid" alt="COP31" style="height: 225px;" loading="lazy">
+    </a>
+    <div class="haberler-card-body-wrapper">
+      <span class="date">27 Ağustos 2026</span>
+    </div>
+    <div class="haberler-card-footer-wrapper">
+      <p class="truncate-text-2"><a href="https://csb.gov.tr/haberler/cop31-baskani-kurum-katildi-306498"
+          target="_self">COP31 BAŞKANI KURUM İKLİM ZİRVESİ’NE KATILDI</a>
+      </p>
+    </div>
+  </div>
+</div>
+</div></div></section>`;
+
+test("csb.ts: extracts real card entries and keeps only the genuine zoning/kentsel-dönüşüm item, rejecting unrelated ministry news", async () => {
+  const csb = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/csb.ts",
+    (specifier) => {
+      if (specifier === "../types") return {};
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../turkishDate") return turkishDate;
+      if (specifier === "../relevance") return relevance;
+      return {};
+    },
+    {
+      fetch: makeMockFetch(CSB_FIXTURE_HTML),
+      URL,
+      TextEncoder,
+      Buffer,
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      console: { error: () => {}, log: () => {}, warn: () => {} },
+    },
+  );
+
+  const results = await csb.fetchCsbAnnouncements();
+  assert.equal(results.length, 1, "only the genuine kentsel dönüşüm entry should survive the relevance filter");
+  assert.match(results[0].title, /KENTSEL DÖNÜŞÜM/);
+  assert.equal(results[0].publisher, "T.C. Çevre, Şehircilik ve İklim Değişikliği Bakanlığı");
+  assert.equal(results[0].tier, "official-authority");
+  assert.equal(results[0].url, "https://csb.gov.tr/haberler/kentsel-donusum-projesi-baslatildi-306500");
+  assert.equal(results[0].publishedAt, new Date("2026-08-28T00:00:00+03:00").toISOString());
+});
+
+test("csb.ts: a network failure is caught and returns an empty list, never throws — one source failing can never break discovery", async () => {
+  const csb = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/csb.ts",
+    (specifier) => {
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../turkishDate") return turkishDate;
+      if (specifier === "../relevance") return relevance;
+      return {};
+    },
+    {
+      fetch: async () => {
+        throw new Error("simulated network failure");
+      },
+      URL,
+      TextEncoder,
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      console: { error: () => {}, log: () => {}, warn: () => {} },
+    },
+  );
+
+  const results = await csb.fetchCsbAnnouncements();
+  assert.deepEqual(Array.from(results), []);
+});
+
+test("csb.ts: a page with no relevant items returns an empty list, not filler", async () => {
+  const noRelevantHtml = `
+    <div class="haberler-card-wrapper">
+      <a href="https://csb.gov.tr/haberler/x" target="_self" class="haberler-card-image-wrapper"><img alt=""></a>
+      <div class="haberler-card-body-wrapper"><span class="date">28 Ağustos 2026</span></div>
+      <div class="haberler-card-footer-wrapper"><p class="truncate-text-2"><a href="https://csb.gov.tr/haberler/x" target="_self">MOĞOLİSTAN ZİYARETİ</a></p></div>
+    </div>`;
+  const csb = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/csb.ts",
+    (specifier) => {
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../turkishDate") return turkishDate;
+      if (specifier === "../relevance") return relevance;
+      return {};
+    },
+    {
+      fetch: makeMockFetch(noRelevantHtml),
+      URL,
+      TextEncoder,
+      Buffer,
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      console: { error: () => {}, log: () => {}, warn: () => {} },
+    },
+  );
+
+  const results = await csb.fetchCsbAnnouncements();
+  assert.deepEqual(Array.from(results), []);
+});
+
+// ============================================================
+// Research Breadth Expansion v2: retrieval/router.ts registers all 4
+// adapters, and one throwing/hanging adapter can never break the others
+// or the overall discovery request.
+// ============================================================
+
+test("retrieval/router.ts registers all 4 live adapters (tcmb, tkgm, resmiGazete, csb)", () => {
+  const routerSource = fs.readFileSync(
+    path.join(projectRoot, "src/lib/ai/research/retrieval/router.ts"),
+    "utf8",
+  );
+  assert.match(routerSource, /fetchTcmbAnnouncements/);
+  assert.match(routerSource, /fetchTkgmAnnouncements/);
+  assert.match(routerSource, /fetchResmiGazeteAnnouncements/);
+  assert.match(routerSource, /fetchCsbAnnouncements/);
+});
+
+test("retrieveCurrentInformation: one adapter throwing never breaks the others — the combined result still includes every working adapter's entries", async () => {
+  const router = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/router.ts",
+    (specifier) => {
+      if (specifier === "./providers/tcmb") {
+        return { fetchTcmbAnnouncements: async () => [makeResult({ title: "TCMB Faiz Duyurusu", url: "https://www.tcmb.gov.tr/x/a" })] };
+      }
+      if (specifier === "./providers/tkgm") {
+        return {
+          fetchTkgmAnnouncements: async () => {
+            throw new Error("simulated TKGM outage");
+          },
+        };
+      }
+      if (specifier === "./providers/resmiGazete") {
+        return {
+          fetchResmiGazeteAnnouncements: async () => {
+            throw new Error("simulated Resmî Gazete timeout");
+          },
+        };
+      }
+      if (specifier === "./providers/csb") {
+        return { fetchCsbAnnouncements: async () => [makeResult({ title: "İmar Planı Onaylandı", url: "https://csb.gov.tr/x/b" })] };
+      }
+      return {};
+    },
+    { console: { error: () => {}, log: () => {}, warn: () => {} } },
+  );
+
+  const results = await router.retrieveCurrentInformation({ keywords: ["faiz", "imar"] });
+  assert.equal(results.length, 2, "both working adapters' entries must survive two other adapters throwing");
+  assert.ok(results.some((r) => r.title === "TCMB Faiz Duyurusu"));
+  assert.ok(results.some((r) => r.title === "İmar Planı Onaylandı"));
 });
 
 // ============================================================

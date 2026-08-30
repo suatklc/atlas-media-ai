@@ -27,9 +27,14 @@ changes often — keep it short and current, not a historical changelog
 - Carousel v1 is functionally real but **not yet visually frozen** —
   still needs one final visual-quality polish pass before being locked
   down the way Hero v1 is.
-- Research source diversity is limited to 2 live adapters (TCMB, TKGM) —
-  see ARCHITECTURE.md section B for why TÜİK/Resmî Gazete/Sarıyer
-  Belediyesi aren't live yet.
+- Research source diversity: 4 live adapters now (TCMB, TKGM, Resmî
+  Gazete, ÇŞİDB — Resmî Gazete's TLS blocker was fixed and it's
+  registered; ÇŞİDB is new) — see ARCHITECTURE.md section B. TÜİK, BDDK,
+  and Sarıyer Belediyesi remain unintegrated (no reliable per-item
+  date/structure available). Real-world per-run opportunity count still
+  varies with what these official sources actually published recently —
+  quality/freshness rules mean a quiet period honestly returns fewer
+  opportunities, not padded ones.
 - 4 known pre-existing, unrelated test failures (confirmed non-regressing
   across the last several tasks — do not "fix" without investigating
   first, they're stale test mocks, not application bugs):
