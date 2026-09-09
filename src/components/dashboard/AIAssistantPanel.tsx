@@ -514,8 +514,8 @@ export default function AIAssistantPanel() {
           <Bot className="h-[18px] w-[18px]" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-white">Akıllı İş Asistanı</p>
-          <p className="flex items-center gap-1.5 text-xs text-zinc-500">
+          <p className="text-base font-semibold text-white">Akıllı İş Asistanı</p>
+          <p className="flex items-center gap-1.5 text-xs text-zinc-400">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
             Çevrimiçi
           </p>
@@ -565,7 +565,7 @@ export default function AIAssistantPanel() {
                     </div>
                     {!isSending && message.id === messages[messages.length - 1]?.id && (
                       <div className="mt-2">
-                        <p className="mb-1.5 text-xs font-medium text-zinc-500">Bu içeriği dönüştür</p>
+                        <p className="mb-1.5 text-xs font-medium text-zinc-400">Bu içeriği dönüştür</p>
                         <div className="grid grid-cols-2 gap-2">
                           {transformActions.map((action) => (
                             <button
@@ -573,9 +573,9 @@ export default function AIAssistantPanel() {
                               type="button"
                               onClick={() => sendMessage(action.prompt)}
                               disabled={isSending}
-                              className="flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              <action.icon className="h-3 w-3 text-indigo-400" />
+                              <action.icon className="h-3.5 w-3.5 text-indigo-400" />
                               {action.label}
                             </button>
                           ))}
@@ -595,16 +595,16 @@ export default function AIAssistantPanel() {
                               )
                             }
                             disabled={message.image?.status === "loading"}
-                            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {message.image?.status === "loading" ? (
                               <>
-                                <Loader2 className="h-3 w-3 animate-spin text-indigo-400" />
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
                                 Görsel oluşturuluyor…
                               </>
                             ) : (
                               <>
-                                <ImagePlus className="h-3 w-3 text-indigo-400" />
+                                <ImagePlus className="h-3.5 w-3.5 text-indigo-400" />
                                 Görsel Oluştur ({PLATFORM_CONFIGS[message.platform ?? DEFAULT_PLATFORM].label})
                               </>
                             )}
@@ -734,9 +734,9 @@ export default function AIAssistantPanel() {
                 type="button"
                 onClick={() => sendMessage(action.prompt)}
                 disabled={isSending}
-                className="flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <Sparkles className="h-3 w-3 text-indigo-400" />
+                <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
                 {action.label}
               </button>
             ))}
@@ -749,7 +749,7 @@ export default function AIAssistantPanel() {
             never silently disagree unless the user deliberately changes it
             and sends/generates again. */}
         <div className="mb-2 flex items-center gap-2">
-          <label htmlFor="target-platform" className="text-xs font-medium text-zinc-500">
+          <label htmlFor="target-platform" className="text-sm font-medium text-zinc-400">
             Platform
           </label>
           <select
@@ -757,7 +757,7 @@ export default function AIAssistantPanel() {
             value={selectedPlatform}
             onChange={(event) => setSelectedPlatform(event.target.value as PlatformId)}
             disabled={isSending}
-            className="rounded-full border border-zinc-800 bg-zinc-950 px-2.5 py-1 text-xs font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-full border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {PLATFORM_OPTIONS.map((platform) => (
               <option key={platform.id} value={platform.id}>
@@ -774,15 +774,15 @@ export default function AIAssistantPanel() {
             onChange={(event) => setInput(event.target.value)}
             placeholder="Bir mesaj yazın..."
             disabled={isSending}
-            className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-60"
+            className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-3 text-base text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-60"
           />
           <button
             type="submit"
             disabled={!input.trim() || isSending}
             aria-label="Gönder"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-500 text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-indigo-500 text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <Send className="h-4 w-4" />
+            <Send className="h-[18px] w-[18px]" />
           </button>
         </form>
       </div>

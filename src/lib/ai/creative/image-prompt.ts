@@ -10,24 +10,28 @@ const NOT_APPLICABLE = "uygulanamaz";
 // clean base image, Atlas renders all typography deterministically"
 // architecture, so a stronger prohibition here is never in tension with any
 // template's own goals.
-const SAFETY_CLAUSE =
+// Exported (Gold Standard V1): reused verbatim by content/goldStandardImagePrompt.ts
+// for the Current Content Radar structured-package path, instead of
+// duplicating this text — the same safety/quality bar applies regardless
+// of which caller assembles the final prompt.
+export const SAFETY_CLAUSE =
   "Görselde hiçbir okunabilir metin, harf, rakam, başlık, alt başlık, etiket, madde işareti veya liste metni, hashtag, CTA/buton metni, logo yazısı, watermark, tabela, arayüz/kart metni, infografik yazısı veya okunması amaçlanan tipografik/grafik öğe olmasın; yalnızca temiz görsel sahne, fotoğraf veya illüstrasyon; bozuk/deforme mimari veya imkânsız geometri olmasın.";
 
-const PHOTOGRAPHY_QUALITY_CLAUSE =
+export const PHOTOGRAPHY_QUALITY_CLAUSE =
   "üst düzey mimari fotoğrafçılık, editoryal emlak fotoğrafçılığı kalitesinde; gerçekçi malzemeler, gerçekçi ışık, doğal mimari oranlar, ticari kullanıma uygun kompozisyon, fotogerçekçi; sürreal veya abartılı mimari yok";
 
 // Deliberately atmosphere-only, not location-specific: any neighborhood the
 // user names must never be rendered as identifiable real streets/buildings —
 // this is a conceptual visual, and the existing listing disclaimer already
 // says so. Fires unconditionally (harmless when no place is mentioned).
-const GEOGRAPHIC_CONTEXT_CLAUSE =
+export const GEOGRAPHIC_CONTEXT_CLAUSE =
   "Talepte belirli bir semt/bölge geçiyorsa yalnızca genel atmosferini yansıt (yoğunluk, yeşillik, mahremiyet, prestij seviyesi); gerçek, tanınabilir sokak, bina veya dönüm noktası betimleme.";
 
 // Reworded to drop "başlık/logo" — naming what goes there risked reading as
 // an instruction to sketch a title/logo placeholder in that space rather
 // than leaving it genuinely empty. Now states only that it's reserved for
 // later digital addition and explicitly forbids drawing anything there.
-const NEGATIVE_SPACE_CLAUSE =
+export const NEGATIVE_SPACE_CLAUSE =
   "Kompozisyonda, sonradan dijital olarak metin ve marka öğeleri eklenecek sade, dolu olmayan bir alan bırak; bu alana kendin herhangi bir yazı, sembol veya grafik ekleme.";
 
 // ===== Primary Visual Subject =====

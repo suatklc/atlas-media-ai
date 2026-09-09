@@ -21,6 +21,8 @@ import { resolveEducationalPoints } from "@/lib/ai/content/educational-points";
 import { resolveCarouselStructure } from "@/lib/ai/content/carousel-structure";
 import { buildSeedMessage, isContentOpportunity } from "@/lib/ai/research/opportunity";
 import { isVisualFormat, buildFormatSuffix } from "@/lib/ai/research/formatRecommendation";
+import { isContentPackage, validateContentPackage, type ContentPackage } from "@/lib/ai/content/contentPackage";
+import { buildGoldStandardImagePrompt } from "@/lib/ai/creative/goldStandardImagePrompt";
 
 const MAX_MESSAGE_LENGTH = 4000;
 // Kept aligned with AIAssistantPanel.tsx's own extractor bound — a full
@@ -211,11 +213,16 @@ export async function POST(request: NextRequest) {
     platform,
     contentOpportunity: rawContentOpportunity,
     visualFormat: rawVisualFormat,
+    contentPackage: rawContentPackage,
   } = body as {
     message?: unknown;
     headline?: unknown;
     content?: unknown;
     educationalPoints?: unknown;
+    // Optional (Gold Standard V1): the complete structured package from
+    // /api/content-package — see the dedicated branch below. Absent for
+    // every other/older request shape, which is entirely unaffected.
+    contentPackage?: unknown;
     // Optional (Real Multi-Slide Carousel): the client's own already-
     // extracted {whatHappened, whyItMatters, cta} from the completed
     // assistant response's [[CAROUSEL_STRUCTURE: ...]] marker — see
@@ -259,6 +266,119 @@ export async function POST(request: NextRequest) {
     return jsonError("Geçersiz platform.", 400);
   }
   const platformConfig = PLATFORM_CONFIGS[isPlatformId(platform) ? platform : DEFAULT_PLATFORM];
+
+  // Gold Standard V1 — the structured ContentPackage carousel path. A
+  // genuinely separate branch, checked BEFORE any of the old marker-
+  // driven logic below and returning early: format is read directly from
+  // the package (already fixed/validated by /api/content-package, never
+  // re-inferred here), so a carousel package can never silently fall
+  // through to the single-image path. The "single" case is intentionally
+  // NOT handled here — contentPackage.format === "single" falls through
+  // to the existing, unchanged single-image code below exactly as before
+  // (this task's own scope is the carousel experience).
+  if (isContentPackage(rawContentPackage) && rawContentPackage.format === "carousel") {
+    const contentPackage: ContentPackage = rawContentPackage;
+    const packageValidation = validateContentPackage(contentPackage);
+    if (!packageValidation.ok) {
+      console.error("Content package failed validation at generate-visual:", packageValidation.reason);
+      return jsonError("İçerik paketi doğrulamadan geçemedi. Lütfen içeriği tekrar oluşturun.", 422);
+    }
+
+    const [hookSlide, whatHappenedSlide, whyItMattersSlide, whatToDoSlide, ctaSlide] = contentPackage.slides;
+    const { provider, model } = resolveImageModelConfig();
+
+    let generated;
+    try {
+      generated = await generateImage({
+        provider,
+        model,
+        prompt: buildGoldStandardImagePrompt(hookSlide.visualBrief),
+        aspectRatio: platformConfig.aspectRatio,
+      });
+    } catch (error) {
+      console.error("Image generation error:", error);
+      logVisualGenerationDiagnostic("image generation (provider call)", error);
+      return jsonError("Görsel oluşturulamadı. Lütfen tekrar deneyin.", 502);
+    }
+
+    let uploadedBase;
+    try {
+      uploadedBase = await uploadGeneratedImage(supabase, user.id, generated.bytes, generated.contentType);
+    } catch (error) {
+      console.error("Base image upload error:", error);
+      logVisualGenerationDiagnostic("base image upload (Supabase storage)", error);
+      return jsonError("Görsel kaydedilemedi. Lütfen tekrar deneyin.", 502);
+    }
+
+    const slideText: CarouselSlideText = {
+      cover: hookSlide.headline,
+      whatHappened: whatHappenedSlide.body,
+      keyFact: whatHappenedSlide.facts[0],
+      whyItMatters: whyItMattersSlide.body,
+      considerations: whatToDoSlide.facts.length > 0 ? whatToDoSlide.facts : [whatToDoSlide.body],
+      closingLine: ctaSlide.body,
+      fixedCta: CAROUSEL_FIXED_CTA,
+      sourceLabel: buildCarouselSourceLabel({
+        publisher: contentPackage.source.name,
+        publishedAt: contentPackage.source.publishedAt,
+      }),
+    };
+
+    let slideBuffers: Buffer[];
+    try {
+      slideBuffers = await renderCarousel(generated.bytes, platformConfig.dimensions, slideText);
+    } catch (error) {
+      console.error("Carousel composition error:", error);
+      logVisualGenerationDiagnostic("carousel composition (resvg)", error);
+      return jsonError("Carousel görselleri oluşturulamadı. Lütfen tekrar deneyin.", 502);
+    }
+
+    const uploadedSlides: { slide: number; imageUrl: string }[] = [];
+    try {
+      for (let index = 0; index < slideBuffers.length; index += 1) {
+        const uploaded = await uploadGeneratedImage(supabase, user.id, slideBuffers[index], "image/png");
+        uploadedSlides.push({ slide: index + 1, imageUrl: uploaded.url });
+      }
+    } catch (error) {
+      console.error("Carousel slide upload error:", error);
+      logVisualGenerationDiagnostic("carousel slide upload (Supabase storage)", error);
+      return jsonError("Görseller kaydedilemedi. Lütfen tekrar deneyin.", 502);
+    }
+
+    // Same persistence shape as the pre-existing carousel path (Section
+    // 18 of the Gold Standard brief: preserve final_image_url = cover,
+    // metadata.carouselImages = all 5) — additionally stores the full
+    // structured package in metadata.contentPackage, no schema migration.
+    try {
+      const { error: insertError } = await supabase.from("generated_posts").insert({
+        user_id: user.id,
+        content: sanitizeContent(contentPackage.caption) ?? contentPackage.caption,
+        visual_headline: sanitizeHeadline(contentPackage.hook),
+        final_image_url: uploadedSlides[0].imageUrl,
+        base_image_url: uploadedBase.url,
+        metadata: {
+          outputMode: "carousel",
+          carouselImages: uploadedSlides,
+          contentPackage,
+          platform: platformConfig.id,
+          aspectRatio: platformConfig.aspectRatio,
+          dimensions: platformConfig.dimensions,
+        },
+      });
+      if (insertError) {
+        console.error("Generation history insert error:", insertError);
+      }
+    } catch (error) {
+      console.error("Generation history insert error:", error);
+    }
+
+    return Response.json({
+      outputMode: "carousel",
+      images: uploadedSlides,
+      contentPackage,
+      format: { aspectRatio: platformConfig.aspectRatio, dimensions: platformConfig.dimensions },
+    });
+  }
 
   // effectiveMessage: byte-identical to the prior message.trim() whenever
   // contentOpportunity is absent. When present, mirrors assistant/route.ts's

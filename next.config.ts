@@ -20,6 +20,11 @@ const nextConfig: NextConfig = {
       "./node_modules/@resvg/resvg-wasm/index_bg.wasm",
       "./src/lib/ai/image/fonts/Inter.ttf",
       "./src/lib/ai/image/fonts/PlayfairDisplay-Bold.ttf",
+      // Gold Standard V1 — the real Suat Kılıç logo, read via fs (see
+      // templates/logoAsset.ts) rather than a static import Next's own
+      // tracing can always follow reliably; same reasoning as the three
+      // entries above.
+      "./public/brand/suat-kilic-logo.png",
     ],
   },
 };

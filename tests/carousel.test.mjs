@@ -162,10 +162,11 @@ test("renderCarousel handles minimal/short copy without throwing", async () => {
   assert.equal(buffers.length, 5);
 });
 
-test("carousel.ts source never renders any 'Atlas' branding — only the approved Suat Kılıç brand mark", () => {
+test("carousel.ts source never renders any 'Atlas' branding — uses the REAL Suat Kılıç logo asset (Gold Standard V1), not the old procedural mark", () => {
   const source = fs.readFileSync(path.join(projectRoot, "src/lib/ai/image/templates/carousel.ts"), "utf8");
   assert.doesNotMatch(source, /atlas/i);
-  assert.match(source, /buildBrandMark/);
+  assert.match(source, /buildRealLogoMarkup/);
+  assert.doesNotMatch(source, /buildBrandMark/);
 });
 
 test("carousel.ts never imports or calls hero.ts's renderer — an independent renderer, not a modification of the protected hero path", () => {
@@ -407,6 +408,17 @@ function loadGenerateVisualRoute(overrides = {}) {
     "@/lib/ai/research/formatRecommendation": {
       isVisualFormat: (v) => v === "single" || v === "carousel",
       buildFormatSuffix: (f) => (f === "carousel" ? " carousel-suffix" : " single-suffix"),
+    },
+    // Gold Standard V1: these tests never send a contentPackage field, so
+    // isContentPackage must return false — the new branch is skipped and
+    // every existing assertion below (about the OLD marker-driven path)
+    // remains exactly what it was testing.
+    "@/lib/ai/content/contentPackage": {
+      isContentPackage: () => false,
+      validateContentPackage: () => ({ ok: true }),
+    },
+    "@/lib/ai/creative/goldStandardImagePrompt": {
+      buildGoldStandardImagePrompt: () => "gold-standard-prompt",
     },
   };
 

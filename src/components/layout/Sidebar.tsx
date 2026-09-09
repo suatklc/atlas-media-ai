@@ -56,11 +56,11 @@ export default function Sidebar({ open, onClose, user }: SidebarProps) {
                   key={item.label}
                   aria-disabled="true"
                   title="Yakında"
-                  className="flex cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium text-zinc-600 opacity-70"
+                  className="flex cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-zinc-600 opacity-70"
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-[18px] w-[18px]" />
                   <span className="flex-1">{item.label}</span>
-                  <span className="rounded-full border border-zinc-800 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
+                  <span className="rounded-full border border-zinc-800 px-1.5 py-0.5 text-[11px] font-medium text-zinc-500">
                     Yakında
                   </span>
                 </div>
@@ -71,13 +71,13 @@ export default function Sidebar({ open, onClose, user }: SidebarProps) {
               <Link
                 key={item.label}
                 href={item.href ?? "/dashboard"}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors ${
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
                   item.active
                     ? "bg-indigo-500/10 text-indigo-400"
                     : "text-zinc-400 hover:bg-zinc-900 hover:text-white"
                 }`}
               >
-                <Icon className="h-4 w-4" />
+                <Icon className="h-[18px] w-[18px]" />
                 {item.label}
               </Link>
             );
@@ -85,22 +85,22 @@ export default function Sidebar({ open, onClose, user }: SidebarProps) {
         </nav>
 
         <div className="border-t border-zinc-800 p-3">
-          <div className="flex items-center gap-3 rounded-lg bg-zinc-900 px-3 py-2.5">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-xs font-semibold text-white">
+          <div className="flex items-center gap-3 rounded-lg bg-zinc-900 px-3 py-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-sm font-semibold text-white">
               {getInitials(user.name)}
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-white">{user.name}</p>
-              <p className="truncate text-xs text-zinc-500">{user.email}</p>
+              <p className="truncate text-xs text-zinc-400">{user.email}</p>
             </div>
             <form action={signOutAction}>
               <button
                 type="submit"
-                className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-white"
+                className="rounded-md p-2 text-zinc-500 hover:bg-zinc-800 hover:text-white"
                 aria-label="Çıkış yap"
                 title="Çıkış yap"
               >
-                <LogOut className="h-4 w-4" />
+                <LogOut className="h-[18px] w-[18px]" />
               </button>
             </form>
           </div>

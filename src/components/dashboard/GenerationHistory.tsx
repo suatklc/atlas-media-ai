@@ -54,12 +54,12 @@ export default async function GenerationHistory() {
 
   return (
     <section className="animate-fade-up rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-      <h2 className="text-sm font-semibold text-white">Oluşturulan Gönderiler</h2>
+      <h2 className="text-base font-semibold text-white">Oluşturulan Gönderiler</h2>
 
       {loadError ? (
-        <p className="mt-4 text-sm text-zinc-500">Geçmiş şu anda yüklenemedi. Lütfen daha sonra tekrar deneyin.</p>
+        <p className="mt-4 text-sm text-zinc-400">Geçmiş şu anda yüklenemedi. Lütfen daha sonra tekrar deneyin.</p>
       ) : !posts || posts.length === 0 ? (
-        <p className="mt-4 text-sm text-zinc-500">
+        <p className="mt-4 text-sm text-zinc-400">
           Henüz oluşturulmuş bir gönderi yok. Bir görsel oluşturduğunuzda burada görünecek.
         </p>
       ) : (
@@ -82,12 +82,12 @@ export default async function GenerationHistory() {
                 />
               </a>
               <div className="p-3">
-                <span className="inline-block rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-medium text-indigo-300">
+                <span className="inline-block rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[11px] font-medium text-indigo-300">
                   {PLATFORM_CONFIGS[resolvePlatformFromMetadata(post.metadata)].label}
                 </span>
-                <p className="mt-1.5 line-clamp-2 text-xs font-medium text-white">{post.visual_headline}</p>
-                <p className="mt-1 line-clamp-1 text-[11px] text-zinc-500">{post.content}</p>
-                <p className="mt-1 text-[10px] text-zinc-600">
+                <p className="mt-1.5 line-clamp-2 text-sm font-medium text-white">{post.visual_headline}</p>
+                <p className="mt-1 line-clamp-1 text-xs text-zinc-400">{post.content}</p>
+                <p className="mt-1 text-xs text-zinc-500">
                   {new Date(post.created_at).toLocaleDateString("tr-TR", {
                     day: "numeric",
                     month: "short",

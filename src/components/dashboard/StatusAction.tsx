@@ -38,24 +38,27 @@ export default function StatusAction({ postId, status }: { postId: string; statu
   const buttonLabel = status === "draft" ? "Onayla" : "Instagram'da Paylaş";
 
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-2">
-      <span className="rounded-full border border-zinc-800 px-2 py-0.5 text-[10px] font-medium text-zinc-400">
+    <div className="mt-2 space-y-1.5">
+      <span className="inline-block rounded-full border border-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-300">
         {label}
       </span>
 
       {nextStatus && boundAction && (
         <form action={formAction}>
+          {/* Comfortable tap target (previously ~22px tall, too small for
+              the approve/publish action) — block + generous padding,
+              still fits the existing compact history-card width. */}
           <button
             type="submit"
             disabled={isPending}
-            className="rounded-full border border-zinc-800 bg-zinc-950 px-2.5 py-1 text-[10px] font-medium text-indigo-300 transition-colors hover:border-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+            className="block w-full rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-indigo-300 transition-colors hover:border-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isPending ? "..." : buttonLabel}
           </button>
         </form>
       )}
 
-      {state.error && <span className="text-[10px] text-red-400">{state.error}</span>}
+      {state.error && <span className="text-xs text-red-400">{state.error}</span>}
     </div>
   );
 }

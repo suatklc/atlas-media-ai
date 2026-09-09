@@ -1,4 +1,5 @@
 import { FONT_STACK, escapeXml } from "./shared";
+import type { MattedLogoAsset } from "./logoAsset";
 
 // Deterministic, reusable Suat Kılıç brand mark for customer-facing
 // generated visuals — replaces the previous "Atlas AI" placeholder badge
@@ -209,4 +210,45 @@ export function buildBrandMark(
   const defs = colors.nameIsGradient ? goldGradientDefsMarkup() : "";
   const markup = variant === "full" ? buildFullMarkup(x, y, colors) : buildCompactLeftMarkup(x, y, colors);
   return { defs, markup };
+}
+
+// ============================================================
+// Gold Standard V1 — the REAL Suat Kılıç logo asset (public/brand/
+// suat-kilic-logo.png), NOT the procedural villa-icon mark above.
+// buildBrandMark (and everything above it in this file) is completely
+// UNCHANGED and still used as-is by hero.ts/educational.ts — this is a
+// new, separate, additive function so the frozen Hero v1 path can never
+// be affected by this. Only carousel.ts's Gold Standard slides call this.
+//
+// The source PNG's own content is never redrawn/cropped/distorted — only
+// (a) its already-transparent-background matted copy (logoAsset.ts) is
+// embedded via a data URI, exactly like the base photo is elsewhere in
+// this pipeline, and (b) an SVG clip-path shows only the real bounding
+// box of visible content, so the large black canvas margin around it
+// never renders as a visible box — the icon/wordmark/descriptor/phone
+// number all remain fully visible and correctly proportioned.
+export function buildRealLogoMarkup(
+  logo: MattedLogoAsset,
+  rightEdgeX: number,
+  topY: number,
+  targetHeight: number,
+  clipId: string,
+): string {
+  const { contentBBox, naturalWidth, naturalHeight, base64Png } = logo;
+  const scale = targetHeight / contentBBox.height;
+  const targetWidth = contentBBox.width * scale;
+  const fullRenderedWidth = naturalWidth * scale;
+  const fullRenderedHeight = naturalHeight * scale;
+  const imgX = rightEdgeX - (contentBBox.x + contentBBox.width) * scale;
+  const imgY = topY - contentBBox.y * scale;
+  const clipX = rightEdgeX - targetWidth;
+
+  return `<defs>
+      <clipPath id="${clipId}">
+        <rect x="${clipX}" y="${topY}" width="${targetWidth}" height="${targetHeight}" />
+      </clipPath>
+    </defs>
+    <g clip-path="url(#${clipId})">
+      <image x="${imgX}" y="${imgY}" width="${fullRenderedWidth}" height="${fullRenderedHeight}" href="data:image/png;base64,${base64Png}" />
+    </g>`;
 }

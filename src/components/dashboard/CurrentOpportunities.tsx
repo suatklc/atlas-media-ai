@@ -7,21 +7,19 @@ import type { RankedContentOpportunity } from "@/lib/ai/research/retrieval/types
 import { describeFreshnessBand } from "@/lib/ai/research/freshnessBand";
 import { describeContentType } from "@/lib/ai/research/contentTypeLabel";
 import { recommendVisualFormat } from "@/lib/ai/research/formatRecommendation";
-import { buildPublishableCaption, extractVisualHeadlineMarker, type CarouselStructure } from "@/lib/ai/creative/caption";
-import { DEFAULT_PLATFORM } from "@/lib/ai/platform/config";
+import type { ContentPackage } from "@/lib/ai/content/contentPackage";
 
 // Current Content Opportunities — the first user-facing surface for the
-// live research backend (discoverCurrentContentOpportunities). This is a
-// SECOND UI SURFACE, not a second content generator: content generation
-// still goes exclusively through the existing /api/assistant route
-// (ContentOpportunity -> buildSeedMessage -> buildContentPlan with its
-// intent override -> the same Claude call AIAssistantPanel.tsx already
-// uses), and visual generation still goes exclusively through the
-// existing /api/generate-visual route (the same hero/educational renderer
-// dispatch AIAssistantPanel.tsx already uses). Nothing here duplicates
-// that logic — it only adds a second, opportunity-driven entry point into
-// it, reusing creative/caption.ts's own marker/caption extraction exactly
-// as AIAssistantPanel.tsx does.
+// live research backend (discoverCurrentContentOpportunities).
+//
+// Gold Standard V1: content generation now goes through the NEW, separate
+// /api/content-package route (one structured OpenAI call, no hidden prose
+// markers) instead of streaming through /api/assistant — that route and
+// AIAssistantPanel.tsx's own free-form chat are untouched; this is a
+// dedicated path specifically for Current Content Radar opportunities.
+// Visual generation still goes through the existing /api/generate-visual
+// route, which now has its own dedicated ContentPackage-driven carousel
+// branch (see that route) alongside its untouched single-image path.
 
 type VisualFormatChoice = "single" | "carousel"; // future: | "video" — see formatRecommendation.ts
 
@@ -29,14 +27,6 @@ const FORMAT_CHOICES: { id: VisualFormatChoice; label: string }[] = [
   { id: "single", label: "Tek Görsel" },
   { id: "carousel", label: "Carousel" },
 ];
-
-type GeneratedContent = {
-  displayText: string;
-  visualHeadline?: string;
-  educationalPoints?: string[];
-  carouselStructure?: CarouselStructure;
-  assistantResponseText: string;
-};
 
 type CarouselSlideImage = { slide: number; imageUrl: string };
 
@@ -49,8 +39,6 @@ type GeneratedVisual = {
   disclaimer?: string | null;
   error?: string;
 };
-
-const FALLBACK_HEADLINE = "Gayrimenkul İçeriği";
 
 function formatDate(iso: string): string {
   if (!iso) return "";
@@ -69,6 +57,14 @@ function isSafeExternalUrl(url: string | undefined): url is string {
   }
 }
 
+const SLIDE_ROLE_LABELS: Record<string, string> = {
+  hook: "Kapak",
+  "what-happened": "Ne Oldu?",
+  "why-it-matters": "Neden Önemli?",
+  "what-to-do": "Ne Yapmalı?",
+  cta: "Kapanış",
+};
+
 export default function CurrentOpportunities() {
   const router = useRouter();
 
@@ -82,14 +78,14 @@ export default function CurrentOpportunities() {
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
-  const [generatedContent, setGeneratedContent] = useState<GeneratedContent | null>(null);
+  const [contentPackage, setContentPackage] = useState<ContentPackage | null>(null);
   const [visual, setVisual] = useState<GeneratedVisual | null>(null);
 
   async function handleFindOpportunities() {
     setIsSearching(true);
     setSearchError(null);
     setSelectedIndex(null);
-    setGeneratedContent(null);
+    setContentPackage(null);
     setVisual(null);
 
     try {
@@ -122,7 +118,7 @@ export default function CurrentOpportunities() {
   function handleSelect(index: number) {
     setSelectedIndex(index);
     setFormatChoice(recommendVisualFormat(opportunities[index]));
-    setGeneratedContent(null);
+    setContentPackage(null);
     setVisual(null);
     setGenerationError(null);
   }
@@ -132,54 +128,31 @@ export default function CurrentOpportunities() {
     // The opportunity itself travels through unmodified — its own
     // suggestedContentType (research-stage classification) is never
     // rewritten to fit a visual-format choice. The user's Tek Görsel/
-    // Carousel choice instead travels as its own explicit field.
+    // Carousel choice instead travels as its own explicit, authoritative
+    // field — /api/content-package never re-infers it from prose.
     const opportunity = opportunities[selectedIndex];
 
     setIsGenerating(true);
     setGenerationError(null);
-    setGeneratedContent(null);
+    setContentPackage(null);
     setVisual(null);
 
     try {
-      const response = await fetch("/api/assistant", {
+      const response = await fetch("/api/content-package", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contentOpportunity: opportunity,
           visualFormat: formatChoice,
-          platform: DEFAULT_PLATFORM,
         }),
       });
 
-      if (!response.ok || !response.body) {
-        const data = await response.json().catch(() => null);
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.contentPackage) {
         throw new Error(data?.error || "İçerik oluşturulamadı. Lütfen tekrar deneyin.");
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let fullText = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        fullText += decoder.decode(value, { stream: true });
-      }
-
-      if (!fullText.trim()) {
-        throw new Error("Yanıt alınamadı. Lütfen tekrar deneyin.");
-      }
-
-      const { visualHeadline, educationalPoints, carouselStructure } = extractVisualHeadlineMarker(fullText);
-      const displayText = buildPublishableCaption(fullText);
-
-      setGeneratedContent({
-        displayText,
-        visualHeadline,
-        educationalPoints,
-        carouselStructure,
-        assistantResponseText: fullText,
-      });
+      setContentPackage(data.contentPackage as ContentPackage);
     } catch (err) {
       setGenerationError(err instanceof Error ? err.message : "İçerik oluşturulamadı. Lütfen tekrar deneyin.");
     } finally {
@@ -188,7 +161,7 @@ export default function CurrentOpportunities() {
   }
 
   async function handleGenerateVisual() {
-    if (selectedIndex === null || !generatedContent) return;
+    if (selectedIndex === null || !contentPackage) return;
     const opportunity = opportunities[selectedIndex];
 
     setVisual({ status: "loading" });
@@ -200,12 +173,7 @@ export default function CurrentOpportunities() {
         body: JSON.stringify({
           contentOpportunity: opportunity,
           visualFormat: formatChoice,
-          headline: generatedContent.visualHeadline || FALLBACK_HEADLINE,
-          content: generatedContent.displayText,
-          educationalPoints: generatedContent.educationalPoints,
-          carouselStructure: generatedContent.carouselStructure,
-          assistantResponseText: generatedContent.assistantResponseText,
-          platform: DEFAULT_PLATFORM,
+          contentPackage,
         }),
       });
 
@@ -253,11 +221,11 @@ export default function CurrentOpportunities() {
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-5 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400">
-            <Sparkles className="h-[18px] w-[18px]" />
+            <Sparkles className="h-5 w-5" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-white">Güncel İçerik Fırsatları</p>
-            <p className="text-xs text-zinc-500">Güvenilir kaynaklardan güncel gayrimenkul gelişmeleri</p>
+            <p className="text-base font-semibold text-white">Güncel İçerik Fırsatları</p>
+            <p className="text-sm text-zinc-400">Güvenilir kaynaklardan güncel gayrimenkul gelişmeleri</p>
           </div>
         </div>
 
@@ -265,16 +233,16 @@ export default function CurrentOpportunities() {
           type="button"
           onClick={handleFindOpportunities}
           disabled={isSearching}
-          className="flex items-center gap-1.5 rounded-full bg-indigo-500 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex items-center gap-1.5 rounded-full bg-indigo-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isSearching ? (
             <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
               Aranıyor…
             </>
           ) : (
             <>
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RefreshCw className="h-4 w-4" />
               Güncel Konuları Bul
             </>
           )}
@@ -283,20 +251,20 @@ export default function CurrentOpportunities() {
 
       <div className={`space-y-4 px-5 ${isEmptyGuidanceOnly ? "py-3" : "py-4"}`}>
       {searchError && (
-        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-300">
           {searchError}
         </p>
       )}
 
       {!hasSearched && !isSearching && !searchError && (
-        <p className="text-sm text-zinc-500">
+        <p className="text-sm text-zinc-400">
           Son 30 gün içindeki güvenilir kaynaklardan güncel gayrimenkul fırsatlarını bulmak için yukarıdaki butona
           tıklayın.
         </p>
       )}
 
       {hasSearched && !isSearching && opportunities.length === 0 && !searchError && (
-        <p className="text-sm text-zinc-500">
+        <p className="text-sm text-zinc-400">
           Şu anda son 30 gün içinde yeterince güçlü güncel içerik bulunamadı.
         </p>
       )}
@@ -314,34 +282,34 @@ export default function CurrentOpportunities() {
                 key={`${source?.url ?? opportunity.topic}-${index}`}
                 type="button"
                 onClick={() => handleSelect(index)}
-                className={`flex flex-col gap-2 rounded-lg border px-3.5 py-3 text-left transition-colors ${
+                className={`flex flex-col gap-2 rounded-lg border px-4 py-3.5 text-left transition-colors ${
                   isSelected
                     ? "border-indigo-500/60 bg-indigo-500/10"
                     : "border-zinc-800 bg-zinc-950 hover:border-indigo-500/40"
                 }`}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-[11px] font-medium text-zinc-400">{source?.publisher ?? "Kaynak"}</span>
+                  <span className="text-xs font-medium text-zinc-300">{source?.publisher ?? "Kaynak"}</span>
                   <div className="flex items-center gap-1.5">
-                    {source && <span className="text-[10px] text-zinc-600">{formatDate(source.publishedAt)}</span>}
+                    {source && <span className="text-[11px] text-zinc-500">{formatDate(source.publishedAt)}</span>}
                     {freshness && (
-                      <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                      <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
                         {freshness.label}
                       </span>
                     )}
                   </div>
                 </div>
 
-                <p className="text-sm font-medium leading-snug text-white">{opportunity.topic}</p>
-                <p className="line-clamp-2 text-xs text-zinc-500">{opportunity.angle}</p>
+                <p className="text-[15px] font-medium leading-snug text-white">{opportunity.topic}</p>
+                <p className="line-clamp-2 text-sm text-zinc-400">{opportunity.angle}</p>
 
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-medium">
-                  <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-indigo-300">
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-medium">
+                  <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-indigo-300">
                     {opportunity.suggestedContentType
                       ? describeContentType(opportunity.suggestedContentType)
                       : describeContentType("none")}
                   </span>
-                  <span className="rounded-full border border-zinc-800 px-2 py-0.5 text-zinc-400">
+                  <span className="rounded-full border border-zinc-800 px-2.5 py-1 text-zinc-400">
                     Önerilen: {recommended === "carousel" ? "Carousel" : "Tek Görsel"}
                   </span>
                 </div>
@@ -352,9 +320,9 @@ export default function CurrentOpportunities() {
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(event) => event.stopPropagation()}
-                    className="mt-1 inline-flex w-fit items-center gap-1 text-[11px] text-zinc-500 transition-colors hover:text-indigo-300"
+                    className="mt-1 inline-flex w-fit items-center gap-1 text-xs text-zinc-400 transition-colors hover:text-indigo-300"
                   >
-                    <ExternalLink className="h-3 w-3" />
+                    <ExternalLink className="h-3.5 w-3.5" />
                     Kaynağı Görüntüle
                   </a>
                 )}
@@ -366,21 +334,21 @@ export default function CurrentOpportunities() {
 
       {selectedOpportunity && (
         <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
-          <p className="text-xs font-medium text-zinc-400">Seçilen fırsat</p>
-          <p className="mt-1 text-sm font-medium text-white">{selectedOpportunity.topic}</p>
+          <p className="text-sm font-medium text-zinc-400">Seçilen fırsat</p>
+          <p className="mt-1 text-base font-medium text-white">{selectedOpportunity.topic}</p>
           {selectedOpportunity.riskCaveat && (
-            <p className="mt-2 text-[11px] text-amber-400">{selectedOpportunity.riskCaveat}</p>
+            <p className="mt-2 text-sm text-amber-400">{selectedOpportunity.riskCaveat}</p>
           )}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-zinc-500">İçerik formatı</span>
+            <span className="text-sm font-medium text-zinc-400">İçerik formatı</span>
             <div className="flex overflow-hidden rounded-full border border-zinc-800">
               {FORMAT_CHOICES.map((choice) => (
                 <button
                   key={choice.id}
                   type="button"
                   onClick={() => setFormatChoice(choice.id)}
-                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                  className={`px-4 py-2 text-sm font-medium transition-colors ${
                     formatChoice === choice.id
                       ? "bg-indigo-500 text-white"
                       : "bg-zinc-950 text-zinc-400 hover:text-zinc-200"
@@ -396,52 +364,89 @@ export default function CurrentOpportunities() {
             type="button"
             onClick={handleGenerateContent}
             disabled={isGenerating}
-            className="mt-3 flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-4 py-2 text-xs font-medium text-indigo-300 transition-colors hover:border-indigo-500/70 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            className="mt-3 flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-4 py-2.5 text-sm font-medium text-indigo-300 transition-colors hover:border-indigo-500/70 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isGenerating ? (
               <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
                 İçerik oluşturuluyor…
               </>
             ) : (
               <>
-                <Sparkles className="h-3.5 w-3.5" />
+                <Sparkles className="h-4 w-4" />
                 İçerik Oluştur
               </>
             )}
           </button>
 
           {generationError && (
-            <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+            <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-300">
               {generationError}
             </p>
           )}
 
-          {generatedContent && (
-            <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3.5">
-              <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-zinc-500">Taslak İçerik</p>
-              <p className="whitespace-pre-wrap text-xs text-zinc-300">{generatedContent.displayText}</p>
+          {/* Gold Standard V1: the complete package — source, hook, caption,
+              hashtags, and every slide's content — shown together, plain
+              language only, no raw JSON/markers/internal field names. */}
+          {contentPackage && (
+            <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Taslak İçerik Paketi</p>
+                <span className="rounded-full border border-zinc-700 px-2.5 py-0.5 text-[11px] font-medium text-zinc-400">
+                  Taslak
+                </span>
+              </div>
+
+              {contentPackage.source.name && (
+                <p className="mt-2 text-xs text-zinc-500">
+                  Kaynak: {contentPackage.source.name}
+                  {contentPackage.source.publishedAt ? ` · ${formatDate(contentPackage.source.publishedAt)}` : ""}
+                </p>
+              )}
+
+              <p className="mt-3 text-sm font-medium text-white">{contentPackage.hook}</p>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-300">{contentPackage.caption}</p>
+
+              {contentPackage.hashtags.length > 0 && (
+                <p className="mt-2 text-sm text-indigo-300">
+                  {contentPackage.hashtags.map((tag) => (tag.startsWith("#") ? tag : `#${tag}`)).join(" ")}
+                </p>
+              )}
+
+              {contentPackage.format === "carousel" && (
+                <div className="mt-3 space-y-2">
+                  {contentPackage.slides.map((slide) => (
+                    <div key={slide.index} className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2.5">
+                      <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                        Slayt {slide.index} · {SLIDE_ROLE_LABELS[slide.role] ?? slide.role}
+                      </p>
+                      <p className="mt-1 text-sm font-medium text-white">{slide.headline}</p>
+                      <p className="mt-1 text-sm text-zinc-400">{slide.body}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {!visual && (
                 <button
                   type="button"
                   onClick={handleGenerateVisual}
-                  className="mt-3 flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300"
+                  className="mt-4 flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300"
                 >
-                  <ImagePlus className="h-3.5 w-3.5 text-indigo-400" />
+                  <ImagePlus className="h-4 w-4 text-indigo-400" />
                   Görsel Oluştur
                 </button>
               )}
 
               {visual?.status === "loading" && (
-                <div className="mt-3 flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-xs text-zinc-400">
-                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-indigo-400" />
+                <div className="mt-3 flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm text-zinc-400">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-indigo-400" />
                   Görsel oluşturuluyor, bu işlem 60-90 saniye sürebilir…
                 </div>
               )}
 
               {visual?.status === "error" && (
-                <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-300">
                   {visual.error}
                 </p>
               )}
@@ -460,16 +465,16 @@ export default function CurrentOpportunities() {
                             alt={`Slayt ${slide.slide}`}
                             className="aspect-[4/5] w-full object-cover"
                           />
-                          <p className="px-1.5 py-1 text-center text-[10px] text-zinc-500">
+                          <p className="px-1.5 py-1 text-center text-[11px] text-zinc-400">
                             Slayt {slide.slide}/5
                           </p>
                         </div>
                       ))}
                   </div>
                   {visual.isConceptual && visual.disclaimer && (
-                    <p className="mt-1 text-[11px] text-zinc-500">{visual.disclaimer}</p>
+                    <p className="mt-1 text-xs text-zinc-500">{visual.disclaimer}</p>
                   )}
-                  <p className="mt-2 text-[11px] text-zinc-500">
+                  <p className="mt-2 text-xs text-zinc-500">
                     Bu içerik taslak olarak kaydedildi. Yayınlamak için aşağıdaki “Oluşturulan Gönderiler”
                     bölümünden onaylamanız gerekir.
                   </p>
@@ -485,9 +490,9 @@ export default function CurrentOpportunities() {
                     className="h-auto w-full rounded-lg border border-zinc-800 object-contain"
                   />
                   {visual.isConceptual && visual.disclaimer && (
-                    <p className="mt-1 text-[11px] text-zinc-500">{visual.disclaimer}</p>
+                    <p className="mt-1 text-xs text-zinc-500">{visual.disclaimer}</p>
                   )}
-                  <p className="mt-2 text-[11px] text-zinc-500">
+                  <p className="mt-2 text-xs text-zinc-500">
                     Bu içerik taslak olarak kaydedildi. Yayınlamak için aşağıdaki “Oluşturulan Gönderiler”
                     bölümünden onaylamanız gerekir.
                   </p>

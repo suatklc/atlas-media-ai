@@ -24,7 +24,7 @@ export default function Topbar({ onMenuClick, user }: TopbarProps) {
         <input
           type="text"
           placeholder="Ara..."
-          className="w-full rounded-lg border border-zinc-800 bg-zinc-900 py-2 pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          className="w-full rounded-lg border border-zinc-800 bg-zinc-900 py-2.5 pl-9 pr-3 text-base text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
         />
       </div>
 
@@ -42,7 +42,7 @@ export default function Topbar({ onMenuClick, user }: TopbarProps) {
 
         <button
           type="button"
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-500 text-xs font-semibold text-white transition-colors hover:bg-indigo-400"
+          className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 text-sm font-semibold text-white transition-colors hover:bg-indigo-400"
           aria-label={`${user.name} hesap menüsü`}
           title={user.name}
         >
