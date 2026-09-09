@@ -354,3 +354,167 @@ test("generate-visual route's Gold Standard carousel branch reads format from co
   const routeSource = fs.readFileSync(path.join(projectRoot, "src/app/api/generate-visual/route.ts"), "utf8");
   assert.match(routeSource, /isContentPackage\(rawContentPackage\) && rawContentPackage\.format === "carousel"/);
 });
+
+// ============================================================
+// Content Quality Upgrade — editorial-generation source-contract checks
+// on /api/content-package's prompt-builder, plus a real-execution test
+// proving the OpenAI call count and schema/format contract are unchanged.
+// ============================================================
+
+function readContentPackageRouteSource() {
+  return fs.readFileSync(path.join(projectRoot, "src/app/api/content-package/route.ts"), "utf8");
+}
+
+test("content-package prompt still requires exactly the same ContentPackage JSON schema (topic/source/hook/caption/hashtags/slides/facts)", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(
+    routeSource,
+    /required:\s*\["topic",\s*"source",\s*"hook",\s*"caption",\s*"hashtags",\s*"slides",\s*"facts"\]/,
+  );
+  assert.doesNotMatch(routeSource, /properties:\s*\{[^}]*format/s);
+});
+
+test("content-package prompt explicitly requires non-repetitive, progressive slide information (the exact production failure mode)", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /TEKRARSIZLIK/);
+  assert.match(routeSource, /YER ALMAYAN yeni bir bilgi/);
+});
+
+test("content-package prompt explicitly prohibits unsupported factual invention", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /UYDURMA YASAĞI/);
+  assert.match(routeSource, /UYDURMA\b/);
+});
+
+test("content-package prompt establishes Suat Kılıç's professional real-estate-advisor positioning, not a news-summarizer persona", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /haber özetleyicisi DEĞİLSİN/);
+  assert.match(routeSource, /Suat Kılıç/);
+  assert.match(routeSource, /gayrimenkul danışman/i);
+});
+
+test("content-package prompt requires practical buyer/seller/investor interpretation on the 'why-it-matters' slide", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /alıcı, satıcı, ev sahibi, yatırımcı veya kiracı/);
+});
+
+test("content-package prompt's hashtag guidance favors relevance over volume (5-9, no stuffing)", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /5-9 arası/);
+  assert.match(routeSource, /hashtag yığını üretme/);
+});
+
+test("content-package prompt still forbids inventing itemized breakdowns from an approximate total", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /role="component" SADECE kaynağın kendisi ayrı kalemleri açıkça verdiğinde/);
+});
+
+function loadContentPackageRoute(overrides = {}) {
+  const state = { completionCalls: 0, lastMessages: null };
+
+  const defaultCompletionResponse = {
+    topic: "Deprem sigortası zorunluluğu",
+    source: { name: "TKGM", url: "https://example.com/duyuru", publishedAt: "2026-09-01T00:00:00.000Z" },
+    hook: "Satışta artık zorunlu bir belge daha var",
+    caption: "Kısa bir caption.",
+    hashtags: ["#TapuIslemleri", "#Gayrimenkul", "#DASK", "#KonutAlimi", "#Yatirim"],
+    facts: [],
+    slides: [
+      { headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+      { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+      { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+      { headline: "H4", body: "B4", facts: [], visualBrief: "v4" },
+      { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+    ],
+  };
+
+  const defaultDeps = {
+    "next/server": {},
+    "@/lib/supabase/server": {
+      createClient: async () => ({
+        auth: { getUser: async () => ({ data: { user: { id: "user-1" } } }) },
+      }),
+    },
+    "@/lib/ai/client": {
+      getOpenAITextClient: () => ({
+        chat: {
+          completions: {
+            create: async (args) => {
+              state.completionCalls += 1;
+              state.lastMessages = args.messages;
+              return {
+                choices: [
+                  { message: { content: JSON.stringify(overrides.completionResponse ?? defaultCompletionResponse) } },
+                ],
+              };
+            },
+          },
+        },
+      }),
+      AI_TEXT_MODEL: "gpt-4.1-mini",
+    },
+    "@/lib/ai/system-prompt": { SYSTEM_PROMPT: "system" },
+    "@/lib/ai/research/opportunity": {
+      isContentOpportunity: (v) => Boolean(v && typeof v === "object"),
+      buildResearchDirective: () => "directive",
+    },
+    "@/lib/ai/research/formatRecommendation": {
+      isVisualFormat: (v) => v === "single" || v === "carousel",
+    },
+    "@/lib/ai/context/businessProfile": {
+      ATLAS_DEFAULT_BUSINESS_PROFILE: { geography: { primary: "Zekeriyaköy", nearby: ["Sarıyer"] } },
+    },
+    "@/lib/ai/content/contentPackage": {
+      CAROUSEL_SLIDE_ROLES: ["hook", "what-happened", "why-it-matters", "what-to-do", "cta"],
+      validateContentPackage: overrides.validateContentPackage ?? (() => ({ ok: true })),
+    },
+  };
+
+  const route = loadTypeScriptModule(
+    "src/app/api/content-package/route.ts",
+    (specifier) => defaultDeps[specifier] ?? {},
+    { Response, Buffer, process, JSON },
+  );
+
+  return { route, state };
+}
+
+test("/api/content-package makes exactly ONE OpenAI generation call per request — never a second call to reformat", async () => {
+  const { route, state } = loadContentPackageRoute();
+  const request = {
+    json: async () => ({
+      contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] },
+      visualFormat: "carousel",
+    }),
+  };
+
+  const response = await route.POST(request);
+  const body = await response.json();
+
+  assert.equal(state.completionCalls, 1);
+  assert.equal(body.contentPackage.format, "carousel");
+  assert.equal(body.contentPackage.slides.length, 5);
+});
+
+test("/api/content-package still enforces exactly 5 carousel slides even with the upgraded editorial prompt", async () => {
+  const { route } = loadContentPackageRoute({
+    completionResponse: {
+      topic: "t",
+      source: { name: "n", url: "u", publishedAt: "p" },
+      hook: "h",
+      caption: "c",
+      hashtags: ["#a"],
+      facts: [],
+      slides: [{ headline: "H1", body: "B1", facts: [], visualBrief: "v1" }],
+    },
+  });
+  const request = {
+    json: async () => ({
+      contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] },
+      visualFormat: "carousel",
+    }),
+  };
+
+  const response = await route.POST(request);
+  assert.equal(response.status, 502);
+});

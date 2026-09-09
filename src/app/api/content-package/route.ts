@@ -10,6 +10,7 @@ import {
   type ContentPackage,
   type ContentSlide,
 } from "@/lib/ai/content/contentPackage";
+import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "@/lib/ai/context/businessProfile";
 
 // Gold Standard V1 — the structured generation path for Current Content
 // Radar opportunities. Deliberately separate from /api/assistant (which
@@ -89,37 +90,69 @@ const CONTENT_PACKAGE_JSON_SCHEMA = {
   additionalProperties: false,
 };
 
+// Gold Standard V1 — Content Quality Upgrade (Section 4 of that task's
+// spec): each role gets a full editorial brief, not a one-line format
+// note, specifically so slide 5 is told NOT to summarize 1-4, and slide
+// 2's brief calls out surfacing the key number/date/requirement — the
+// two biggest levers against the "mandatory → regulation → importance →
+// check it → safe transaction" repetition failure the real production
+// test surfaced.
 const CAROUSEL_SLIDE_ROLE_BRIEF: Record<string, string> = {
-  hook: "Slayt 1 (kapak/dikkat çekici): güçlü ama olgusal bir başlık, tek net mesaj; uzun paragraf yok.",
-  "what-happened": "Slayt 2 (ne oldu): kaynağın bildirdiği gelişme + önemli sayı/olgu; kısa ve editoryal.",
-  "why-it-matters": "Slayt 3 (neden önemli): alıcı/satıcı/kiracı/yatırımcı için gerçek anlamı; desteklenmeyen nedensel iddia yok.",
-  "what-to-do": "Slayt 4 (ne yapmalı): pratik kontrol listesi — neye bakılmalı, ne karşılaştırılmalı, ne sorulmalı.",
-  cta: "Slayt 5 (kapanış/CTA): kısa çıkarım + ölçülü bir eylem çağrısı.",
+  hook: "SLAYT 1 — HOOK: Ne oldu ve okuyucu bunu neden önemsemeli? Kısa, güçlü, spesifik tek bir mesaj. Clickbait yok, uzun paragraf yok.",
+  "what-happened":
+    "SLAYT 2 — NE DEĞİŞTİ: Gelişmeyi somut biçimde anlat; kaynağın doğruladığı bilgiyi önceliklendir. Önemli bir sayı/tarih/gereklilik varsa NET biçimde burada yüzeye çıkar (facts alanına da ekle).",
+  "why-it-matters":
+    "SLAYT 3 — BUNUN SİZİN İÇİN ANLAMI: Gelişmeyi ilgili kitle için PRATİK sonuca çevir — alıcı, satıcı, ev sahibi, yatırımcı veya kiracı açısından somut biçimde ne değişiyor. Desteklenmeyen nedensel iddia kurma.",
+  "what-to-do":
+    "SLAYT 4 — NE YAPMALI: Mevcut olgularla desteklenen, gerçekten kullanışlı bir kontrol listesi, karar çerçevesi veya karşılaştırma sun — genel/boş bir 'dikkatli olun' cümlesi değil.",
+  cta: "SLAYT 5 — UZMAN GÖRÜŞÜ / KAPANIŞ: Slayt 1-4'ün özeti OLMASIN. Kısa ve profesyonel bir uzman çıkarımı sun; Suat Kılıç'ı bir haber hesabı gibi değil, güvenilir bir gayrimenkul danışmanı gibi konumlandır. Ölçülü, doğal bir eylem çağrısıyla bitir — hazır kalıp cümleyi birebir kopyalama.",
 };
 
+const AVOIDED_CLICHE_PHRASES = [
+  "önemli bir adım teşkil ediyor",
+  "güvenli işlem açısından kritik önem taşıyor",
+  "bilinçli hareket etmek faydalı olacaktır",
+  "güncel gelişmeler ışığında",
+  "gayrimenkul piyasasında işlemlerin güvenliği açısından",
+];
+
 function buildContentPackagePrompt(maxAgeContextDays: number): string {
-  return `Görsel Marka: Suat Kılıç, Gayrimenkul Yatırım Danışmanı.
+  const geography = ATLAS_DEFAULT_BUSINESS_PROFILE.geography;
+
+  return `Kimlik ve konumlandırma: Sen bir haber özetleyicisi DEĞİLSİN. Suat Kılıç (Gayrimenkul Yatırım Danışmanı) için çalışan profesyonel bir gayrimenkul içerik stratejistisin. Görevin, ham bir kaynağı; okuyucunun "bu bilgi işime yarar, bunu kaydetmeliyim, bu danışman piyasayı biliyor" diyeceği tam bir sosyal medya içerik paketine dönüştürmek.
+
+Ses (Suat Kılıç üslubu): profesyonel, bilgili, sakin, güvenilir, açık, pratik, insani.
+ASLA şöyle yazma: kurumsal PR dili, hukuki/mevzuat metni dili, yapay zeka dolgu dili, sansasyonel dil, satış baskısı dili, bürokratik/resmi duyuru dili. Suat bir avukat, ekonomist, resmi kurum temsilcisi veya gazeteci gibi yazmaz — o, gayrimenkul kararı veren insanlar için gelişmeleri yorumlayan bir danışmandır.
+Şu kalıp ifadelerden (ve birebir eşdeğerlerinden) kaçın, gerçekten gerekli olmadıkça: ${AVOIDED_CLICHE_PHRASES.map((p) => `"${p}"`).join(", ")}.
 
 Görev: Verilen güncel fırsat için TEK bir yapılandırılmış içerik paketi üret. Serbest metin/gizli işaret ([[...]]) YOK — yalnızca istenen JSON alanlarını doldur.
 
-Kural — OLGU / YORUM AYRIMI:
+Kural — TEKRARSIZLIK / BİLGİ İLERLEMESİ (kritik): Beş slayt aynı fikri farklı kelimelerle beş kez tekrar ETMEMELİ. Her slayt, önceki slaytlarda YER ALMAYAN yeni bir bilgi, açı veya sonuç eklemeli. "Zorunlu gereklilik → mevzuat → önemi → kontrol edin → güvenli işlem yapın" gibi tek bir fikrin beş kez yeniden ifade edilmesi KABUL EDİLEMEZ ve reddedilecektir. Her slayt farklı bir editoryal işlevi yerine getirmeli (aşağıya bak).
+
+Kural — UZMAN YORUMU: Kaynaktaki doğrulanmış olgulardan açıkça türetilen profesyonel bir yorum/değerlendirme eklemek İYİDİR (özellikle Slayt 3 ve Slayt 5'te) — ancak bu yorum yeni bir OLGU İDDİASI gibi sunulmamalı; "Bu gelişme ... gösteriyor/gündeme getiriyor" gibi açık bir yorum çerçevesiyle ayrılmalı.
+
+Kural — OLGU / YORUM AYRIMI VE UYDURMA YASAĞI:
 - ContentSlide.facts ve ContentPackage.facts alanları SADECE kaynağın gerçekten belirttiği sayısal/olgusal bilgileri içersin.
 - Kaynak yalnızca yaklaşık/toplam bir rakam veriyorsa (örn. "yaklaşık 150.000 TL"), bunu role="standalone" veya role="total" olarak ver; ASLA var olmayan bir kalem dökümü (depozito+kira+komisyon gibi) icat etme. role="component" SADECE kaynağın kendisi ayrı kalemleri açıkça verdiğinde kullanılsın.
 - caption ve her slaytın body/headline metninde geçen HER belirgin sayı, facts dizisinde veya başka bir slaytta da yer almalı — icat edilmiş/çelişen bir sayı olmamalı.
-- Kaynağın açıkça belirtmediği hiçbir nedensel bağlantı kurma (örn. "pandemi sonrası hareketlilik", "ekonomik dalgalanmalar" gibi genel/kanıtsız gerekçeler ekleme) — kanıt yoksa ihtiyatlı ve dar kapsamlı yaz.
+- Kaynağın açıkça belirtmediği hiçbir tarih, tutar, yüzde, yasal sonuç, prosedür, istisna, süre/son tarih veya karşılaştırma UYDURMA. Genel/kanıtsız nedensel gerekçeler ekleme (örn. "pandemi sonrası hareketlilik", "ekonomik dalgalanmalar") — kanıt yoksa ihtiyatlı ve dar kapsamlı yaz; boşluğu doldurmaya çalışma.
 - Son ${maxAgeContextDays} gün içindeki güncelliği doğal biçimde yansıt; tarihleri koru.
+
+Yerel konumlandırma: Suat Kılıç'ın ana uzmanlık bölgesi ${geography.primary} ve çevresindeki ${geography.nearby.join(", ")} bölgeleri. Bunu HER cümleye zorlama — yalnızca editoryal olarak doğal olduğunda kullan. Ulusal ölçekli bir gelişmeyi kaynak desteklemediği halde yapay biçimde yerelleştirme.
+
+Hedef kitlenin sorması gereken sorular (yalnızca kaynak/kanıt destekliyorsa yanıtla, uydurma): Ne oldu? Ne değişti? Bu kimi etkiliyor? Neden önemli? Alıcı/satıcı/yatırımcı neye dikkat etmeli? Okuyucu hangi pratik adımı atabilir?
 
 Slayt içerikleri (yalnızca headline/body/facts/visualBrief doldur — sıra ve rol SENİN kararın DEĞİL, sistem tarafından sabittir):
 ${Object.values(CAROUSEL_SLIDE_ROLE_BRIEF).join("\n")}
 visualBrief: SADECE görsel KONSEPT (örn. "modern İstanbul konut binası, akşam ışığı, editoryal fotoğraf") — asla ekranda yazı/metin isteme, asla marka/logo tarif etme.
 
-Caption yapısı (ContentPackage.caption, tek metin):
-HOOK (kısa) → GAYRİMENKUL YORUMU (pratik anlam, 2-4 kısa paragraf) → EYLEM ÇAĞRISI → İMZA:
+Caption yapısı (ContentPackage.caption, tek metin, basın bülteni gibi OKUNMAMALI):
+HOOK (kısa) → GAYRİMENKUL YORUMU (pratik anlam ve sonuç, 2-4 kısa doğal paragraf) → UZMAN ÇIKARIMI (kısa) → ÖLÇÜLÜ EYLEM ÇAĞRISI → İMZA:
 Suat Kılıç
 Gayrimenkul Yatırım Danışmanı
-Caption, slaytların birebir tekrarı olmasın; doğal şekilde genişletsin.
+Caption, slaytların birebir tekrarı olmasın; slaytları tamamlayan, doğal bir metin olsun — her slaytı sırayla yeniden anlatma.
 
-hashtags: konuya özgü, jenerik hashtag spam'i değil; genel "#emlak #gayrimenkul" gibi tekrar eden kalıpları tek başına yeterli sayma, konuya özgü terimler ekle.
+Hashtag stratejisi: Jenerik hashtag yığını üretme. 5-9 arası, yüksek ilgililikte hashtag seç; sayıyı artırmak için tuhaf/yapay birleşik hashtag icat etme. Şu kategorilerden anlamlı bir karışım kullan: (1) konuya özgü terim (ör. tapu/kira/imar konusuna gerçekten uyan bir etiket), (2) meslek/niyet (ör. #Gayrimenkul, #GayrimenkulYatırımı), (3) yalnızca editoryal olarak uygunsa yerel keşif etiketi (bölge adı), (4) yalnızca gerçekten uygunsa marka/uzmanlık etiketi. Aynı jenerik seti her seferinde tekrarlama.
 
 topic: fırsatın kısa özeti. hook: caption'ın da kullanacağı kısa, güçlü açılış cümlesi. source: verilen fırsatın kaynak adı/URL/yayım tarihi, DEĞİŞTİRMEDEN.`;
 }
