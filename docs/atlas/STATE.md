@@ -130,6 +130,49 @@ changes often — keep it short and current, not a historical changelog
   - **Must not be reopened casually — only a proven correctness blocker
     justifies revisiting this**, same convention as Carousel V1/Current
     Content Radar V1 above.
+- **CONTENTPACKAGE GOLD STANDARD V1 = FROZEN.** User-accepted via a real
+  live production acceptance test on the same TKGM/DASK opportunity that
+  drove Source-Grounding Safety V1 above — Factual Safety PASS, Context
+  Safety PASS, validation PASS, no forced-locality hashtag, and every
+  strict editorial threshold (expert interpretation, anti-repetition,
+  language quality, publish-readiness, overall) scored 8+/10 with no
+  manual editing required. Builds on Source-Grounding Safety V1, not a
+  replacement for it:
+  - **TKGM linked-file evidence extraction** (the deferred limitation
+    noted above) is now implemented: `tkgm.ts` discovers and fetches the
+    real linked PDF behind each thin detail-page stub
+    (`evidenceExtraction.ts`'s `extractPdfTextOrUndefined`, via `unpdf`
+    — the one new dependency this required, verified native-binary-free
+    and Vercel-safe), so genuine TKGM evidence can now reach
+    `meaningful` instead of staying `thin`.
+  - **Verified Fact Contract** (`src/lib/ai/content/factContract.ts`):
+    a second, narrow, non-editorial AI call (Job 1, stays on
+    `AI_TEXT_MODEL`/`gpt-4.1-mini`) classifies every evidence claim as
+    current-topic / different-scenario / unsupported; code
+    deterministically keeps ONLY current-topic facts before the
+    editorial ContentPackage call (Job 2) ever runs — the actual fix for
+    a proven, repeated cross-scenario context-leakage defect (a real
+    fact from an unrelated clause of the same source document being
+    applied to the wrong topic).
+  - **Job 2 (editorial generation) now runs on `gpt-5.4`**
+    (`CONTENT_PACKAGE_EDITORIAL_MODEL` in `client.ts`), scoped to this
+    ONE call only — Job 1 and `/api/assistant`'s general chat stay on
+    `gpt-4.1-mini`. A controlled, same-Fact-Contract benchmark against
+    `gpt-4.1-mini` and `gpt-5-mini` showed `gpt-5.4` the only candidate
+    that improved expert interpretation/anti-repetition/language quality
+    without a factual-safety regression.
+  - **Deterministic output normalization**, all in
+    `src/lib/ai/content/contentPackage.ts` / `src/app/api/content-
+    package/route.ts`: a calendar date can never survive as decomposed
+    `role="component"` facts (single or compound units, e.g. "ay-gün");
+    the caption's signature is canonicalized (not just whitespace-
+    patched) to the exact two-line form; a locality hashtag (e.g.
+    `#Sarıyer`) is removed unless that locality genuinely appears in the
+    topic or verified facts — all applied before the existing validator,
+    which remains the unweakened final backstop.
+  - **Must not be reopened casually** — only a proven correctness
+    blocker justifies revisiting this, same convention as every other
+    V1 freeze above.
 
 ## Current known issues / limitations
 
@@ -170,9 +213,12 @@ changes often — keep it short and current, not a historical changelog
 6. Gold Standard V1 (`ContentPackage` pipeline, `/api/content-package`)
    — COMPLETE and user-accepted.
 7. Source-Grounding Safety V1 — COMPLETE (see above).
-8. TKGM linked-file evidence extraction — investigate (not started).
-   Scope: TKGM detail pages are stub pages pointing to a linked
-   announcement file (often a PDF); fetch/parse that file so TKGM
-   evidence can reach `meaningful` rather than staying `thin`. Do not
-   mix this with any other change.
-9. Video / Reels generation — not started.
+8. TKGM linked-file evidence extraction — COMPLETE (see ContentPackage
+   Gold Standard V1 above; folded into that freeze rather than staying
+   a separate task).
+9. ContentPackage Gold Standard V1 (Verified Fact Contract, Job 2 model
+   upgrade, deterministic output normalization) — COMPLETE and
+   user-accepted (see above).
+10. Canva Gold Standard PoC — not started (next).
+11. External publishing PoC (Buffer first candidate) — not started.
+12. Video / Reels generation — not started.

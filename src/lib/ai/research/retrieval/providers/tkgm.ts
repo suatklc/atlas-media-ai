@@ -1,7 +1,7 @@
 import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { parseTurkishLongDate } from "../turkishDate";
-import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
+import { toEvidenceTextOrUndefined, extractPdfTextOrUndefined, MAX_PDF_BYTES } from "../evidenceExtraction";
 
 // LIVE, real provider — the Turkish Land Registry and Cadastre General
 // Directorate (TKGM)'s own public announcement/news listing pages. No API
@@ -93,14 +93,92 @@ function extractListingItems(html: string, basePath: string): { title: string; u
 // can't turn one discovery run into an unbounded number of requests.
 const MAX_DETAIL_FETCHES = 12;
 
+// TKGM Linked-PDF Evidence Extraction: every sampled TKGM announcement
+// detail page is a thin stub whose real content lives in a linked PDF
+// hosted on TKGM's own CMS media host — verified live against multiple
+// real announcements, always the same relative-path shape. Deliberately
+// a FIXED, hardcoded, trusted origin — only the PDF's own path (a
+// tightly restricted character class: no "..", no alternate host, no
+// protocol tricks) is ever read off the page; the host itself is never
+// taken from page content, so this can't be used to fetch an arbitrary
+// URL.
+const PDF_MEDIA_ORIGIN = "https://cms-api.tkgm.gov.tr";
+const PDF_LINK_PATTERN = /\/media-library\/[a-zA-Z0-9]+\.pdf/;
+const PDF_FETCH_TIMEOUT_MS = 10_000;
+const PDF_SIGNATURE = "%PDF";
+
+function findLinkedPdfUrl(detailHtml: string): string | undefined {
+  const match = detailHtml.match(PDF_LINK_PATTERN);
+  return match ? `${PDF_MEDIA_ORIGIN}${match[0]}` : undefined;
+}
+
+async function fetchPdfBytes(url: string): Promise<Uint8Array> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PDF_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { Accept: "application/pdf" },
+    });
+
+    if (!response.ok) {
+      throw new Error(`request failed with status ${response.status}`);
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!/pdf/i.test(contentType)) {
+      throw new Error(`unexpected content-type "${contentType}"`);
+    }
+
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > MAX_PDF_BYTES) {
+      throw new Error("PDF exceeded the size limit");
+    }
+
+    const bytes = new Uint8Array(buffer);
+    // Safe PDF signature check, in addition to Content-Type — a server
+    // misconfiguration or an unexpected redirect target could still
+    // claim "application/pdf" without actually being one.
+    const signature = Buffer.from(bytes.slice(0, 4)).toString("latin1");
+    if (signature !== PDF_SIGNATURE) {
+      throw new Error("response does not have a valid PDF signature");
+    }
+
+    return bytes;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function attachDetailPageEvidence(results: NormalizedResearchResult[]): Promise<void> {
   await Promise.allSettled(
     results.slice(0, MAX_DETAIL_FETCHES).map(async (result) => {
+      let detailHtml: string;
       try {
-        const detailHtml = await fetchHtml(result.url);
+        detailHtml = await fetchHtml(result.url);
         result.evidenceText = toEvidenceTextOrUndefined(detailHtml);
       } catch {
         // Safe failure — evidenceText stays absent, never faked.
+        return;
+      }
+
+      // Prefer the real linked PDF's own text over the thin detail-page
+      // stub, when one is discoverable and safely fetchable/parseable.
+      // Any failure from here on simply keeps the detail-page evidence
+      // already assigned above (which the existing evidence sufficiency
+      // gate will correctly classify as thin) — never a fabricated
+      // fallback, and never a crash.
+      const pdfUrl = findLinkedPdfUrl(detailHtml);
+      if (!pdfUrl) return;
+      try {
+        const pdfBytes = await fetchPdfBytes(pdfUrl);
+        const pdfText = await extractPdfTextOrUndefined(pdfBytes);
+        if (pdfText) {
+          result.evidenceText = pdfText;
+        }
+      } catch {
+        // Safe failure — keep the existing detail-page evidenceText.
       }
     }),
   );

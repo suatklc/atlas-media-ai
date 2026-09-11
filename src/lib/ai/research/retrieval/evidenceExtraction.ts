@@ -10,7 +10,20 @@
 // figure, or procedural sentence or two without passing an entire page
 // into the model. Applied here (capture time) and defensively again in
 // content-package/route.ts's prompt assembly.
-export const EVIDENCE_TEXT_MAX_CHARS = 1800;
+//
+// TKGM Linked-PDF Evidence Extraction: raised from 1800 after a live
+// measurement against the real DASK circular PDF proved 1800 truncates
+// BEFORE its single most important sentence (the actual effective date
+// and procedural requirement, at raw character index ~3735 of 5189).
+// Stripping repeated per-page header/footer boilerplate first (tested)
+// only recovered ~500 characters and did not move that sentence's
+// position — the length is genuine substantive letter body (citations +
+// quoted regulation text + operative conclusion), not padding. The full
+// substantive body of that real letter ends at index 4588, right before
+// the purely administrative distribution list/footer — 4800 covers a
+// real, representative case with a small margin, without arbitrarily
+// blowing up token cost.
+export const EVIDENCE_TEXT_MAX_CHARS = 4800;
 
 // Below this length, "evidence" is almost always leftover boilerplate
 // (a failed render, a cookie notice, a near-empty description tag) —
@@ -101,4 +114,103 @@ export function classifyEvidenceSufficiency(evidenceText: string | undefined): E
   if (CHROME_OR_STUB_MARKERS.test(evidenceText)) return "thin";
   if (evidenceText.length < MEANINGFUL_EVIDENCE_MIN_CHARS) return "thin";
   return "meaningful";
+}
+
+// ============================================================
+// Context-Safe Evidence Blocks: a proven, live-observed defect — a
+// single source document can contain multiple TRUE provisions
+// describing genuinely DIFFERENT scenarios/conditions (e.g. one branch
+// for a sale/transfer, a separate branch introduced by "bunlar
+// dışındaki hâllerde ise..." for every other case) — and once flattened
+// into one undifferentiated evidence string, a real number/deadline
+// from the WRONG branch can end up applied to the current topic. This
+// is NOT about relevance/selection (deliberately not named that way —
+// see below) and NEVER declares a block irrelevant, false, or
+// discardable; it only marks where the source itself starts describing
+// a distinct condition/exception/scenario, so the model can see the
+// boundary the source already draws instead of having to infer it from
+// dense, topically-overlapping prose alone. Deliberately domain-generic
+// — no TKGM/DASK/real-estate vocabulary — so it applies to any Turkish
+// legal/regulatory evidence text, from any current or future source.
+// ============================================================
+
+// A short, conservative list of GENERIC Turkish legal/regulatory
+// scenario-branch connectives. Prefer false negatives (missing a real
+// branch) over false positives (splitting ordinary prose) — this is why
+// the list stays short and literal rather than a broader heuristic.
+const SCENARIO_BRANCH_CONNECTIVES = [
+  "bunlar dışındaki hâllerde",
+  "bunlar dışındaki hallerde",
+  "diğer hâllerde",
+  "diğer hallerde",
+  "bu durumun dışında",
+  "aksi hâlde",
+  "aksi halde",
+  "aksi takdirde",
+];
+
+// Neutral by design: marks a scenario/condition boundary only — never a
+// relevance, truth, or discard judgment. See the block comment above.
+export const SCENARIO_BOUNDARY_MARKER = "[AYRI KOŞUL / SENARYO BLOĞU]";
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Inserts the neutral boundary marker immediately before each detected
+// connective — the connective and all surrounding source text are left
+// completely unmodified; this only ADDS a short structural cue, it never
+// removes, rewrites, or summarizes anything. Ordinary prose with none of
+// these connectives is returned byte-for-byte unchanged.
+export function markScenarioBoundaries(text: string): string {
+  let result = text;
+  for (const phrase of SCENARIO_BRANCH_CONNECTIVES) {
+    const pattern = new RegExp(escapeRegExp(phrase), "gi");
+    result = result.replace(pattern, (match) => `${SCENARIO_BOUNDARY_MARKER} ${match}`);
+  }
+  return result;
+}
+
+// ============================================================
+// TKGM Linked-PDF Evidence Extraction: the one small, server-side-only
+// helper for text-based PDF bytes. `unpdf` was chosen (verified live
+// against a real TKGM circular: correct Turkish diacritics, coherent
+// text, zero native binaries — see the investigation this follows) —
+// deliberately narrow scope: no DOCX, no images, no OCR. A provider
+// still does its own fetch/link-discovery/validation; this only turns
+// already-fetched PDF bytes into cleaned, capped text (or undefined).
+// ============================================================
+
+// Reasonable safety margin for a text-only government circular/
+// announcement PDF — generous relative to the real DASK PDF (140,895
+// bytes) without allowing an unbounded download.
+export const MAX_PDF_BYTES = 15 * 1024 * 1024;
+
+// Extracts and cleans text from already-fetched PDF bytes. Returns
+// undefined — never a partial/garbled fallback, never the title — on
+// any parsing failure or if the result isn't long enough to be
+// meaningful; the caller's existing safe-fallback path (evidenceText
+// left absent, classifyEvidenceSufficiency then sees "none"/"thin" from
+// whatever weaker evidence it already had) is unchanged either way.
+export async function extractPdfTextOrUndefined(
+  pdfBytes: Uint8Array,
+  minChars: number = MIN_MEANINGFUL_EVIDENCE_CHARS,
+): Promise<string | undefined> {
+  try {
+    // Lazy import: this module is loaded by every provider, but the PDF
+    // library is only ever needed by the (currently one) provider that
+    // fetches PDFs — no reason to pay that cost on every request.
+    const { getDocumentProxy, extractText } = await import("unpdf");
+    const pdf = await getDocumentProxy(pdfBytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+    const normalized = text.replace(/\s+/g, " ").trim();
+    // Context-Safe Evidence Blocks: mark scenario boundaries BEFORE
+    // capping, so the cap can never silently cut a marker away from the
+    // branch it introduces.
+    const withBoundaries = markScenarioBoundaries(normalized);
+    const cleaned = capEvidenceText(withBoundaries);
+    return cleaned.length >= minChars ? cleaned : undefined;
+  } catch {
+    return undefined;
+  }
 }

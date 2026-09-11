@@ -4,9 +4,12 @@ import path from "node:path";
 import test from "node:test";
 import ts from "typescript";
 import vm from "node:vm";
+import Module from "node:module";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const nodeRequire = createRequire(import.meta.url);
 
 // Same sandboxed loader convention as every other tests/*.test.mjs file.
 function loadTypeScriptModule(relativePath, dependencyLoader = () => ({}), globals = {}) {
@@ -21,6 +24,39 @@ function loadTypeScriptModule(relativePath, dependencyLoader = () => ({}), globa
     context,
   );
   return loadedModule.exports;
+}
+
+// Real-execution loader (real fs/network-free real deps, real `unpdf`) —
+// same convention already established in tests/content-package.test.mjs
+// and tests/carousel.test.mjs. Used for the TKGM linked-PDF tests below
+// so `evidenceExtraction.ts`'s own `await import("unpdf")` resolves to
+// the REAL installed package — genuine end-to-end proof, not a mock of
+// the one thing these tests exist to verify.
+const realModuleCache = new Map();
+function loadRealTsModule(absPath) {
+  const normalized = path.resolve(absPath);
+  if (realModuleCache.has(normalized)) return realModuleCache.get(normalized);
+  const source = fs.readFileSync(normalized, "utf8");
+  const js = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+  }).outputText;
+  const exportsObj = {};
+  realModuleCache.set(normalized, exportsObj);
+  const dir = path.dirname(normalized);
+  const localRequire = (specifier) => {
+    if (specifier.startsWith(".")) {
+      const resolvedBase = path.resolve(dir, specifier);
+      const candidate = fs.existsSync(`${resolvedBase}.ts`) ? `${resolvedBase}.ts` : resolvedBase;
+      return loadRealTsModule(candidate);
+    }
+    return nodeRequire(specifier);
+  };
+  const wrapped = Module.wrap(js);
+  const compiledWrapper = vm.runInThisContext(wrapped, { filename: normalized });
+  const moduleObj = { exports: exportsObj };
+  compiledWrapper(exportsObj, localRequire, moduleObj, normalized, dir);
+  realModuleCache.set(normalized, moduleObj.exports);
+  return moduleObj.exports;
 }
 
 const sourceQuality = loadTypeScriptModule("src/lib/ai/research/retrieval/sourceQuality.ts", () => ({}), { URL });
@@ -278,4 +314,255 @@ test("discover.ts's buildContentOpportunities propagates a real evidenceText int
 
   assert.equal(opp1.sources[0].evidenceText, withEvidence.evidenceText);
   assert.equal(opp2.sources[0].evidenceText, undefined);
+});
+
+// ============================================================
+// 6. TKGM Linked-PDF Evidence Extraction — the actual TKGM announcement
+// detail page is a thin stub; the real content lives in a linked PDF on
+// TKGM's own CMS media host. These tests use a REAL, valid, minimal PDF
+// fixture (built and verified once against the real `unpdf` package —
+// not a giant embedded binary; ~750 bytes) run through the REAL
+// evidenceExtraction.ts + tkgm.ts via loadRealTsModule, with only the
+// global `fetch` monkey-patched for the test's duration. This proves
+// genuine end-to-end PDF text extraction, not a mocked stand-in for the
+// one thing these tests exist to verify.
+// ============================================================
+
+// A minimal, valid, single-page PDF (built + verified via the real
+// `unpdf` package before being embedded here) whose only content is one
+// Tj text-showing operator — deliberately tiny rather than a real
+// multi-KB document, per the "avoid a huge binary fixture" guidance.
+const MINIMAL_PDF_BASE64 =
+  "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAwIDE1MF0gL0NvbnRlbnRzIDQgMCBSIC9SZXNvdXJjZXMgPDwgL0ZvbnQgPDwgL0YxIDUgMCBSID4+ID4+ID4+CmVuZG9iago0IDAgb2JqCjw8IC9MZW5ndGggMjAyID4+CnN0cmVhbQpCVCAvRjEgMTAgVGYgMTAgMTAwIFRkIChCYWthbmxpayBzYXRpcyBpc2xlbWxlcmluZGUgZGVwcmVtIHNpZ29ydGFzaSBpYnJhemluaW4gem9ydW5sdSBvbGR1Z3VudSB2ZSBwb2xpY2VzaSBidWx1bm1heWFuIGJhc3Z1cnVsYXJpbiBpc2xlbm1leWVjZWdpbmkgYmlsZGlybWlzdGlyIHRlc2NpbCBvbmNlc2kga29udHJvbCBlZGlsZWNla3Rpci4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKNSAwIG9iago8PCAvVHlwZSAvRm9udCAvU3VidHlwZSAvVHlwZTEgL0Jhc2VGb250IC9IZWx2ZXRpY2EgPj4KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAwOSAwMDAwMCBuIAowMDAwMDAwMDU4IDAwMDAwIG4gCjAwMDAwMDAxMTUgMDAwMDAgbiAKMDAwMDAwMDI0MiAwMDAwMCBuIAowMDAwMDAwNDk1IDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgNiAvUm9vdCAxIDAgUiA+PgpzdGFydHhyZWYKNTY1CiUlRU9G";
+
+const REAL_PDF_EXPECTED_TEXT =
+  "Bakanlik satis islemlerinde deprem sigortasi ibrazinin zorunlu oldugunu ve policesi bulunmayan basvurularin islenmeyecegini bildirmistir tescil oncesi kontrol edilecektir.";
+
+const PDF_LINK_PATH = "/media-library/testfixture0000pdfhash.pdf";
+const PDF_URL = `https://cms-api.tkgm.gov.tr${PDF_LINK_PATH}`;
+const TKGM_ORIGIN = "https://www.tkgm.gov.tr";
+const DETAIL_SLUG = "satis-islemlerinde-zorunlu-deprem-sigortasi-hakkinda-duyuru";
+const DETAIL_URL = `${TKGM_ORIGIN}/duyurular/${DETAIL_SLUG}`;
+
+const LISTING_HTML_WITH_ONE_ITEM = `<a class="group block border-[#E4E4E7] rounded-[10px] border  p-4" href="/duyurular/${DETAIL_SLUG}"><div class="flex flex-col gap-4"><h3 class="line-clamp-2 text-lg font-semibold">Satış İşlemlerinde Zorunlu Deprem Sigortası Hakkında Duyuru</h3><div class="flex items-center justify-between"><span class="rounded-full">Duyuru</span><p class="text-[15px] font-medium text-gray-500">07 Eylül 2026</p></div></div></a>`;
+
+// A realistic thin stub, matching the real, live-observed TKGM detail
+// page shape: chrome text plus the "go download the file" sentence,
+// with a PDF link discoverable in it (the exact pattern the real page
+// embeds, minus the surrounding JSON-escaping noise, which the
+// discovery regex deliberately ignores).
+function detailHtmlWithPdfLink(pdfPath) {
+  return `<html><body><nav>Projeler Güncel Tescil Harici Alanların Güncel</nav>
+    <p>Satış İşlemlerinde Zorunlu Deprem Sigortası Hakkında Duyuru dosyasına erişmek için aşağıdaki bağlantıya tıklayınız.</p>
+    <a href="${pdfPath}">indir</a></body></html>`;
+}
+
+const DETAIL_HTML_NO_PDF_LINK = `<html><body><nav>Projeler Güncel Tescil Harici Alanların Güncel</nav>
+  <p>Satış İşlemlerinde Zorunlu Deprem Sigortası Hakkında Duyuru dosyasına erişmek için aşağıdaki bağlantıya tıklayınız.</p>
+  </body></html>`;
+
+function makeTkgmMockFetch(pdfResponse) {
+  return async (url) => {
+    const key = String(url);
+    if (key === `${TKGM_ORIGIN}/duyurular` || key === `${TKGM_ORIGIN}/haberler`) {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (n) => (n.toLowerCase() === "content-type" ? "text/html" : null) },
+        arrayBuffer: async () => new TextEncoder().encode(key.endsWith("/haberler") ? "<html></html>" : LISTING_HTML_WITH_ONE_ITEM).buffer,
+      };
+    }
+    if (key === DETAIL_URL) {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (n) => (n.toLowerCase() === "content-type" ? "text/html" : null) },
+        arrayBuffer: async () => new TextEncoder().encode(pdfResponse.detailHtml).buffer,
+      };
+    }
+    if (key === PDF_URL) {
+      if (pdfResponse.pdfError) throw pdfResponse.pdfError;
+      return {
+        ok: pdfResponse.pdfOk ?? true,
+        status: pdfResponse.pdfStatus ?? 200,
+        headers: { get: (n) => (n.toLowerCase() === "content-type" ? (pdfResponse.pdfContentType ?? "application/pdf") : null) },
+        arrayBuffer: async () => new Uint8Array(pdfResponse.pdfBytes).buffer,
+      };
+    }
+    throw new Error(`no mock configured for ${key}`);
+  };
+}
+
+async function runTkgmWithMockFetch(pdfResponse) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = makeTkgmMockFetch(pdfResponse);
+  try {
+    const tkgm = loadRealTsModule(
+      path.join(projectRoot, "src/lib/ai/research/retrieval/providers/tkgm.ts"),
+    );
+    return await tkgm.fetchTkgmAnnouncements();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test("tkgm.ts: discovers the linked PDF on the detail page and extracts its real text as evidenceText", async () => {
+  const pdfBytes = Buffer.from(MINIMAL_PDF_BASE64, "base64");
+  const results = await runTkgmWithMockFetch({
+    detailHtml: detailHtmlWithPdfLink(PDF_LINK_PATH),
+    pdfBytes,
+  });
+
+  const item = results.find((r) => r.url === DETAIL_URL);
+  assert.ok(item, "expected the DASK announcement to be discovered");
+  assert.equal(item.evidenceText, REAL_PDF_EXPECTED_TEXT);
+  assert.notEqual(item.evidenceText, item.title, "PDF evidence must never equal the title");
+  assert.equal(evidenceExtraction.classifyEvidenceSufficiency(item.evidenceText), "meaningful");
+});
+
+test("tkgm.ts: a non-PDF response at the linked URL safely falls back to the existing thin detail-page evidence — never the title", async () => {
+  const results = await runTkgmWithMockFetch({
+    detailHtml: detailHtmlWithPdfLink(PDF_LINK_PATH),
+    pdfBytes: Buffer.from("not a pdf"),
+    pdfContentType: "text/html",
+  });
+
+  const item = results.find((r) => r.url === DETAIL_URL);
+  assert.notEqual(item.evidenceText, item.title);
+  assert.equal(evidenceExtraction.classifyEvidenceSufficiency(item.evidenceText), "thin");
+});
+
+test("tkgm.ts: a malformed PDF (wrong signature despite application/pdf content-type) safely falls back to thin evidence", async () => {
+  const results = await runTkgmWithMockFetch({
+    detailHtml: detailHtmlWithPdfLink(PDF_LINK_PATH),
+    pdfBytes: Buffer.from("NOTPDF-this-is-not-a-real-pdf-signature-at-all"),
+  });
+
+  const item = results.find((r) => r.url === DETAIL_URL);
+  assert.notEqual(item.evidenceText, item.title);
+  assert.equal(evidenceExtraction.classifyEvidenceSufficiency(item.evidenceText), "thin");
+});
+
+test("tkgm.ts: a PDF fetch network failure safely falls back to thin evidence, never crashes discovery", async () => {
+  const results = await runTkgmWithMockFetch({
+    detailHtml: detailHtmlWithPdfLink(PDF_LINK_PATH),
+    pdfBytes: Buffer.from(""),
+    pdfError: new Error("simulated network failure"),
+  });
+
+  const item = results.find((r) => r.url === DETAIL_URL);
+  assert.ok(item, "discovery must not crash even when the PDF fetch fails");
+  assert.notEqual(item.evidenceText, item.title);
+  assert.equal(evidenceExtraction.classifyEvidenceSufficiency(item.evidenceText), "thin");
+});
+
+test("tkgm.ts: no linked PDF found on the detail page leaves the existing HTML-stub evidence path completely unchanged", async () => {
+  const results = await runTkgmWithMockFetch({
+    detailHtml: DETAIL_HTML_NO_PDF_LINK,
+    pdfBytes: Buffer.from(""),
+  });
+
+  const item = results.find((r) => r.url === DETAIL_URL);
+  assert.notEqual(item.evidenceText, item.title);
+  assert.equal(evidenceExtraction.classifyEvidenceSufficiency(item.evidenceText), "thin");
+});
+
+test("evidenceExtraction.ts: extractPdfTextOrUndefined applies the existing deterministic evidence cap (capEvidenceText), not an unbounded pass-through", () => {
+  const source = fs.readFileSync(
+    path.join(projectRoot, "src/lib/ai/research/retrieval/evidenceExtraction.ts"),
+    "utf8",
+  );
+  const fnMatch = source.match(/export async function extractPdfTextOrUndefined[\s\S]*?\n}/);
+  assert.ok(fnMatch, "extractPdfTextOrUndefined not found");
+  assert.match(fnMatch[0], /capEvidenceText\(/);
+});
+
+test("extractPdfTextOrUndefined returns undefined (never fabricates evidence) when given bytes that are not a parseable PDF", async () => {
+  const evidenceExtractionReal = loadRealTsModule(
+    path.join(projectRoot, "src/lib/ai/research/retrieval/evidenceExtraction.ts"),
+  );
+  const result = await evidenceExtractionReal.extractPdfTextOrUndefined(
+    new Uint8Array(Buffer.from("this is definitely not a pdf")),
+  );
+  assert.equal(result, undefined);
+});
+
+// ============================================================
+// 7. Context-Safe Evidence Blocks — a proven source document can
+// contain multiple TRUE provisions for genuinely different scenarios;
+// markScenarioBoundaries marks (never removes/rewrites) the boundary a
+// generic Turkish legal-branch connective already signals in the
+// source, so the model sees the boundary instead of inferring it from
+// dense, topically-overlapping prose alone.
+// ============================================================
+
+test("markScenarioBoundaries inserts the neutral marker immediately before a known branch connective, leaving the connective itself untouched", () => {
+  const text = "Birinci durumda kural A gecerlidir. Aksi takdirde kural B gecerlidir.";
+  const result = evidenceExtraction.markScenarioBoundaries(text);
+  assert.match(result, /Birinci durumda kural A gecerlidir\. \[AYRI KOŞUL \/ SENARYO BLOĞU\] Aksi takdirde kural B gecerlidir\./);
+});
+
+test("markScenarioBoundaries's marker is neutral — it never states irrelevance, falsity, or that content should be discarded", () => {
+  assert.equal(evidenceExtraction.SCENARIO_BOUNDARY_MARKER, "[AYRI KOŞUL / SENARYO BLOĞU]");
+  const forbiddenWords = /irrelevant|ilgisiz|yanlış|false|discard|yoksay|geçersiz/i;
+  assert.doesNotMatch(evidenceExtraction.SCENARIO_BOUNDARY_MARKER, forbiddenWords);
+});
+
+test("markScenarioBoundaries preserves the original source text exactly — removing only the inserted markers reconstructs the original", () => {
+  const text = "Bir metin burada. Diğer hâllerde ise farklı bir kural uygulanır. Devamı burada.";
+  const result = evidenceExtraction.markScenarioBoundaries(text);
+  const reconstructed = result.split(`${evidenceExtraction.SCENARIO_BOUNDARY_MARKER} `).join("");
+  assert.equal(reconstructed, text);
+});
+
+test("markScenarioBoundaries leaves ordinary prose with no branch connective completely unchanged", () => {
+  const text = "Bu tamamen sıradan bir cümledir ve hiçbir senaryo geçişi içermez.";
+  assert.equal(evidenceExtraction.markScenarioBoundaries(text), text);
+});
+
+test("markScenarioBoundaries's connective list contains no TKGM/DASK/real-estate-domain vocabulary — it stays source/domain generic", () => {
+  const source = fs.readFileSync(
+    path.join(projectRoot, "src/lib/ai/research/retrieval/evidenceExtraction.ts"),
+    "utf8",
+  );
+  const listMatch = source.match(/const SCENARIO_BRANCH_CONNECTIVES = \[([\s\S]*?)\];/);
+  assert.ok(listMatch, "SCENARIO_BRANCH_CONNECTIVES not found");
+  const forbiddenDomainTerms = /dask|tkgm|tapu|satış|satis|poliçe|police|malik|deprem|sigorta/i;
+  assert.doesNotMatch(listMatch[1], forbiddenDomainTerms);
+});
+
+test("extractPdfTextOrUndefined applies scenario boundary marking to real PDF text before capping — the marker reaches the final evidenceText", async () => {
+  // A minimal, valid PDF (built + verified via the real `unpdf` package)
+  // reproducing the proven regression pattern: a first-scenario
+  // statement, a generic branch connective ("Aksi takdirde"), then a
+  // second-scenario rule containing a number — the exact shape of the
+  // live DASK defect, without needing a large real-document fixture.
+  const BOUNDARY_FIXTURE_PDF_BASE64 =
+    "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MDAwIDE1MF0gL0NvbnRlbnRzIDQgMCBSIC9SZXNvdXJjZXMgPDwgL0ZvbnQgPDwgL0YxIDUgMCBSID4+ID4+ID4+CmVuZG9iago0IDAgb2JqCjw8IC9MZW5ndGggMTYyID4+CnN0cmVhbQpCVCAvRjEgMTAgVGYgMTAgMTAwIFRkIChCaXJpbmNpIGR1cnVtZGEgdGFyYWYgYmlyIGlzbGVtaSB0YW1hbWxhci4gQWtzaSB0YWtkaXJkZSBpbGdpbGkgdGFyYWYsIGJpbGRpcmltIHRhcmloaW5kZW4gaXRpYmFyZW4gMjQgc2FhdCBpY2luZGUgaXNsZW1pIHRhbWFtbGFyLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQyIDAwMDAwIG4gCjAwMDAwMDA0NTUgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo1MjUKJSVFT0Y=";
+
+  const evidenceExtractionReal = loadRealTsModule(
+    path.join(projectRoot, "src/lib/ai/research/retrieval/evidenceExtraction.ts"),
+  );
+  const pdfBytes = new Uint8Array(Buffer.from(BOUNDARY_FIXTURE_PDF_BASE64, "base64"));
+  const evidenceText = await evidenceExtractionReal.extractPdfTextOrUndefined(pdfBytes);
+
+  assert.ok(evidenceText, "expected real evidence text to be extracted");
+  assert.match(evidenceText, /\[AYRI KOŞUL \/ SENARYO BLOĞU\] Aksi takdirde/);
+  // The first-scenario statement and the second-scenario rule (with its
+  // real number) both remain fully readable — nothing was deleted.
+  assert.match(evidenceText, /Birinci durumda taraf bir islemi tamamlar/);
+  assert.match(evidenceText, /24 saat icinde islemi tamamlar/);
+  // The existing deterministic cap still applies.
+  assert.ok(evidenceText.length <= evidenceExtractionReal.EVIDENCE_TEXT_MAX_CHARS);
+  // The existing evidence sufficiency gate is unaffected by the marker.
+  assert.equal(evidenceExtractionReal.classifyEvidenceSufficiency(evidenceText), "meaningful");
+});
+
+test("content-package prompt forbids transferring a number, deadline, obligation, procedure, or consequence across a scenario boundary marker", () => {
+  const routeSource = fs.readFileSync(
+    path.join(projectRoot, "src/app/api/content-package/route.ts"),
+    "utf8",
+  );
+  assert.match(routeSource, /AYRI KOŞUL \/ SENARYO BLOĞU/);
+  assert.match(routeSource, /sayı, süre, yükümlülük, prosedür veya sonucu/);
 });

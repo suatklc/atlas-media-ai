@@ -57,10 +57,54 @@ const MIN_NOTABLE_NUMBER = 1000;
 // catch.
 const ARITHMETIC_TOLERANCE = 1;
 
-// Evidence Safety Gate follow-up: units that only ever describe a
-// calendar date's own parts, never a genuinely summable quantity — see
-// the "component" check below.
-const CALENDAR_COMPONENT_UNITS = new Set(["yıl", "ay", "gün", "sene"]);
+// Evidence Safety Gate follow-up: individual word-tokens that only ever
+// describe a calendar date's own parts, never a genuinely summable
+// quantity. A live production run proved a plain exact-string denylist
+// insufficient — the model produced a compound unit ("ay-gün") that
+// evaded it entirely. isCalendarDateUnit below normalizes and splits the
+// unit on common separators/whitespace first, so any simple combination
+// of these tokens (single or compound, "yıl", "ay-gün", "ay/gün",
+// "yıl-ay", "yıl ay gün", ...) is caught by the SAME check — not an
+// ever-growing exact-phrase list.
+const CALENDAR_UNIT_TOKENS = new Set(["yıl", "sene", "ay", "gün"]);
+
+// A unit represents calendar-date parts (as opposed to a legitimate
+// quantitative duration) only when EVERY token it splits into is one of
+// the calendar-part words above — "ay" alone, "ay-gün", "yıl/ay/gün" all
+// match; "TL", "adet", "yıllık" (a different word, not the bare token
+// "yıl") do not. Deliberately conservative: an unrecognized token makes
+// the whole unit NOT match, so this can only ever narrow to obvious
+// calendar-part combinations, never misfire on an unrelated unit.
+function isCalendarDateUnit(unit: string): boolean {
+  const tokens = unit
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .split(/[\s\-/,]+/)
+    .filter((token) => token.length > 0);
+  return tokens.length > 0 && tokens.every((token) => CALENDAR_UNIT_TOKENS.has(token));
+}
+
+// Shared by both the sanitizer and validateContentPackage below — one
+// predicate, so they can never drift apart on what counts as an invalid
+// calendar-date component.
+function isCalendarDateComponentFact(fact: ContentFact): boolean {
+  return fact.role === "component" && isCalendarDateUnit(fact.unit);
+}
+
+// Deterministic Calendar-Date Fact Sanitizer: a proven, live-observed
+// regression — the model re-emitted a single date (05.09.2026) as
+// separate role="component" facts (year/month/day, or compound
+// variants like "ay-gün") despite an explicit prompt rule against it —
+// used to fail the ENTIRE package at validateContentPackage. Stripping
+// the exact invalid pattern BEFORE validation lets a generation that
+// makes only this one mistake still succeed (with a smaller/possibly-
+// empty facts[]) instead of failing closed on an otherwise-good
+// package. Deliberately narrow: a legitimate role="standalone"/"total"
+// duration fact (e.g. "24 ay" as a loan term) is never touched, since
+// it isn't role==="component" in the first place.
+export function sanitizeCalendarDateFacts(facts: ContentFact[]): ContentFact[] {
+  return facts.filter((fact) => !isCalendarDateComponentFact(fact));
+}
 
 function extractNotableNumbers(text: string): Set<number> {
   const numbers = new Set<number>();
@@ -196,16 +240,16 @@ export function validateContentPackage(pkg: ContentPackage): ContentPackageValid
   }
 
   // Evidence Safety Gate follow-up: a calendar date must never be
-  // decomposed into separate additive "component" facts (year/month/day)
-  // — the real, live-observed defect this catches: a single date like
-  // "06 Eylül 2026" emitted as three facts (value 2026/unit "yıl",
-  // value 9/unit "ay", value 6/unit "gün"), all role="component", none
-  // of which are ever meaningfully "summed" into anything. Deliberately
-  // narrow to role==="component" so a genuinely legitimate standalone/
-  // total duration fact (e.g. "5 yıl vade" as role="standalone") is
-  // never rejected — only the specific arithmetic-component misuse is.
+  // decomposed into separate additive "component" facts (year/month/day,
+  // single or compound units like "ay-gün") — the real, live-observed
+  // defect this catches. Deliberately narrow to role==="component" so a
+  // genuinely legitimate standalone/total duration fact (e.g. "5 yıl
+  // vade" as role="standalone") is never rejected — only the specific
+  // arithmetic-component misuse is. Shares isCalendarDateComponentFact
+  // with sanitizeCalendarDateFacts above so the two can never drift
+  // apart on what counts as invalid.
   for (const fact of pkg.facts) {
-    if (fact.role === "component" && CALENDAR_COMPONENT_UNITS.has(fact.unit.trim().toLocaleLowerCase("tr-TR"))) {
+    if (isCalendarDateComponentFact(fact)) {
       return {
         ok: false,
         reason: `Calendar-date component misuse: a date must never be split into arithmetic "component" facts (fact "${fact.label}" uses unit "${fact.unit}").`,

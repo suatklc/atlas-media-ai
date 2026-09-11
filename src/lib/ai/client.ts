@@ -31,6 +31,17 @@ export function getAnthropicClient(): Anthropic {
 // swapped-in provider.
 export const AI_TEXT_MODEL = "gpt-4.1-mini";
 
+// Job 2 Model Benchmark: ContentPackage's editorial generation call
+// ONLY (src/app/api/content-package/route.ts) — a live, controlled
+// benchmark (identical Verified Fact Contract, prompt, schema across
+// candidates) showed gpt-5.4 clearly and safely outperforming
+// gpt-4.1-mini on expert interpretation, anti-repetition, and language
+// quality, at a reasonable latency/cost overhead (no reasoning-token
+// markup, ~14s vs ~11s). Deliberately scoped to this ONE call — Job 1
+// (fact extraction) and /api/assistant's general chat both stay on
+// AI_TEXT_MODEL; this is not a global model swap.
+export const CONTENT_PACKAGE_EDITORIAL_MODEL = "gpt-5.4";
+
 let cachedOpenAITextClient: OpenAI | null = null;
 
 // A separate OpenAI client instance from image/client.ts's own

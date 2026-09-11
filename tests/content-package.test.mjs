@@ -61,6 +61,9 @@ const contentPackage = loadTypeScriptModule("src/lib/ai/content/contentPackage.t
 // Evidence Safety Gate: real (not mocked) module, so route-level tests
 // exercise the genuine classifyEvidenceSufficiency logic end-to-end.
 const evidenceExtraction = loadTypeScriptModule("src/lib/ai/research/retrieval/evidenceExtraction.ts");
+// Verified Fact Contract: real (not mocked) module — genuine
+// isEvidenceFactArray/filterCurrentTopicFacts behavior end-to-end.
+const factContract = loadTypeScriptModule("src/lib/ai/content/factContract.ts");
 
 function makeSlide(overrides) {
   return {
@@ -413,7 +416,13 @@ test("content-package prompt still forbids inventing itemized breakdowns from an
 });
 
 function loadContentPackageRoute(overrides = {}) {
-  const state = { completionCalls: 0, lastMessages: null };
+  const state = {
+    completionCalls: 0,
+    factExtractionCalls: 0,
+    contentPackageCalls: 0,
+    lastMessages: null,
+    lastFactExtractionMessages: null,
+  };
 
   const defaultCompletionResponse = {
     topic: "Deprem sigortası zorunluluğu",
@@ -431,6 +440,21 @@ function loadContentPackageRoute(overrides = {}) {
     ],
   };
 
+  // Verified Fact Contract: a single "current-topic" fact by default,
+  // so existing/other tests that don't care about Job 1 specifically
+  // still see MEANINGFUL evidence flow through as verified — override
+  // via `overrides.factContractResponse` to test different-scenario/
+  // unsupported/zero-fact/malformed paths explicitly.
+  const defaultFactContractResponse = {
+    facts: [
+      {
+        claim: "Varsayılan doğrulanmış olgu.",
+        evidenceFragment: "varsayılan kanıt parçası",
+        status: "current-topic",
+      },
+    ],
+  };
+
   const defaultDeps = {
     "next/server": {},
     "@/lib/supabase/server": {
@@ -444,7 +468,20 @@ function loadContentPackageRoute(overrides = {}) {
           completions: {
             create: async (args) => {
               state.completionCalls += 1;
+              const schemaName = args.response_format?.json_schema?.name;
+              if (schemaName === "evidence_fact_contract") {
+                state.factExtractionCalls += 1;
+                state.lastFactExtractionMessages = args.messages;
+                state.lastFactExtractionModel = args.model;
+                if (overrides.factExtractionError) throw overrides.factExtractionError;
+                const response = overrides.factContractResponse ?? defaultFactContractResponse;
+                return {
+                  choices: response === "malformed" ? [{ message: { content: "not json" } }] : [{ message: { content: JSON.stringify(response) } }],
+                };
+              }
+              state.contentPackageCalls += 1;
               state.lastMessages = args.messages;
+              state.lastContentPackageModel = args.model;
               return {
                 choices: [
                   { message: { content: JSON.stringify(overrides.completionResponse ?? defaultCompletionResponse) } },
@@ -455,6 +492,7 @@ function loadContentPackageRoute(overrides = {}) {
         },
       }),
       AI_TEXT_MODEL: "gpt-4.1-mini",
+      CONTENT_PACKAGE_EDITORIAL_MODEL: "gpt-5.4",
     },
     "@/lib/ai/system-prompt": { SYSTEM_PROMPT: "system" },
     "@/lib/ai/research/opportunity": {
@@ -470,14 +508,18 @@ function loadContentPackageRoute(overrides = {}) {
     "@/lib/ai/content/contentPackage": {
       CAROUSEL_SLIDE_ROLES: ["hook", "what-happened", "why-it-matters", "what-to-do", "cta"],
       validateContentPackage: overrides.validateContentPackage ?? (() => ({ ok: true })),
+      // Real (not mocked) sanitizer — every test exercises the genuine
+      // Calendar-Date Fact Sanitizer end-to-end.
+      sanitizeCalendarDateFacts: contentPackage.sanitizeCalendarDateFacts,
     },
     "@/lib/ai/research/retrieval/evidenceExtraction": evidenceExtraction,
+    "@/lib/ai/content/factContract": factContract,
   };
 
   const route = loadTypeScriptModule(
     "src/app/api/content-package/route.ts",
     (specifier) => defaultDeps[specifier] ?? {},
-    { Response, Buffer, process, JSON },
+    { Response, Buffer, process, JSON, console },
   );
 
   return { route, state };
@@ -498,6 +540,78 @@ test("/api/content-package makes exactly ONE OpenAI generation call per request 
   assert.equal(state.completionCalls, 1);
   assert.equal(body.contentPackage.format, "carousel");
   assert.equal(body.contentPackage.slides.length, 5);
+});
+
+// ============================================================
+// Job 2 Model Benchmark — the editorial ContentPackage call scoped to
+// CONTENT_PACKAGE_EDITORIAL_MODEL (gpt-5.4), while Job 1 (fact
+// extraction) stays on AI_TEXT_MODEL (gpt-4.1-mini) — a live benchmark
+// showed this combination the safest quality improvement. Not a global
+// model swap.
+// ============================================================
+
+test("/api/content-package's Job 2 (editorial) call uses CONTENT_PACKAGE_EDITORIAL_MODEL, while Job 1 (fact extraction) stays on AI_TEXT_MODEL", async () => {
+  const { route, state } = loadContentPackageRoute();
+  await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  assert.equal(state.lastContentPackageModel, "gpt-5.4");
+  assert.equal(state.lastFactExtractionModel, "gpt-4.1-mini");
+});
+
+// ============================================================
+// Deterministic Hashtag Locality Guard — a proven, live-observed
+// regression: the stronger Job 2 model forced a "#Sarıyer" hashtag onto
+// a genuinely national topic. Removed after generation, never via
+// another prompt rule; a genuinely-supported locality hashtag survives.
+// ============================================================
+
+test("/api/content-package removes a locality hashtag when that locality does not appear in the topic or verified facts", async () => {
+  const { route } = loadContentPackageRoute({
+    completionResponse: {
+      ...defaultCompletionResponseFixture(),
+      hashtags: ["#DASK", "#ZorunluDepremSigortası", "#Sarıyer", "#Gayrimenkul"],
+    },
+  });
+  const request = { json: async () => ({ contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] }, visualFormat: "carousel" }) };
+  const response = await route.POST(request);
+  const body = await response.json();
+  assert.deepEqual(body.contentPackage.hashtags, ["#DASK", "#ZorunluDepremSigortası", "#Gayrimenkul"]);
+});
+
+test("/api/content-package keeps a locality hashtag when that locality genuinely appears in the topic", async () => {
+  const { route } = loadContentPackageRoute({
+    completionResponse: {
+      ...defaultCompletionResponseFixture(),
+      hashtags: ["#DASK", "#Sarıyer", "#Gayrimenkul"],
+    },
+  });
+  const request = {
+    json: async () => ({
+      contentOpportunity: {
+        topic: "Sarıyer'de yeni imar planı",
+        angle: "a",
+        whyNow: "w",
+        keyFacts: [],
+        sources: [],
+      },
+      visualFormat: "carousel",
+    }),
+  };
+  const response = await route.POST(request);
+  const body = await response.json();
+  assert.deepEqual(body.contentPackage.hashtags, ["#DASK", "#Sarıyer", "#Gayrimenkul"]);
+});
+
+test("/api/content-package's hashtag locality guard never touches non-locality hashtags", async () => {
+  const { route } = loadContentPackageRoute({
+    completionResponse: {
+      ...defaultCompletionResponseFixture(),
+      hashtags: ["#DASK", "#ZorunluDepremSigortası", "#GayrimenkulYatırımı"],
+    },
+  });
+  const request = { json: async () => ({ contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] }, visualFormat: "carousel" }) };
+  const response = await route.POST(request);
+  const body = await response.json();
+  assert.deepEqual(body.contentPackage.hashtags, ["#DASK", "#ZorunluDepremSigortası", "#GayrimenkulYatırımı"]);
 });
 
 // ============================================================
@@ -668,6 +782,296 @@ test("validateContentPackage still accepts a legitimate standalone duration fact
   assert.equal(contentPackage.validateContentPackage(pkg).ok, true);
 });
 
+// ============================================================
+// Deterministic Calendar-Date Fact Sanitizer — the exact proven live
+// regression (a date decomposed into year/month/day "component" facts)
+// must be stripped BEFORE validation runs, so this one mistake degrades
+// the package (smaller/possibly-empty facts[]) instead of failing it
+// outright. Legitimate standalone/total duration facts are untouched.
+// ============================================================
+
+test("sanitizeCalendarDateFacts removes a year/month/day component group representing one calendar date", () => {
+  const facts = [
+    { label: "Uygulama başlangıç tarihi", value: 2026, unit: "yıl", role: "component" },
+    { label: "Uygulama başlangıç tarihi", value: 9, unit: "ay", role: "component" },
+    { label: "Uygulama başlangıç tarihi", value: 5, unit: "gün", role: "component" },
+  ];
+  assert.deepEqual(contentPackage.sanitizeCalendarDateFacts(facts), []);
+});
+
+test("sanitizeCalendarDateFacts leaves normal standalone numeric facts untouched", () => {
+  const facts = [{ label: "Toplam Maliyet", value: 150000, unit: "TL", role: "standalone" }];
+  assert.deepEqual(contentPackage.sanitizeCalendarDateFacts(facts), facts);
+});
+
+test("sanitizeCalendarDateFacts leaves a legitimate standalone duration fact untouched (e.g. '24 ay' as a loan term)", () => {
+  const facts = [{ label: "Kredi Vadesi", value: 24, unit: "ay", role: "standalone" }];
+  assert.deepEqual(contentPackage.sanitizeCalendarDateFacts(facts), facts);
+});
+
+test("sanitizeCalendarDateFacts leaves legitimate itemized component/total arithmetic facts (non-calendar units) untouched", () => {
+  const facts = [
+    { label: "Depozito", value: 40000, unit: "TL", role: "component" },
+    { label: "İlk kira", value: 60000, unit: "TL", role: "component" },
+    { label: "Toplam", value: 100000, unit: "TL", role: "total" },
+  ];
+  assert.deepEqual(contentPackage.sanitizeCalendarDateFacts(facts), facts);
+});
+
+test("sanitizeCalendarDateFacts removes only the calendar-date components from a mixed facts array, keeping legitimate facts", () => {
+  const facts = [
+    { label: "Uygulama başlangıç tarihi", value: 2026, unit: "yıl", role: "component" },
+    { label: "Toplam Maliyet", value: 150000, unit: "TL", role: "standalone" },
+  ];
+  assert.deepEqual(contentPackage.sanitizeCalendarDateFacts(facts), [facts[1]]);
+});
+
+test("validateContentPackage accepts an empty facts[] (the sanitizer's worst case, when every fact was a calendar-date component)", () => {
+  const pkg = makePackage({ facts: [] });
+  assert.equal(contentPackage.validateContentPackage(pkg).ok, true);
+});
+
+// ============================================================
+// Compound calendar-unit variants — the real production defect proved
+// a plain exact-string denylist insufficient (the model produced
+// "ay-gün" and evaded it). isCalendarDateUnit normalizes/splits on
+// separators first, so any simple combination of the calendar-part
+// tokens is caught, single or compound.
+// ============================================================
+
+test("sanitizeCalendarDateFacts removes a compound 'ay-gün' component unit (the exact live-observed evasion)", () => {
+  const facts = [{ label: "Yürürlük ayı ve günü", value: 9, unit: "ay-gün", role: "component" }];
+  assert.deepEqual(contentPackage.sanitizeCalendarDateFacts(facts), []);
+});
+
+test("sanitizeCalendarDateFacts removes a compound 'ay/gün' component unit (slash separator)", () => {
+  const facts = [{ label: "Tarih bileşeni", value: 9, unit: "ay/gün", role: "component" }];
+  assert.deepEqual(contentPackage.sanitizeCalendarDateFacts(facts), []);
+});
+
+test("sanitizeCalendarDateFacts removes a compound 'yıl-ay' component unit (a different compound pairing)", () => {
+  const facts = [{ label: "Tarih bileşeni", value: 2026, unit: "yıl-ay", role: "component" }];
+  assert.deepEqual(contentPackage.sanitizeCalendarDateFacts(facts), []);
+});
+
+test("sanitizeCalendarDateFacts removes a whitespace-separated 'yıl ay gün' component unit", () => {
+  const facts = [{ label: "Tarih bileşeni", value: 5, unit: "yıl ay gün", role: "component" }];
+  assert.deepEqual(contentPackage.sanitizeCalendarDateFacts(facts), []);
+});
+
+test("sanitizeCalendarDateFacts leaves a non-calendar unit that merely contains a separator untouched (e.g. 'TL/ay' rent-per-month)", () => {
+  const facts = [{ label: "Aylık Kira", value: 25000, unit: "TL/ay", role: "standalone" }];
+  assert.deepEqual(contentPackage.sanitizeCalendarDateFacts(facts), facts);
+});
+
+test("Sanitizer and validator share the same calendar-date predicate — a compound unit that escapes sanitization is still rejected by validateContentPackage", () => {
+  const pkg = makePackage({
+    facts: [{ label: "Yürürlük ayı ve günü", value: 9, unit: "ay-gün", role: "component" }],
+  });
+  const result = contentPackage.validateContentPackage(pkg);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /Calendar-date component misuse/);
+});
+
+test("Verified Fact Contract / sanitizer regression: the real production calendar-date decomposition no longer fails the whole package — the route strips it and still returns a valid ContentPackage", async () => {
+  const { route } = loadContentPackageRoute({
+    completionResponse: {
+      topic: "t",
+      source: { name: "n", url: "u", publishedAt: "p" },
+      hook: "h",
+      caption: "Kısa bir caption.",
+      hashtags: ["#a", "#b", "#c", "#d", "#e"],
+      facts: [
+        { label: "Uygulama başlangıç tarihi", value: 2026, unit: "yıl", role: "component" },
+        { label: "Uygulama başlangıç tarihi", value: 9, unit: "ay", role: "component" },
+        { label: "Uygulama başlangıç tarihi", value: 5, unit: "gün", role: "component" },
+      ],
+      slides: [
+        { headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+        { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+        { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+        { headline: "H4", body: "B4", facts: [], visualBrief: "v4" },
+        { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+      ],
+    },
+    validateContentPackage: contentPackage.validateContentPackage, // real validator, to prove this end-to-end
+  });
+  const request = {
+    json: async () => ({
+      contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] },
+      visualFormat: "carousel",
+    }),
+  };
+
+  const response = await route.POST(request);
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.deepEqual(body.contentPackage.facts, []);
+});
+
+// ============================================================
+// Signature Formatting — deterministic, not AI behavior. The proven
+// live regression: the model included the signature but glued it
+// directly onto the previous sentence with no line break.
+// ============================================================
+
+test("/api/content-package guarantees a clean blank-line separation before the signature, even when the model glues it onto the previous sentence", async () => {
+  const { route } = loadContentPackageRoute({
+    completionResponse: {
+      topic: "t",
+      source: { name: "n", url: "u", publishedAt: "p" },
+      hook: "h",
+      caption: "Bu gelişmeyi takip edin. Suat Kılıç\nGayrimenkul Yatırım Danışmanı",
+      hashtags: ["#a", "#b", "#c", "#d", "#e"],
+      facts: [],
+      slides: [
+        { headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+        { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+        { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+        { headline: "H4", body: "B4", facts: [], visualBrief: "v4" },
+        { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+      ],
+    },
+  });
+  const request = {
+    json: async () => ({
+      contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] },
+      visualFormat: "carousel",
+    }),
+  };
+
+  const response = await route.POST(request);
+  const body = await response.json();
+  assert.match(body.contentPackage.caption, /Bu gelişmeyi takip edin\.\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı/);
+});
+
+test("/api/content-package's signature normalization never introduces a duplicate — exactly one name and one title survive", async () => {
+  const { route } = loadContentPackageRoute({
+    completionResponse: {
+      topic: "t",
+      source: { name: "n", url: "u", publishedAt: "p" },
+      hook: "h",
+      caption: "Bu gelişmeyi takip edin. Suat Kılıç\nGayrimenkul Yatırım Danışmanı",
+      hashtags: ["#a", "#b", "#c", "#d", "#e"],
+      facts: [],
+      slides: [
+        { headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+        { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+        { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+        { headline: "H4", body: "B4", facts: [], visualBrief: "v4" },
+        { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+      ],
+    },
+  });
+  const request = {
+    json: async () => ({
+      contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] },
+      visualFormat: "carousel",
+    }),
+  };
+
+  const response = await route.POST(request);
+  const body = await response.json();
+  const nameOccurrences = (body.contentPackage.caption.match(/Suat Kılıç/g) ?? []).length;
+  const titleOccurrences = (body.contentPackage.caption.match(/Gayrimenkul Yatırım Danışmanı/g) ?? []).length;
+  assert.equal(nameOccurrences, 1);
+  assert.equal(titleOccurrences, 1);
+});
+
+function makeCompletionResponseWithCaption(caption) {
+  return {
+    topic: "t",
+    source: { name: "n", url: "u", publishedAt: "p" },
+    hook: "h",
+    caption,
+    hashtags: ["#a", "#b", "#c", "#d", "#e"],
+    facts: [],
+    slides: [
+      { headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+      { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+      { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+      { headline: "H4", body: "B4", facts: [], visualBrief: "v4" },
+      { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+    ],
+  };
+}
+
+function defaultCompletionResponseFixture() {
+  return {
+    topic: "t",
+    source: { name: "n", url: "u", publishedAt: "p" },
+    hook: "h",
+    caption: "Kısa bir caption.\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı",
+    hashtags: ["#a", "#b", "#c", "#d", "#e"],
+    facts: [],
+    slides: [
+      { headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+      { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+      { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+      { headline: "H4", body: "B4", facts: [], visualBrief: "v4" },
+      { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+    ],
+  };
+}
+
+test("/api/content-package canonicalizes a signature where name and title run together on one line (the second live-observed regression) into the correct two-line form", async () => {
+  const { route } = loadContentPackageRoute({
+    completionResponse: makeCompletionResponseWithCaption(
+      "Bu gelişmeyi takip edin. Suat Kılıç Gayrimenkul Yatırım Danışmanı",
+    ),
+  });
+  const request = {
+    json: async () => ({
+      contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] },
+      visualFormat: "carousel",
+    }),
+  };
+
+  const response = await route.POST(request);
+  const body = await response.json();
+  assert.match(
+    body.contentPackage.caption,
+    /Bu gelişmeyi takip edin\.\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı$/,
+  );
+});
+
+test("/api/content-package leaves an already-canonical signature exactly as-is (idempotent)", async () => {
+  const { route } = loadContentPackageRoute({
+    completionResponse: makeCompletionResponseWithCaption(
+      "Bu gelişmeyi takip edin.\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı",
+    ),
+  });
+  const request = {
+    json: async () => ({
+      contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] },
+      visualFormat: "carousel",
+    }),
+  };
+
+  const response = await route.POST(request);
+  const body = await response.json();
+  assert.equal(body.contentPackage.caption, "Bu gelişmeyi takip edin.\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı");
+});
+
+test("/api/content-package's final caption always has exactly one blank line before the signature block, never zero or more than one", async () => {
+  const { route } = loadContentPackageRoute({
+    completionResponse: makeCompletionResponseWithCaption(
+      "Bu gelişmeyi takip edin.\n\n\n\nSuat Kılıç Gayrimenkul Yatırım Danışmanı",
+    ),
+  });
+  const request = {
+    json: async () => ({
+      contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] },
+      visualFormat: "carousel",
+    }),
+  };
+
+  const response = await route.POST(request);
+  const body = await response.json();
+  const separatorMatch = body.contentPackage.caption.match(/(\n+)Suat Kılıç/);
+  assert.equal(separatorMatch[1], "\n\n");
+});
+
 test("/api/content-package still enforces exactly 5 carousel slides even with the upgraded editorial prompt", async () => {
   const { route } = loadContentPackageRoute({
     completionResponse: {
@@ -689,4 +1093,333 @@ test("/api/content-package still enforces exactly 5 carousel slides even with th
 
   const response = await route.POST(request);
   assert.equal(response.status, 502);
+});
+
+// ============================================================
+// Content Quality Final Polish — deterministic signature guarantee,
+// context-scoped fact usage, hook framing, and broadened cliché
+// avoidance. See CLAUDE.md / real-estate-content-strategist /
+// fact-source-grounding for the standards these enforce.
+// ============================================================
+
+test("/api/content-package deterministically appends the mandatory signature when the model's caption omits it", async () => {
+  const { route } = loadContentPackageRoute({
+    completionResponse: {
+      topic: "t",
+      source: { name: "n", url: "u", publishedAt: "p" },
+      hook: "h",
+      caption: "Bu gelişme alıcılar için önemli. Sürecinizi buna göre planlayın.",
+      hashtags: ["#a"],
+      facts: [],
+      slides: [
+        { headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+        { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+        { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+        { headline: "H4", body: "B4", facts: [], visualBrief: "v4" },
+        { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+      ],
+    },
+  });
+  const request = {
+    json: async () => ({
+      contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] },
+      visualFormat: "carousel",
+    }),
+  };
+
+  const response = await route.POST(request);
+  const body = await response.json();
+  assert.match(body.contentPackage.caption, /Suat Kılıç/);
+  assert.match(body.contentPackage.caption, /Gayrimenkul Yatırım Danışmanı/);
+});
+
+test("/api/content-package never duplicates the signature when the model's caption already includes it", async () => {
+  const captionWithSignature =
+    "Bu gelişme alıcılar için önemli. Sürecinizi buna göre planlayın.\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı";
+  const { route } = loadContentPackageRoute({
+    completionResponse: {
+      topic: "t",
+      source: { name: "n", url: "u", publishedAt: "p" },
+      hook: "h",
+      caption: captionWithSignature,
+      hashtags: ["#a"],
+      facts: [],
+      slides: [
+        { headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+        { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+        { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+        { headline: "H4", body: "B4", facts: [], visualBrief: "v4" },
+        { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+      ],
+    },
+  });
+  const request = {
+    json: async () => ({
+      contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] },
+      visualFormat: "carousel",
+    }),
+  };
+
+  const response = await route.POST(request);
+  const body = await response.json();
+  const nameOccurrences = (body.contentPackage.caption.match(/Suat Kılıç/g) ?? []).length;
+  const titleOccurrences = (body.contentPackage.caption.match(/Gayrimenkul Yatırım Danışmanı/g) ?? []).length;
+  assert.equal(nameOccurrences, 1);
+  assert.equal(titleOccurrences, 1);
+});
+
+test("content-package prompt still defines exactly the 5 required carousel slide roles (hook/what-happened/why-it-matters/what-to-do/cta)", () => {
+  const routeSource = readContentPackageRouteSource();
+  for (const role of ["hook:", '"what-happened":', '"why-it-matters":', '"what-to-do":', "cta:"]) {
+    assert.match(routeSource, new RegExp(role.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("content-package prompt instructs the hook to lead with what changed, not a regulatory-bulletin-style date/citation opening", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /BAŞLAMA — önce DEĞİŞEN ŞEY/);
+});
+
+test("content-package prompt requires the 'why-it-matters' slide to add a decision-relevant point, not just restate what changed", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /karar verirken gerçekten dikkate alması gereken somut bir noktayı ekle/);
+});
+
+test("content-package prompt forbids using a context-specific fact/deadline/procedure outside the context the source actually attaches it to", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /HER bağlamda kullanma hakkı VERMEZ/);
+});
+
+test("content-package prompt's cliché avoidance covers close variations, not just exact-string matches", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /YAKIN VARYASYONLARINDAN/);
+});
+
+// ============================================================
+// Final Editorial Differentiation — one mandatory decision-relevant
+// expert insight, sharper slide 3/4 distinctness, an anti-repetition
+// rule for a single core inference, and a caption that isn't a sixth
+// carousel slide. Purely prompt-text changes — no grounding, schema, or
+// validator behavior touched. Source-contract checks only, deliberately
+// not brittle exact-copy assertions on subjective wording.
+// ============================================================
+
+test("content-package prompt requires at least one decision-relevant expert insight beyond restating the source", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /UZMAN İÇGÖRÜSÜ \(ZORUNLU\)/);
+  assert.match(routeSource, /EN AZ BİR gerçek profesyonel içgörü/);
+});
+
+test("content-package prompt forbids inventing a fake experience/authority claim when adding expert insight", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /Sahte deneyim\/otorite iddiası/);
+});
+
+test("content-package prompt requires a core inference to appear as the primary message only once, with later mentions serving a different function", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /SADECE BİR YERDE ana mesaj olarak yer alsın/);
+});
+
+test("content-package prompt keeps slide 3 (decision insight) and slide 4 (action) editorially distinct — slide 4 must not re-explain slide 3's conclusion", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /Slayt 3'te açıklanan SONUCU burada tekrar açıklama/);
+});
+
+test("content-package prompt forbids the caption from becoming a sixth retelling of the carousel", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /beş slaytın altıncı bir versiyonu OLMASIN/);
+});
+
+test("Final Editorial Differentiation did not touch grounding, schema, or validator rules — the evidence boundary and calendar-date rules are still present verbatim", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /okuduğun anlamına GELMEZ/);
+  assert.match(routeSource, /YAYIM TARİHİ.*ASLA bir kuralın\/uygulamanın yürürlüğe girdiği/);
+  assert.match(routeSource, /ASLA ayrı toplanabilir "component" sayısal facts'e bölme/);
+});
+
+// ============================================================
+// Verified Fact Contract — Job 1 (a separate, narrow, non-editorial AI
+// call) classifies every evidence claim as current-topic/different-
+// scenario/unsupported; code deterministically keeps ONLY current-topic
+// facts before Job 2 (the existing editorial ContentPackage call) ever
+// runs. This is the actual fix for the proven context-leakage defect —
+// see factContract.ts's own header comment.
+// ============================================================
+
+const MEANINGFUL_EVIDENCE_TEXT =
+  "Bakanlık, satış işlemlerinde deprem sigortası poliçesinin tapu müdürlüğüne ibraz edilmesinin " +
+  "1 Ekim 2026 tarihinden itibaren zorunlu olacağını, poliçesi bulunmayan başvuruların ise " +
+  "işleme alınmayacağını açıkladı. Bu bir uzun UNIQUE_RAW_EVIDENCE_MARKER_TOKEN içerir.";
+
+function makeOpportunityWithEvidence(evidenceText) {
+  return {
+    contentOpportunity: {
+      topic: "t",
+      angle: "a",
+      whyNow: "w",
+      keyFacts: ["Başlık"],
+      sources: [
+        { title: "Başlık", publisher: "TKGM", url: "https://example.com/x", publishedAt: "2026-09-01", evidenceText },
+      ],
+    },
+    visualFormat: "carousel",
+  };
+}
+
+test("Verified Fact Contract: MEANINGFUL evidence triggers Job 1 (a separate fact-extraction call)", async () => {
+  const { route, state } = loadContentPackageRoute();
+  await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  assert.equal(state.factExtractionCalls, 1);
+  assert.equal(state.contentPackageCalls, 1);
+});
+
+test("Verified Fact Contract: THIN evidence skips Job 1 entirely — no fact-extraction call is made", async () => {
+  const { route, state } = loadContentPackageRoute();
+  await route.POST({ json: async () => makeOpportunityWithEvidence("Kısa ve gerçek ama yetersiz bir açıklama.") });
+  assert.equal(state.factExtractionCalls, 0);
+});
+
+test("Verified Fact Contract: NONE (absent) evidence skips Job 1 entirely", async () => {
+  const { route, state } = loadContentPackageRoute();
+  await route.POST({
+    json: async () => ({
+      contentOpportunity: { topic: "t", angle: "a", whyNow: "w", keyFacts: [], sources: [] },
+      visualFormat: "carousel",
+    }),
+  });
+  assert.equal(state.factExtractionCalls, 0);
+});
+
+test("Verified Fact Contract: current-topic facts reach Job 2's user message", async () => {
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        { claim: "SATIŞ_OZEL_OLGU: alıcı kendi poliçesini yaptırmalı.", evidenceFragment: "kanıt A", status: "current-topic" },
+      ],
+    },
+  });
+  await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /SATIŞ_OZEL_OLGU/);
+  assert.match(userMessage, /KANIT DURUMU: YETERLİ/);
+});
+
+test("Verified Fact Contract: different-scenario facts NEVER reach Job 2's user message", async () => {
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        { claim: "SATIŞ_OZEL_OLGU: alıcı kendi poliçesini yaptırmalı.", evidenceFragment: "kanıt A", status: "current-topic" },
+        { claim: "FARKLI_SENARYO_OLGUSU: bildirim 15 gün içinde yapılır.", evidenceFragment: "kanıt B", status: "different-scenario" },
+      ],
+    },
+  });
+  await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /SATIŞ_OZEL_OLGU/);
+  assert.doesNotMatch(userMessage, /FARKLI_SENARYO_OLGUSU/);
+});
+
+test("Verified Fact Contract: unsupported facts NEVER reach Job 2's user message", async () => {
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        { claim: "SATIŞ_OZEL_OLGU: alıcı kendi poliçesini yaptırmalı.", evidenceFragment: "kanıt A", status: "current-topic" },
+        { claim: "DESTEKSIZ_OLGU: uydurma bir olası iddia.", evidenceFragment: "kanıt C", status: "unsupported" },
+      ],
+    },
+  });
+  await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /SATIŞ_OZEL_OLGU/);
+  assert.doesNotMatch(userMessage, /DESTEKSIZ_OLGU/);
+});
+
+test("Verified Fact Contract: the full raw evidence document is NOT included in Job 2's message once the Fact Contract succeeds", async () => {
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [{ claim: "Bir olgu.", evidenceFragment: "kısa alıntı", status: "current-topic" }],
+    },
+  });
+  await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.doesNotMatch(userMessage, /UNIQUE_RAW_EVIDENCE_MARKER_TOKEN/);
+});
+
+test("Verified Fact Contract: the proven regression case — a sale-specific fact is retained while the 15-day/24-hour alternate-branch facts are excluded from Job 2's context", async () => {
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        {
+          claim: "Satış işleminde eski poliçe tescil tarihinde sona erer, alıcı kendi poliçesini yaptırmalıdır.",
+          evidenceFragment: "tescil tarihi itibarıyla sözleşme sona erer",
+          status: "current-topic",
+        },
+        {
+          claim: "Menfaat sahibi değişikliği 15 gün içinde sigorta şirketine bildirilir.",
+          evidenceFragment: "on beş gün içinde sözleşmeye aracılık eden sigorta şirketine bildirir",
+          status: "different-scenario",
+        },
+        {
+          claim: "Sigorta şirketi bildirimden itibaren 24 saat içinde zeyilname düzenler.",
+          evidenceFragment: "bildirimin alınmasından itibaren 24 saat içinde",
+          status: "different-scenario",
+        },
+      ],
+    },
+  });
+  await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /eski poliçe tescil tarihinde sona erer/);
+  assert.doesNotMatch(userMessage, /15 gün içinde sigorta şirketine bildirilir/);
+  assert.doesNotMatch(userMessage, /24 saat içinde zeyilname düzenler/);
+});
+
+test("Verified Fact Contract: Job 1 failure (thrown error) fails CLOSED — Job 2 never receives the raw evidence, and the request still succeeds", async () => {
+  const { route, state } = loadContentPackageRoute({
+    factExtractionError: new Error("simulated fact extraction failure"),
+  });
+  const response = await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  assert.equal(response.status, 200);
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /KANIT DURUMU: YOK/);
+  assert.doesNotMatch(userMessage, /KANIT DURUMU: YETERLİ/);
+  assert.doesNotMatch(userMessage, /UNIQUE_RAW_EVIDENCE_MARKER_TOKEN/);
+});
+
+test("Verified Fact Contract: malformed (non-JSON) Job 1 response fails CLOSED, same as a thrown error", async () => {
+  const { route, state } = loadContentPackageRoute({ factContractResponse: "malformed" });
+  const response = await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  assert.equal(response.status, 200);
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /KANIT DURUMU: YOK/);
+});
+
+test("Verified Fact Contract: zero current-topic facts (everything different-scenario/unsupported) fails CLOSED — never YETERLİ, never the raw document", async () => {
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        { claim: "Farklı bir senaryo olgusu.", evidenceFragment: "kanıt", status: "different-scenario" },
+        { claim: "Desteksiz bir iddia.", evidenceFragment: "kanıt", status: "unsupported" },
+      ],
+    },
+  });
+  await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /KANIT DURUMU: YOK/);
+  assert.doesNotMatch(userMessage, /KANIT DURUMU: YETERLİ/);
+  assert.doesNotMatch(userMessage, /UNIQUE_RAW_EVIDENCE_MARKER_TOKEN/);
+});
+
+test("content-package route's FACT_SCHEMA (ContentFact's own schema) is unchanged by the Verified Fact Contract work", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(
+    routeSource,
+    /required: \["label", "value", "unit", "role"\]/,
+  );
+});
+
+test("content-package prompt treats the scenario boundary marker as a structural hint for Job 1, never an automatic relevance verdict", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /yalnızca yapısal bir ipuçtur/);
+  assert.match(routeSource, /otomatik bir "different-scenario" kararı DEĞİLDİR/);
 });
