@@ -1,6 +1,7 @@
 import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { hasAnyWordBoundaryMatch, PROPERTY_MARKET_RELEVANCE_KEYWORDS } from "../relevance";
+import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
 
 // Current Content Radar V1 — Layer 2 (news/market attention). LIVE, real
 // provider — standard RSS 2.0 feeds from two established Turkish outlets,
@@ -109,13 +110,19 @@ function parseRssPubDate(raw: string): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
-type RawItem = { title: string; link: string; pubDate: string | null };
+type RawItem = { title: string; link: string; pubDate: string | null; description: string | null };
 
 // Minimal, bounded RSS 2.0 <item> extraction — deliberately not a general
 // XML parser (no new dependency), same principle as tcmb.ts's own Atom
 // extractor. Untrusted input: every extracted value is treated as plain
 // text data, never executed. RSS's <link> is plain text content (unlike
 // Atom's <link href="...">), so it is extracted the same way as <title>.
+//
+// Source-Grounding Minimal Fix: also captures <description> when present
+// — genuine source-provided text (the item's own summary, not a title
+// alias), so no second network fetch is needed for this adapter. When an
+// item has no <description>, evidenceText is simply left absent
+// downstream — never backfilled from the title.
 function extractItems(xml: string): RawItem[] {
   const items: RawItem[] = [];
   const itemPattern = /<item>([\s\S]*?)<\/item>/g;
@@ -126,16 +133,18 @@ function extractItems(xml: string): RawItem[] {
     const titleMatch = block.match(/<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
     const linkMatch = block.match(/<link[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/link>/);
     const pubDateMatch = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
+    const descriptionMatch = block.match(/<description[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/);
 
     if (!titleMatch || !linkMatch) continue;
 
     const title = decodeXmlEntities(titleMatch[1].trim());
     const link = decodeXmlEntities(linkMatch[1].trim());
     const pubDate = pubDateMatch ? parseRssPubDate(decodeXmlEntities(pubDateMatch[1])) : null;
+    const description = descriptionMatch ? decodeXmlEntities(descriptionMatch[1].trim()) : null;
 
     if (!title || !link) continue;
 
-    items.push({ title, link, pubDate });
+    items.push({ title, link, pubDate, description });
   }
 
   return items;
@@ -177,6 +186,7 @@ export async function fetchEconomyNewsAnnouncements(): Promise<NormalizedResearc
         tier: classifySourceTier(item.link),
         snippet: item.title,
         retrievedAt,
+        evidenceText: item.description ? toEvidenceTextOrUndefined(item.description) : undefined,
       });
     }
   }

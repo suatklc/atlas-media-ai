@@ -87,6 +87,16 @@ function extractFihristItems(html: string): { title: string; url: string }[] {
   return items;
 }
 
+// Source-Grounding Minimal Fix: deliberately NOT fetching each item's own
+// detail page here. Resmî Gazete fihrist entries link to the individual
+// gazette document itself, which is commonly a PDF rather than an HTML
+// page — parsing that would need a new dependency (out of scope), and
+// this adapter is already documented above as intermittently flaky, so a
+// second per-item request for uncertain payoff isn't worth the added
+// failure surface. evidenceText is simply left absent for every item —
+// the safe, correct behavior when genuine evidence can't be captured;
+// content-package generation already treats an absent evidenceText as
+// "headline-only" and constrains itself accordingly.
 export async function fetchResmiGazeteAnnouncements(): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
 

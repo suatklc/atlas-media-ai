@@ -286,6 +286,10 @@ export function buildContentOpportunities(
       url: result.url,
       publishedAt: result.publishedAt,
       tier: result.tier,
+      // Source-Grounding Minimal Fix: carried through as-is, never
+      // derived from title/publisher/url here — see each provider for
+      // how (or whether) it was genuinely captured.
+      evidenceText: result.evidenceText,
     };
 
     return {

@@ -2,6 +2,7 @@ import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { parseTurkishLongDate } from "../turkishDate";
 import { hasAnyWordBoundaryMatch, REAL_ESTATE_RELEVANCE_KEYWORDS } from "../relevance";
+import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
 
 // LIVE, real provider — the Ministry of Environment, Urbanization and
 // Climate Change (Çevre, Şehircilik ve İklim Değişikliği Bakanlığı)'s own
@@ -29,12 +30,15 @@ const FETCH_TIMEOUT_MS = 10_000;
 // a generous safety cap, not a tuned expectation.
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
-async function fetchNewsHtml(): Promise<string> {
+// Reused for both the listing page and each item's own detail page —
+// same fetch safety (timeout, size cap, content-type check), just a
+// different URL.
+async function fetchHtml(url: string): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const response = await fetch(NEWS_URL, {
+    const response = await fetch(url, {
       signal: controller.signal,
       headers: { Accept: "text/html" },
     });
@@ -84,12 +88,34 @@ function extractNewsItems(html: string): { title: string; url: string; dateText:
   return items;
 }
 
+// Source-Grounding Minimal Fix: best-effort, bounded-parallel fetch of
+// each (already relevance-filtered) item's own detail page. A failure on
+// any one item — network error, non-HTML response, or too little
+// extractable text — simply leaves that item's evidenceText absent; it
+// is NEVER substituted with the title. Capped at MAX_DETAIL_FETCHES so a
+// future listing-page change can't turn one discovery run into an
+// unbounded number of requests.
+const MAX_DETAIL_FETCHES = 12;
+
+async function attachDetailPageEvidence(results: NormalizedResearchResult[]): Promise<void> {
+  await Promise.allSettled(
+    results.slice(0, MAX_DETAIL_FETCHES).map(async (result) => {
+      try {
+        const detailHtml = await fetchHtml(result.url);
+        result.evidenceText = toEvidenceTextOrUndefined(detailHtml);
+      } catch {
+        // Safe failure — evidenceText stays absent, never faked.
+      }
+    }),
+  );
+}
+
 export async function fetchCsbAnnouncements(): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
 
   let html: string;
   try {
-    html = await fetchNewsHtml();
+    html = await fetchHtml(NEWS_URL);
   } catch (error) {
     console.error("ÇŞİDB news retrieval failed:", error instanceof Error ? error.message : String(error));
     return [];
@@ -98,7 +124,7 @@ export async function fetchCsbAnnouncements(): Promise<NormalizedResearchResult[
   const items = extractNewsItems(html);
   const relevant = items.filter((item) => hasAnyWordBoundaryMatch(item.title, REAL_ESTATE_RELEVANCE_KEYWORDS));
 
-  return relevant.map((item) => ({
+  const results: NormalizedResearchResult[] = relevant.map((item) => ({
     title: item.title,
     publisher: PUBLISHER,
     url: item.url,
@@ -110,4 +136,8 @@ export async function fetchCsbAnnouncements(): Promise<NormalizedResearchResult[
     snippet: item.title,
     retrievedAt,
   }));
+
+  await attachDetailPageEvidence(results);
+
+  return results;
 }

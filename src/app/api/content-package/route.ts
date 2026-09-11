@@ -11,6 +11,11 @@ import {
   type ContentSlide,
 } from "@/lib/ai/content/contentPackage";
 import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "@/lib/ai/context/businessProfile";
+import {
+  capEvidenceText,
+  classifyEvidenceSufficiency,
+  EVIDENCE_TEXT_MAX_CHARS,
+} from "@/lib/ai/research/retrieval/evidenceExtraction";
 
 // Gold Standard V1 — the structured generation path for Current Content
 // Radar opportunities. Deliberately separate from /api/assistant (which
@@ -136,6 +141,9 @@ Kural — OLGU / YORUM AYRIMI VE UYDURMA YASAĞI:
 - Kaynak yalnızca yaklaşık/toplam bir rakam veriyorsa (örn. "yaklaşık 150.000 TL"), bunu role="standalone" veya role="total" olarak ver; ASLA var olmayan bir kalem dökümü (depozito+kira+komisyon gibi) icat etme. role="component" SADECE kaynağın kendisi ayrı kalemleri açıkça verdiğinde kullanılsın.
 - caption ve her slaytın body/headline metninde geçen HER belirgin sayı, facts dizisinde veya başka bir slaytta da yer almalı — icat edilmiş/çelişen bir sayı olmamalı.
 - Kaynağın açıkça belirtmediği hiçbir tarih, tutar, yüzde, yasal sonuç, prosedür, istisna, süre/son tarih veya karşılaştırma UYDURMA. Genel/kanıtsız nedensel gerekçeler ekleme (örn. "pandemi sonrası hareketlilik", "ekonomik dalgalanmalar") — kanıt yoksa ihtiyatlı ve dar kapsamlı yaz; boşluğu doldurmaya çalışma.
+- Bir kaynağın URL'sinin verilmesi, o sayfanın içeriğini okuduğun anlamına GELMEZ; yalnızca aşağıda "GERÇEK KAYNAK METNİ" olarak açıkça verilen metne güven. Aşağıdaki KANIT DURUMU "BAŞLIK DÜZEYİNDE" veya "YOK" ise, o kaynak SADECE başlık düzeyindedir — başlığın ima edebileceği hiçbir ayrıntılı tarih/tutar/prosedür/belge/yasal sonucu UYDURMA; yalnızca genel ve ihtiyatlı bir yorum yap.
+- Bir kaynağın YAYIM TARİHİ (kaynağın ne zaman yayımlandığı), metin açıkça belirtmedikçe ASLA bir kuralın/uygulamanın yürürlüğe girdiği, başladığı veya bir son tarih/deadline olduğu anlamına gelmez — bunlar farklı şeylerdir; birini diğeri gibi sunma.
+- Bir tarihi (gün/ay/yıl) ASLA ayrı toplanabilir "component" sayısal facts'e bölme (örn. yıl=2026, ay=9, gün=6 gibi üç ayrı olgu UYDURMA) — bir tarih tek bir metin ifadesi olarak slaytın headline/body'sinde veya source.publishedAt alanında yer alır, facts dizisinde arttırılabilir bir bileşen değildir.
 - Son ${maxAgeContextDays} gün içindeki güncelliği doğal biçimde yansıt; tarihleri koru.
 
 Yerel konumlandırma: Suat Kılıç'ın ana uzmanlık bölgesi ${geography.primary} ve çevresindeki ${geography.nearby.join(", ")} bölgeleri. Bunu HER cümleye zorlama — yalnızca editoryal olarak doğal olduğunda kullan. Ulusal ölçekli bir gelişmeyi kaynak desteklemediği halde yapay biçimde yerelleştirme.
@@ -162,7 +170,7 @@ function buildUserMessage(opportunity: {
   angle: string;
   whyNow: string;
   keyFacts: string[];
-  sources: { title: string; publisher: string; url: string; publishedAt: string }[];
+  sources: { title: string; publisher: string; url: string; publishedAt: string; evidenceText?: string }[];
 }): string {
   const source = opportunity.sources[0];
   const lines = [
@@ -173,6 +181,40 @@ function buildUserMessage(opportunity: {
   ];
   if (source) {
     lines.push(`Kaynak: ${source.publisher} — ${source.url} — ${source.publishedAt}`);
+    // Evidence Safety Gate: evidence PRESENT is not the same as evidence
+    // SUFFICIENT — live production verification proved a real TKGM
+    // detail page can pass the capture-time length check while being
+    // mostly navigation chrome plus a "go download the linked file"
+    // stub. classifyEvidenceSufficiency is the deterministic gate that
+    // catches this; "thin" gets the exact same strict instruction as
+    // "none" (never both shown the raw text as if it were reliable and
+    // then trusted to self-police) — only "meaningful" evidence may
+    // ground a precise claim.
+    const sufficiency = classifyEvidenceSufficiency(source.evidenceText);
+    const statusLabel =
+      sufficiency === "meaningful" ? "YETERLİ" : sufficiency === "thin" ? "BAŞLIK DÜZEYİNDE" : "YOK";
+    lines.push(`KANIT DURUMU: ${statusLabel}`);
+
+    if (sufficiency === "meaningful") {
+      lines.push(
+        `GERÇEK KAYNAK METNİ (kaynaktan çıkarılan gerçek metin — kesin olgular SADECE bu metne dayanabilir): "${capEvidenceText(source.evidenceText as string, EVIDENCE_TEXT_MAX_CHARS)}"`,
+      );
+    } else {
+      // "thin" still shows the captured text for topical/high-level
+      // context, but explicitly labeled as NOT a factual source — the
+      // model must reason from it the same way it would from a bare
+      // headline, never as a citable detail source.
+      if (sufficiency === "thin" && source.evidenceText) {
+        lines.push(
+          `GERÇEK KAYNAK METNİ (yalnızca başlık düzeyinde/yetersiz kanıt — bu metin KESİN OLGU KAYNAĞI OLARAK KULLANILAMAZ, sadece genel bağlam için): "${capEvidenceText(source.evidenceText, EVIDENCE_TEXT_MAX_CHARS)}"`,
+        );
+      } else {
+        lines.push(`GERÇEK KAYNAK METNİ: YOK`);
+      }
+      lines.push(
+        `Bu kaynak için ayrıntılı bilgi YOK; yalnızca başlık düzeyinde bilgi var say. Tarih, tutar, belge zorunluluğu, işlem sonucu, yüzde, ücret, istatistik gibi HİÇBİR kesin ayrıntıyı UYDURMA. Yayım tarihi (${source.publishedAt}) bir yürürlük/başlangıç/son tarihi OLARAK sunulamaz.`,
+      );
+    }
   }
   lines.push("Bu bilgilere dayanarak ContentPackage'ı üret.");
   return lines.join("\n");

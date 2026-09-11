@@ -9,6 +9,14 @@ import type { ContentOpportunity, ResearchSource } from "../types";
 // copy — see discover.ts) and retrievedAt (when THIS retrieval ran,
 // distinct from publishedAt, which is when the source itself was
 // published).
+//
+// evidenceText (Source-Grounding Minimal Fix, inherited from
+// ResearchSource) is a SEPARATE field from snippet: snippet has always
+// been title-derived retrieval-router input (see router.ts's relevance
+// matching) and stays that way; evidenceText is the genuine extracted
+// text a provider was able to capture, and is the only field
+// content-package generation may treat as source evidence beyond the
+// headline itself.
 export type NormalizedResearchResult = ResearchSource & {
   snippet: string;
   // ISO timestamp of this retrieval run.

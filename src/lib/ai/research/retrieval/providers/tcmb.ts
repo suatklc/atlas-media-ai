@@ -1,5 +1,6 @@
 import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
+import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
 
 // LIVE, real provider — the Turkish Central Bank (TCMB)'s own public Atom
 // feeds. No API key, no external search provider: TCMB publishes these
@@ -103,7 +104,7 @@ function parseTcmbDate(raw: string): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
-type RawEntry = { title: string; link: string; published: string | null };
+type RawEntry = { title: string; link: string; published: string | null; summary: string | null };
 
 // Minimal, bounded Atom <entry> extraction — deliberately not a general
 // XML parser (no new dependency added): TCMB's feed format is simple and
@@ -111,6 +112,12 @@ type RawEntry = { title: string; link: string; published: string | null };
 // ever reads plain text content out of it. Untrusted input handling: the
 // extracted text is decoded as plain data (decodeXmlEntities) and never
 // interpreted as markup, code, or an instruction of any kind.
+//
+// Source-Grounding Minimal Fix: also captures <summary> when the feed
+// provides one — this is genuine source-provided text (the entry's own
+// summary, not a title alias), so no second network fetch is needed for
+// this adapter. When a given entry has no <summary>, evidenceText is
+// simply left absent downstream — never backfilled from the title.
 function extractEntries(xml: string): RawEntry[] {
   const entries: RawEntry[] = [];
   const entryPattern = /<entry>([\s\S]*?)<\/entry>/g;
@@ -121,16 +128,18 @@ function extractEntries(xml: string): RawEntry[] {
     const titleMatch = block.match(/<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
     const linkMatch = block.match(/<link[^>]*href="([^"]+)"/);
     const publishedMatch = block.match(/<published>([\s\S]*?)<\/published>/);
+    const summaryMatch = block.match(/<summary[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/summary>/);
 
     if (!titleMatch || !linkMatch) continue;
 
     const title = decodeXmlEntities(titleMatch[1].trim());
     const link = decodeXmlEntities(linkMatch[1].trim());
     const published = publishedMatch ? parseTcmbDate(decodeXmlEntities(publishedMatch[1])) : null;
+    const summary = summaryMatch ? decodeXmlEntities(summaryMatch[1].trim()) : null;
 
     if (!title || !link) continue;
 
-    entries.push({ title, link, published });
+    entries.push({ title, link, published, summary });
   }
 
   return entries;
@@ -171,6 +180,7 @@ export async function fetchTcmbAnnouncements(): Promise<NormalizedResearchResult
         tier: classifySourceTier(entry.link),
         snippet: entry.title,
         retrievedAt,
+        evidenceText: entry.summary ? toEvidenceTextOrUndefined(entry.summary) : undefined,
       });
     }
   }

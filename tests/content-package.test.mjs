@@ -58,6 +58,9 @@ function loadRealTsModule(absPath) {
 }
 
 const contentPackage = loadTypeScriptModule("src/lib/ai/content/contentPackage.ts", () => ({}), { URL });
+// Evidence Safety Gate: real (not mocked) module, so route-level tests
+// exercise the genuine classifyEvidenceSufficiency logic end-to-end.
+const evidenceExtraction = loadTypeScriptModule("src/lib/ai/research/retrieval/evidenceExtraction.ts");
 
 function makeSlide(overrides) {
   return {
@@ -468,6 +471,7 @@ function loadContentPackageRoute(overrides = {}) {
       CAROUSEL_SLIDE_ROLES: ["hook", "what-happened", "why-it-matters", "what-to-do", "cta"],
       validateContentPackage: overrides.validateContentPackage ?? (() => ({ ok: true })),
     },
+    "@/lib/ai/research/retrieval/evidenceExtraction": evidenceExtraction,
   };
 
   const route = loadTypeScriptModule(
@@ -494,6 +498,174 @@ test("/api/content-package makes exactly ONE OpenAI generation call per request 
   assert.equal(state.completionCalls, 1);
   assert.equal(body.contentPackage.format, "carousel");
   assert.equal(body.contentPackage.slides.length, 5);
+});
+
+// ============================================================
+// Source-Grounding Minimal Fix — the /api/content-package grounding
+// boundary: genuine evidenceText is surfaced to the model when present,
+// and its absence is stated explicitly (never silently treated as if
+// the headline were full evidence).
+// ============================================================
+
+test("content-package prompt tells the model a supplied URL does not mean its content was read", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /okuduğun anlamına GELMEZ/);
+});
+
+test("/api/content-package includes the real extracted evidence text in the user message when the source provides it", async () => {
+  const { route, state } = loadContentPackageRoute();
+  const request = {
+    json: async () => ({
+      contentOpportunity: {
+        topic: "t",
+        angle: "a",
+        whyNow: "w",
+        keyFacts: ["Başlık"],
+        sources: [
+          {
+            title: "Başlık",
+            publisher: "TKGM",
+            url: "https://example.com/x",
+            publishedAt: "2026-09-01",
+            evidenceText: "Duyuruya göre işlem 6 Eylül 2026 tarihinde başlayacak.",
+          },
+        ],
+      },
+      visualFormat: "carousel",
+    }),
+  };
+
+  await route.POST(request);
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /GERÇEK KAYNAK METNİ/);
+  assert.match(userMessage, /6 Eylül 2026/);
+});
+
+test("/api/content-package explicitly marks evidence as absent — never silently treats the headline as full evidence", async () => {
+  const { route, state } = loadContentPackageRoute();
+  const request = {
+    json: async () => ({
+      contentOpportunity: {
+        topic: "t",
+        angle: "a",
+        whyNow: "w",
+        keyFacts: ["Başlık"],
+        sources: [{ title: "Başlık", publisher: "TKGM", url: "https://example.com/x", publishedAt: "2026-09-01" }],
+      },
+      visualFormat: "carousel",
+    }),
+  };
+
+  await route.POST(request);
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /GERÇEK KAYNAK METNİ: YOK/);
+});
+
+// ============================================================
+// Evidence Safety Gate — evidence PRESENT is not evidence SUFFICIENT.
+// KANIT DURUMU (evidence status) must reach the model as MEANINGFUL,
+// THIN, or NONE, and "thin" gets the same strict no-invention rule as
+// "none" — proven with the ACTUAL live-observed TKGM defect text.
+// ============================================================
+
+const REAL_TKGM_CHROME_EVIDENCE =
+  "EN ARA Projeler Projeler Güncel Tescil Harici Alanların Tescillerinin Yapılması Güncel 3 Boyutlu Taşınmaz " +
+  "Yönetim Bilgi Sistemi Güncel Akıllı Tapu İşlem Asistanı (ATİAS) Projesi Güncel Tapu Arşivleri Dijital " +
+  "Dönüşüm (TADD) Projesi Güncel e-Kadastro Projesi Tümünü Gör Tapu ve Kadastro Genel Müdürlüğü (TKGM) Geri " +
+  "Dön Satış İşlemlerinde Zorunlu Deprem Sigortası Hakkında Duyuru Duyuru 07 Eylül 2026 Satış İşlemlerinde " +
+  "Zorunlu Deprem Sigortası Hakkında Duyuru dosyasına erişmek için aşağıdaki bağlantıya tıklayınız. Satış " +
+  "İşlemlerinde Zorunlu Deprem Sigortası";
+
+test("/api/content-package: the real live-observed TKGM chrome text reaches the model labeled THIN, never as MEANINGFUL evidence", async () => {
+  const { route, state } = loadContentPackageRoute();
+  const request = {
+    json: async () => ({
+      contentOpportunity: {
+        topic: "t",
+        angle: "a",
+        whyNow: "w",
+        keyFacts: ["Başlık"],
+        sources: [
+          {
+            title: "Satış İşlemlerinde Zorunlu Deprem Sigortası Hakkında Duyuru",
+            publisher: "TKGM",
+            url: "https://www.tkgm.gov.tr/duyurular/x",
+            publishedAt: "2026-09-06T21:00:00.000Z",
+            evidenceText: REAL_TKGM_CHROME_EVIDENCE,
+          },
+        ],
+      },
+      visualFormat: "carousel",
+    }),
+  };
+
+  await route.POST(request);
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /KANIT DURUMU: BAŞLIK DÜZEYİNDE/);
+  assert.doesNotMatch(userMessage, /KANIT DURUMU: YETERLİ/);
+  // Thin evidence gets the same strict no-invention instruction as none.
+  assert.match(userMessage, /HİÇBİR kesin ayrıntıyı UYDURMA/);
+});
+
+test("/api/content-package: genuine, sufficiently long evidence reaches the model labeled MEANINGFUL", async () => {
+  const { route, state } = loadContentPackageRoute();
+  const request = {
+    json: async () => ({
+      contentOpportunity: {
+        topic: "t",
+        angle: "a",
+        whyNow: "w",
+        keyFacts: ["Başlık"],
+        sources: [
+          {
+            title: "Başlık",
+            publisher: "TKGM",
+            url: "https://example.com/x",
+            publishedAt: "2026-09-01",
+            evidenceText:
+              "Bakanlık, satış işlemlerinde deprem sigortası poliçesinin tapu müdürlüğüne ibraz edilmesinin " +
+              "1 Ekim 2026 tarihinden itibaren zorunlu olacağını, poliçesi bulunmayan başvuruların ise " +
+              "işleme alınmayacağını açıkladı.",
+          },
+        ],
+      },
+      visualFormat: "carousel",
+    }),
+  };
+
+  await route.POST(request);
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /KANIT DURUMU: YETERLİ/);
+});
+
+test("content-package prompt forbids treating a source's publication date as a rule's effective/start/deadline date", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /YAYIM TARİHİ.*ASLA bir kuralın\/uygulamanın yürürlüğe girdiği/);
+});
+
+test("content-package prompt forbids decomposing a calendar date into arithmetic component facts", () => {
+  const routeSource = readContentPackageRouteSource();
+  assert.match(routeSource, /ASLA ayrı toplanabilir "component" sayısal facts'e bölme/);
+});
+
+test("validateContentPackage rejects a calendar date decomposed into year/month/day 'component' facts — the real production defect", () => {
+  const pkg = makePackage({
+    facts: [
+      { label: "Başlangıç Yılı", value: 2026, unit: "yıl", role: "component" },
+      { label: "Başlangıç Ayı", value: 9, unit: "ay", role: "component" },
+      { label: "Başlangıç Günü", value: 6, unit: "gün", role: "component" },
+    ],
+  });
+  const result = contentPackage.validateContentPackage(pkg);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /Calendar-date component misuse/);
+});
+
+test("validateContentPackage still accepts a legitimate standalone duration fact (e.g. a 5-year loan term) — the calendar-unit check is scoped to role=component only", () => {
+  const pkg = makePackage({
+    facts: [{ label: "Kredi Vadesi", value: 5, unit: "yıl", role: "standalone" }],
+  });
+  assert.equal(contentPackage.validateContentPackage(pkg).ok, true);
 });
 
 test("/api/content-package still enforces exactly 5 carousel slides even with the upgraded editorial prompt", async () => {

@@ -1,6 +1,7 @@
 import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { parseTurkishLongDate } from "../turkishDate";
+import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
 
 // LIVE, real provider — the Turkish Land Registry and Cadastre General
 // Directorate (TKGM)'s own public announcement/news listing pages. No API
@@ -22,7 +23,10 @@ const FETCH_TIMEOUT_MS = 10_000;
 // above that, not a tuned expectation.
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
-async function fetchListingHtml(url: string): Promise<string> {
+// Reused for both the listing pages and each item's own detail page —
+// same fetch safety (timeout, size cap, content-type check), just a
+// different URL.
+async function fetchHtml(url: string): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
@@ -80,6 +84,28 @@ function extractListingItems(html: string, basePath: string): { title: string; u
   return items;
 }
 
+// Source-Grounding Minimal Fix: best-effort, bounded-parallel fetch of
+// each announcement's own detail page (as opposed to the listing card
+// alone). A failure on any one item — network error, non-HTML response,
+// or too little extractable text — simply leaves that item's
+// evidenceText absent; it is NEVER substituted with the title. Capped at
+// MAX_DETAIL_FETCHES so a future listing-page change (many more items)
+// can't turn one discovery run into an unbounded number of requests.
+const MAX_DETAIL_FETCHES = 12;
+
+async function attachDetailPageEvidence(results: NormalizedResearchResult[]): Promise<void> {
+  await Promise.allSettled(
+    results.slice(0, MAX_DETAIL_FETCHES).map(async (result) => {
+      try {
+        const detailHtml = await fetchHtml(result.url);
+        result.evidenceText = toEvidenceTextOrUndefined(detailHtml);
+      } catch {
+        // Safe failure — evidenceText stays absent, never faked.
+      }
+    }),
+  );
+}
+
 export async function fetchTkgmAnnouncements(): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
   const results: NormalizedResearchResult[] = [];
@@ -87,7 +113,7 @@ export async function fetchTkgmAnnouncements(): Promise<NormalizedResearchResult
   for (const page of LISTING_PAGES) {
     let html: string;
     try {
-      html = await fetchListingHtml(page.url);
+      html = await fetchHtml(page.url);
     } catch (error) {
       console.error(`TKGM listing retrieval failed (${page.url}):`, error instanceof Error ? error.message : String(error));
       continue;
@@ -109,6 +135,8 @@ export async function fetchTkgmAnnouncements(): Promise<NormalizedResearchResult
       });
     }
   }
+
+  await attachDetailPageEvidence(results);
 
   return results;
 }

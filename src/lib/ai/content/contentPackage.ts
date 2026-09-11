@@ -57,6 +57,11 @@ const MIN_NOTABLE_NUMBER = 1000;
 // catch.
 const ARITHMETIC_TOLERANCE = 1;
 
+// Evidence Safety Gate follow-up: units that only ever describe a
+// calendar date's own parts, never a genuinely summable quantity — see
+// the "component" check below.
+const CALENDAR_COMPONENT_UNITS = new Set(["yıl", "ay", "gün", "sene"]);
+
 function extractNotableNumbers(text: string): Set<number> {
   const numbers = new Set<number>();
   const matches = text.matchAll(/\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?/g);
@@ -187,6 +192,24 @@ export function validateContentPackage(pkg: ContentPackage): ContentPackageValid
     }
     if (!slide.body.trim()) {
       return { ok: false, reason: `Slide ${slide.index} body is required.` };
+    }
+  }
+
+  // Evidence Safety Gate follow-up: a calendar date must never be
+  // decomposed into separate additive "component" facts (year/month/day)
+  // — the real, live-observed defect this catches: a single date like
+  // "06 Eylül 2026" emitted as three facts (value 2026/unit "yıl",
+  // value 9/unit "ay", value 6/unit "gün"), all role="component", none
+  // of which are ever meaningfully "summed" into anything. Deliberately
+  // narrow to role==="component" so a genuinely legitimate standalone/
+  // total duration fact (e.g. "5 yıl vade" as role="standalone") is
+  // never rejected — only the specific arithmetic-component misuse is.
+  for (const fact of pkg.facts) {
+    if (fact.role === "component" && CALENDAR_COMPONENT_UNITS.has(fact.unit.trim().toLocaleLowerCase("tr-TR"))) {
+      return {
+        ok: false,
+        reason: `Calendar-date component misuse: a date must never be split into arithmetic "component" facts (fact "${fact.label}" uses unit "${fact.unit}").`,
+      };
     }
   }
 

@@ -28,6 +28,15 @@ export type ResearchSource = {
   // timeless truth (see buildResearchDirective).
   publishedAt: string;
   tier: SourceTier;
+  // Source-Grounding Minimal Fix: genuine text actually extracted from the
+  // source's own detail page or feed-provided summary — NEVER the title,
+  // publisher name, URL, a model summary, or a fabricated fallback. Absent
+  // (not an empty string) when no real evidence could be captured; a
+  // consumer must then treat the source as headline-only and refuse any
+  // precise factual claim beyond the title. See retrieval/providers/*.ts
+  // for how each adapter populates this, and content-package/route.ts for
+  // the generation-time boundary this enforces.
+  evidenceText?: string;
 };
 
 export type ContentOpportunityFreshness = "breaking" | "recent" | "evergreen-adjacent";

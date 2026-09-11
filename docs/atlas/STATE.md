@@ -95,6 +95,41 @@ changes often — keep it short and current, not a historical changelog
   - **Must not be reopened casually** — only (a) a real, reproduced
     production regression, or (b) future real usage demonstrating a
     material product limitation justifies revisiting this.
+- **SOURCE-GROUNDING SAFETY V1 = FROZEN.** User-accepted via a real live
+  production retest: the exact TKGM opportunity that previously produced
+  unsupported claims ("Satış İşlemlerinde Zorunlu Deprem Sigortası
+  Hakkında Duyuru") was re-run through the current production
+  `ContentPackage` pipeline and PASSED. Scope:
+  `src/lib/ai/research/retrieval/evidenceExtraction.ts` (evidence
+  capture + `classifyEvidenceSufficiency`), `src/lib/ai/content/
+  contentPackage.ts` (calendar-date component-fact rejection), and
+  `src/app/api/content-package/route.ts` (the evidence boundary/prompt).
+  - Every `ResearchSource` may carry a genuinely extracted `evidenceText`
+    (never the title/URL/publisher, never fabricated); its absence is
+    preserved, not papered over.
+  - **Evidence presence != evidence sufficiency.** A deterministic,
+    non-AI classifier (`classifyEvidenceSufficiency`) labels evidence
+    `meaningful` / `thin` / `none` — text dominated by page-navigation/
+    stub markers (e.g. "click here to access the file") or under ~150
+    chars is conservatively `thin`, never promoted to `meaningful`.
+    `thin` gets the identical strict no-invention instruction as `none`.
+  - Confirmed by the live retest: thin evidence no longer yields
+    unsupported effective dates, mandatory-document requirements, or
+    transaction-blocking consequences; a source's publication date is
+    never presented/treated as a rule's effective/start date; a calendar
+    date is never decomposed into separate arithmetic `ContentFact`
+    "component" entries (deterministically rejected if it ever recurs).
+  - Current Content Radar's retrieval/ranking/dedupe architecture is
+    unchanged — this was a generation-time + capture-time safety fix
+    layered on top of it, not a Radar redesign.
+  - **Known, deliberately deferred limitation:** TKGM's own detail pages
+    are frequently thin stubs pointing to a linked announcement file
+    (often a PDF) that Atlas does not fetch — real evidence for those
+    topics stays `thin` by design until that linked-file extraction is
+    investigated as its own, separately-scoped task.
+  - **Must not be reopened casually — only a proven correctness blocker
+    justifies revisiting this**, same convention as Carousel V1/Current
+    Content Radar V1 above.
 
 ## Current known issues / limitations
 
@@ -132,4 +167,12 @@ changes often — keep it short and current, not a historical changelog
    production URL, including from a phone).
 5. Real usage test — COMPLETE for Current Content Radar V1 (see above);
    Carousel/Hero already covered by their own freezes.
-6. Video / Reels generation — not started.
+6. Gold Standard V1 (`ContentPackage` pipeline, `/api/content-package`)
+   — COMPLETE and user-accepted.
+7. Source-Grounding Safety V1 — COMPLETE (see above).
+8. TKGM linked-file evidence extraction — investigate (not started).
+   Scope: TKGM detail pages are stub pages pointing to a linked
+   announcement file (often a PDF); fetch/parse that file so TKGM
+   evidence can reach `meaningful` rather than staying `thin`. Do not
+   mix this with any other change.
+9. Video / Reels generation — not started.

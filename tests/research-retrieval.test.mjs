@@ -30,6 +30,10 @@ function loadTypeScriptModule(relativePath, dependencyLoader = () => ({}), globa
 // globals unless explicitly passed in here.
 const sourceQuality = loadTypeScriptModule("src/lib/ai/research/retrieval/sourceQuality.ts", () => ({}), { URL });
 const turkishDate = loadTypeScriptModule("src/lib/ai/research/retrieval/turkishDate.ts");
+// Source-Grounding Minimal Fix: real (not mocked) module — tkgm.ts's and
+// csb.ts's own detail-page evidence extraction is exercised for real by
+// their existing tests below, same convention as sourceQuality/turkishDate.
+const evidenceExtraction = loadTypeScriptModule("src/lib/ai/research/retrieval/evidenceExtraction.ts");
 const businessProfile = loadTypeScriptModule("src/lib/ai/context/businessProfile.ts");
 // discover.ts's classifyTopicFamily also uses the built-in URL constructor
 // (for its domain-based fallback) — same reason, same fix.
@@ -454,9 +458,10 @@ test("tkgm.ts: extracts real card entries with title, URL, and parsed Turkish lo
     (specifier) => {
       if (specifier === "../sourceQuality") return sourceQuality;
       if (specifier === "../turkishDate") return turkishDate;
+      if (specifier === "../evidenceExtraction") return evidenceExtraction;
       return {};
     },
-    { fetch: makeMockFetch(TKGM_FIXTURE_HTML), URL, TextEncoder, Buffer, AbortController, setTimeout, clearTimeout, console: { error: () => {}, log: () => {}, warn: () => {} } },
+    { fetch: makeMockFetch(TKGM_FIXTURE_HTML), URL, TextEncoder, Buffer, AbortController, setTimeout, clearTimeout, Promise, console: { error: () => {}, log: () => {}, warn: () => {} } },
   );
 
   const results = await tkgm.fetchTkgmAnnouncements();
@@ -469,6 +474,11 @@ test("tkgm.ts: extracts real card entries with title, URL, and parsed Turkish lo
   assert.equal(tapuEntry.url, "https://www.tkgm.gov.tr/duyurular/tapu-harci-guncellemesi");
   assert.equal(tapuEntry.publishedAt, new Date("2026-08-20T00:00:00+03:00").toISOString());
   assert.equal(tapuEntry.tier, "official-authority");
+  // Source-Grounding Minimal Fix: the detail-page fetch (same mock fetch,
+  // real evidenceExtraction) genuinely populated evidenceText — not the
+  // title alone, and not an empty/absent value.
+  assert.ok(tapuEntry.evidenceText, "expected a detail-page evidenceText to be captured");
+  assert.notEqual(tapuEntry.evidenceText, tapuEntry.title);
 });
 
 test("tkgm.ts: an unparsable date is left as explicit unknown, never guessed", async () => {
@@ -555,6 +565,7 @@ test("csb.ts: extracts real card entries and keeps only the genuine zoning/kents
       if (specifier === "../sourceQuality") return sourceQuality;
       if (specifier === "../turkishDate") return turkishDate;
       if (specifier === "../relevance") return relevance;
+      if (specifier === "../evidenceExtraction") return evidenceExtraction;
       return {};
     },
     {
@@ -576,6 +587,9 @@ test("csb.ts: extracts real card entries and keeps only the genuine zoning/kents
   assert.equal(results[0].tier, "official-authority");
   assert.equal(results[0].url, "https://csb.gov.tr/haberler/kentsel-donusum-projesi-baslatildi-306500");
   assert.equal(results[0].publishedAt, new Date("2026-08-28T00:00:00+03:00").toISOString());
+  // Source-Grounding Minimal Fix: real detail-page evidence extraction.
+  assert.ok(results[0].evidenceText, "expected a detail-page evidenceText to be captured");
+  assert.notEqual(results[0].evidenceText, results[0].title);
 });
 
 test("csb.ts: a network failure is caught and returns an empty list, never throws — one source failing can never break discovery", async () => {
