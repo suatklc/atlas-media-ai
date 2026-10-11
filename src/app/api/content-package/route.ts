@@ -434,7 +434,13 @@ export async function POST(request: NextRequest) {
 
   if (sufficiency === "meaningful" && primarySource?.evidenceText) {
     const verifiedFacts = await extractVerifiedFacts(openai, contentOpportunity, primarySource.evidenceText);
-    const currentTopicFacts = verifiedFacts ? filterCurrentTopicFacts(verifiedFacts) : [];
+    // Evidence Fragment Grounding Check: a "current-topic" fact whose own
+    // evidenceFragment isn't a genuine, verifiable quote from the real
+    // evidenceText is dropped here, same as if Job 1 never reported it —
+    // see factContract.ts's filterCurrentTopicFacts/isEvidenceFragmentGrounded.
+    const currentTopicFacts = verifiedFacts
+      ? filterCurrentTopicFacts(verifiedFacts, primarySource.evidenceText)
+      : [];
     // Observability (Section 10): counts only, never evidence content.
     console.log(
       `Fact contract: extracted=${verifiedFacts?.length ?? 0} currentTopic=${currentTopicFacts.length} failClosed=${verifiedFacts === null}`,

@@ -722,7 +722,13 @@ test("/api/content-package: the real live-observed TKGM chrome text reaches the 
 });
 
 test("/api/content-package: genuine, sufficiently long evidence reaches the model labeled MEANINGFUL", async () => {
-  const { route, state } = loadContentPackageRoute();
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        { claim: "Deprem sigortası ibrazı zorunlu olacak.", evidenceFragment: "zorunlu olacağını", status: "current-topic" },
+      ],
+    },
+  });
   const request = {
     json: async () => ({
       contentOpportunity: {
@@ -1294,7 +1300,11 @@ test("Verified Fact Contract: current-topic facts reach Job 2's user message", a
   const { route, state } = loadContentPackageRoute({
     factContractResponse: {
       facts: [
-        { claim: "SATIŞ_OZEL_OLGU: alıcı kendi poliçesini yaptırmalı.", evidenceFragment: "kanıt A", status: "current-topic" },
+        {
+          claim: "SATIŞ_OZEL_OLGU: alıcı kendi poliçesini yaptırmalı.",
+          evidenceFragment: "poliçesi bulunmayan başvuruların ise işleme alınmayacağını",
+          status: "current-topic",
+        },
       ],
     },
   });
@@ -1308,7 +1318,11 @@ test("Verified Fact Contract: different-scenario facts NEVER reach Job 2's user 
   const { route, state } = loadContentPackageRoute({
     factContractResponse: {
       facts: [
-        { claim: "SATIŞ_OZEL_OLGU: alıcı kendi poliçesini yaptırmalı.", evidenceFragment: "kanıt A", status: "current-topic" },
+        {
+          claim: "SATIŞ_OZEL_OLGU: alıcı kendi poliçesini yaptırmalı.",
+          evidenceFragment: "poliçesi bulunmayan başvuruların ise işleme alınmayacağını",
+          status: "current-topic",
+        },
         { claim: "FARKLI_SENARYO_OLGUSU: bildirim 15 gün içinde yapılır.", evidenceFragment: "kanıt B", status: "different-scenario" },
       ],
     },
@@ -1323,7 +1337,11 @@ test("Verified Fact Contract: unsupported facts NEVER reach Job 2's user message
   const { route, state } = loadContentPackageRoute({
     factContractResponse: {
       facts: [
-        { claim: "SATIŞ_OZEL_OLGU: alıcı kendi poliçesini yaptırmalı.", evidenceFragment: "kanıt A", status: "current-topic" },
+        {
+          claim: "SATIŞ_OZEL_OLGU: alıcı kendi poliçesini yaptırmalı.",
+          evidenceFragment: "poliçesi bulunmayan başvuruların ise işleme alınmayacağını",
+          status: "current-topic",
+        },
         { claim: "DESTEKSIZ_OLGU: uydurma bir olası iddia.", evidenceFragment: "kanıt C", status: "unsupported" },
       ],
     },
@@ -1337,13 +1355,19 @@ test("Verified Fact Contract: unsupported facts NEVER reach Job 2's user message
 test("Verified Fact Contract: the full raw evidence document is NOT included in Job 2's message once the Fact Contract succeeds", async () => {
   const { route, state } = loadContentPackageRoute({
     factContractResponse: {
-      facts: [{ claim: "Bir olgu.", evidenceFragment: "kısa alıntı", status: "current-topic" }],
+      facts: [{ claim: "Bir olgu.", evidenceFragment: "zorunlu olacağını", status: "current-topic" }],
     },
   });
   await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
   const userMessage = state.lastMessages.find((m) => m.role === "user").content;
   assert.doesNotMatch(userMessage, /UNIQUE_RAW_EVIDENCE_MARKER_TOKEN/);
 });
+
+const SALE_VS_ASSIGNMENT_EVIDENCE_TEXT =
+  "Satış işleminde eski poliçe tescil tarihi itibarıyla sözleşme sona erer ve alıcı kendi poliçesini " +
+  "yaptırmalıdır. Bunlar dışındaki hâllerde menfaat sahibi değişikliğinde sigortalı, on beş gün içinde " +
+  "sözleşmeye aracılık eden sigorta şirketine bildirir; sigorta şirketi ise bildirimin alınmasından " +
+  "itibaren 24 saat içinde zeyilname düzenler.";
 
 test("Verified Fact Contract: the proven regression case — a sale-specific fact is retained while the 15-day/24-hour alternate-branch facts are excluded from Job 2's context", async () => {
   const { route, state } = loadContentPackageRoute({
@@ -1367,7 +1391,7 @@ test("Verified Fact Contract: the proven regression case — a sale-specific fac
       ],
     },
   });
-  await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  await route.POST({ json: async () => makeOpportunityWithEvidence(SALE_VS_ASSIGNMENT_EVIDENCE_TEXT) });
   const userMessage = state.lastMessages.find((m) => m.role === "user").content;
   assert.match(userMessage, /eski poliçe tescil tarihinde sona erer/);
   assert.doesNotMatch(userMessage, /15 gün içinde sigorta şirketine bildirilir/);
@@ -1408,6 +1432,101 @@ test("Verified Fact Contract: zero current-topic facts (everything different-sce
   assert.match(userMessage, /KANIT DURUMU: YOK/);
   assert.doesNotMatch(userMessage, /KANIT DURUMU: YETERLİ/);
   assert.doesNotMatch(userMessage, /UNIQUE_RAW_EVIDENCE_MARKER_TOKEN/);
+});
+
+// ============================================================
+// Evidence Fragment Grounding Check — Gap 1 of the Known Open Risk audit:
+// "current-topic" was previously Job 1's OWN classification of its OWN
+// self-reported evidenceFragment, with nothing confirming that fragment
+// actually appears in the real evidenceText. These tests prove a
+// "current-topic" fact whose evidenceFragment is NOT a genuine quote from
+// the evidenceText is now dropped (fails CLOSED), same as if Job 1 had
+// never reported it — see factContract.ts's isEvidenceFragmentGrounded.
+// ============================================================
+
+test("Verified Fact Contract: a current-topic fact whose evidenceFragment is NOT a genuine quote from the evidenceText is dropped (fails CLOSED)", async () => {
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        {
+          claim: "HALÜSİNE_EDİLMİŞ_OLGU: bu iddia kanıtta gerçekten geçmiyor.",
+          evidenceFragment: "bu cümle kaynak metninde asla geçmiyor",
+          status: "current-topic",
+        },
+      ],
+    },
+  });
+  const response = await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  assert.equal(response.status, 200);
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.doesNotMatch(userMessage, /HALÜSİNE_EDİLMİŞ_OLGU/);
+  assert.match(userMessage, /KANIT DURUMU: YOK/);
+  assert.doesNotMatch(userMessage, /KANIT DURUMU: YETERLİ/);
+});
+
+test("Verified Fact Contract: among two current-topic facts, only the one genuinely grounded in evidenceText reaches Job 2", async () => {
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        {
+          claim: "GERÇEK_OLGU: poliçesi olmayan başvurular işleme alınmaz.",
+          evidenceFragment: "poliçesi bulunmayan başvuruların ise işleme alınmayacağını",
+          status: "current-topic",
+        },
+        {
+          claim: "HALÜSİNE_EDİLMİŞ_OLGU: bu iddia kanıtta gerçekten geçmiyor.",
+          evidenceFragment: "bu cümle kaynak metninde asla geçmiyor",
+          status: "current-topic",
+        },
+      ],
+    },
+  });
+  await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /GERÇEK_OLGU/);
+  assert.doesNotMatch(userMessage, /HALÜSİNE_EDİLMİŞ_OLGU/);
+  assert.match(userMessage, /KANIT DURUMU: YETERLİ/);
+});
+
+test("Verified Fact Contract: a current-topic fact's evidenceFragment matches case/whitespace-insensitively, not only byte-for-byte", async () => {
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        {
+          claim: "GERÇEK_OLGU: poliçesi olmayan başvurular işleme alınmaz.",
+          // Different case + extra/irregular whitespace than the real
+          // evidence text, but the same words — must still be accepted.
+          evidenceFragment: "POLİÇESİ   bulunmayan BAŞVURULARIN ise  işleme alınmayacağını",
+          status: "current-topic",
+        },
+      ],
+    },
+  });
+  await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, /GERÇEK_OLGU/);
+  assert.match(userMessage, /KANIT DURUMU: YETERLİ/);
+});
+
+test("isEvidenceFragmentGrounded: rejects an empty/whitespace-only evidenceFragment even though it trivially 'matches' any text", () => {
+  const ungrounded = factContract.isEvidenceFragmentGrounded(
+    { claim: "x", evidenceFragment: "   ", status: "current-topic" },
+    MEANINGFUL_EVIDENCE_TEXT,
+  );
+  assert.equal(ungrounded, false);
+});
+
+test("isEvidenceFragmentGrounded: accepts a genuine substring and rejects a fabricated one, directly against the real module", () => {
+  const grounded = factContract.isEvidenceFragmentGrounded(
+    { claim: "x", evidenceFragment: "zorunlu olacağını", status: "current-topic" },
+    MEANINGFUL_EVIDENCE_TEXT,
+  );
+  const notGrounded = factContract.isEvidenceFragmentGrounded(
+    { claim: "x", evidenceFragment: "tamamen icat edilmiş bir alıntı", status: "current-topic" },
+    MEANINGFUL_EVIDENCE_TEXT,
+  );
+  assert.equal(grounded, true);
+  assert.equal(notGrounded, false);
 });
 
 test("content-package route's FACT_SCHEMA (ContentFact's own schema) is unchanged by the Verified Fact Contract work", () => {

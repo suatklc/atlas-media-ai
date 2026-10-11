@@ -38,12 +38,35 @@ export function isEvidenceFactArray(value: unknown): value is EvidenceFact[] {
   return Array.isArray(value) && value.every(isEvidenceFact);
 }
 
+// Evidence Fragment Grounding Check: "current-topic" is Job 1's OWN
+// classification of its OWN self-reported evidenceFragment — nothing
+// upstream of this ever confirms that fragment actually appears in the
+// real evidenceText Job 1 was given. Without this, a hallucinated
+// claim+fragment pair labeled "current-topic" by Job 1 would reach Job 2
+// as a "DOĞRULANMIŞ OLGU" (verified fact) purely on the model's say-so.
+// Deterministic, dependency-free — normalizes case (tr-TR) and
+// whitespace only, then requires a literal substring match; no fuzzy/
+// edit-distance tolerance, so this can only ever reject (never
+// incorrectly accept) a fragment that isn't genuinely present.
+function normalizeForEvidenceMatch(text: string): string {
+  return text.toLocaleLowerCase("tr-TR").replace(/\s+/g, " ").trim();
+}
+
+export function isEvidenceFragmentGrounded(fact: EvidenceFact, evidenceText: string): boolean {
+  const fragment = normalizeForEvidenceMatch(fact.evidenceFragment);
+  if (!fragment) return false;
+  return normalizeForEvidenceMatch(evidenceText).includes(fragment);
+}
+
 // The core safety property: never rely on the editorial call to
 // self-censor a fact it was already shown — code alone decides what
 // reaches it, by simply never including anything else in the first
-// place.
-export function filterCurrentTopicFacts(facts: EvidenceFact[]): EvidenceFact[] {
-  return facts.filter((fact) => fact.status === "current-topic");
+// place. A "current-topic" fact additionally fails CLOSED (is dropped,
+// same as if it had never been extracted) when its own evidenceFragment
+// isn't a genuine, verifiable quote from the real evidenceText — see
+// isEvidenceFragmentGrounded above.
+export function filterCurrentTopicFacts(facts: EvidenceFact[], evidenceText: string): EvidenceFact[] {
+  return facts.filter((fact) => fact.status === "current-topic" && isEvidenceFragmentGrounded(fact, evidenceText));
 }
 
 const EVIDENCE_FACT_SCHEMA = {
