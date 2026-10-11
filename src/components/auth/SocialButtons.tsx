@@ -1,8 +1,21 @@
+"use client";
+
+import { createClient } from "@/lib/supabase/client";
+
+async function signInWithGoogle() {
+  const supabase = createClient();
+  await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: `${window.location.origin}/auth/callback?next=/dashboard` },
+  });
+}
+
 export default function SocialButtons() {
   return (
     <div className="space-y-3">
       <button
         type="button"
+        onClick={signInWithGoogle}
         className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-2.5 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
       >
         <GoogleIcon className="h-[18px] w-[18px]" />
