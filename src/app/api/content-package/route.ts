@@ -22,6 +22,7 @@ import {
   filterCurrentTopicFacts,
   findTokenBindingViolations,
   isEvidenceFactArray,
+  resolveScenarioBoundaryConflicts,
   trustedSourceDateTokens,
   type EvidenceFact,
 } from "@/lib/ai/content/factContract";
@@ -443,13 +444,20 @@ export async function POST(request: NextRequest) {
     const currentTopicFacts = verifiedFacts
       ? filterCurrentTopicFacts(verifiedFacts, primarySource.evidenceText)
       : [];
+    // Scenario Boundary Positional Rule: a code-level backstop on Job 1's
+    // OWN classification — a fact drawn from after a scenario-boundary
+    // connective ("bunlar dışındaki hâllerde", ...) is demoted when it
+    // disagrees with the primary (pre-boundary) zone every other
+    // current-topic fact anchors to. See factContract.ts's own header
+    // comment for why this runs separately from Gap 1/Gap 2.
+    const resolvedFacts = resolveScenarioBoundaryConflicts(currentTopicFacts, primarySource.evidenceText);
     // Observability (Section 10): counts only, never evidence content.
     console.log(
-      `Fact contract: extracted=${verifiedFacts?.length ?? 0} currentTopic=${currentTopicFacts.length} failClosed=${verifiedFacts === null}`,
+      `Fact contract: extracted=${verifiedFacts?.length ?? 0} currentTopic=${currentTopicFacts.length} scenarioResolved=${resolvedFacts.length} failClosed=${verifiedFacts === null}`,
     );
     evidencePresentation =
-      currentTopicFacts.length > 0
-        ? { mode: "verified", facts: currentTopicFacts }
+      resolvedFacts.length > 0
+        ? { mode: "verified", facts: resolvedFacts }
         : { mode: "thin-or-none", rawEvidenceText: undefined };
   } else if (sufficiency === "thin") {
     evidencePresentation = { mode: "thin-or-none", rawEvidenceText: primarySource?.evidenceText };

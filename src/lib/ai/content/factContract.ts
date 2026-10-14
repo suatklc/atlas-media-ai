@@ -13,6 +13,8 @@
 // schema, one structural guard — not a generic framework, no
 // confidence score, no source IDs, no embeddings, no citation system.
 
+import { SCENARIO_BOUNDARY_MARKER } from "../research/retrieval/evidenceExtraction";
+
 export type EvidenceFactStatus = "current-topic" | "different-scenario" | "unsupported";
 
 export type EvidenceFact = {
@@ -67,6 +69,69 @@ export function isEvidenceFragmentGrounded(fact: EvidenceFact, evidenceText: str
 // isEvidenceFragmentGrounded above.
 export function filterCurrentTopicFacts(facts: EvidenceFact[], evidenceText: string): EvidenceFact[] {
   return facts.filter((fact) => fact.status === "current-topic" && isEvidenceFragmentGrounded(fact, evidenceText));
+}
+
+// ============================================================
+// Scenario Boundary Positional Rule: a real, live-observed defect —
+// Job 1 occasionally classifies a fact drawn from AFTER a scenario-
+// boundary connective ("bunlar dışındaki hâllerde", "aksi hâlde", ...)
+// as "current-topic" even though that connective, by its own Turkish
+// meaning, ALWAYS introduces an exception relative to whatever was
+// just stated — never the reverse. The marker's presence alone isn't
+// an automatic different-scenario verdict (Job 1 may still correctly
+// decide a post-marker fact genuinely applies), but Job 1's own
+// classification isn't deterministic run-to-run on identical input —
+// this is a code-level backstop, not another AI call or a longer
+// prompt. The text before the FIRST marker is always the primary/
+// default zone; any current-topic fact whose evidenceFragment sits in
+// a LATER zone is demoted, UNLESS the primary zone itself has no
+// current-topic fact at all (nothing to prefer it over, so no
+// demotion). Deliberately separate from filterCurrentTopicFacts/
+// isEvidenceFragmentGrounded (Gap 1) and findTokenBindingViolations
+// (Gap 2) — this runs AFTER Gap 1, only on its already-grounded output.
+// ============================================================
+
+function findAllOccurrences(haystack: string, needle: string): number[] {
+  const positions: number[] = [];
+  if (!needle) return positions;
+  let fromIndex = 0;
+  while (true) {
+    const index = haystack.indexOf(needle, fromIndex);
+    if (index === -1) break;
+    positions.push(index);
+    fromIndex = index + needle.length;
+  }
+  return positions;
+}
+
+// Zone 0 = before the first marker; zone 1 = between the first and
+// second marker; and so on. A fragment that can't be located at all
+// (should not happen on Gap-1-grounded input, since Gap 1 already
+// guarantees it's a genuine substring) is conservatively treated as
+// zone 0 — never demoted by this rule on a lookup failure.
+function fragmentZone(evidenceFragment: string, normalizedEvidenceText: string, markerPositions: number[]): number {
+  const fragment = normalizeForEvidenceMatch(evidenceFragment);
+  const index = normalizedEvidenceText.indexOf(fragment);
+  if (index === -1) return 0;
+  let zone = 0;
+  for (const markerPosition of markerPositions) {
+    if (markerPosition <= index) zone += 1;
+  }
+  return zone;
+}
+
+export function resolveScenarioBoundaryConflicts(facts: EvidenceFact[], evidenceText: string): EvidenceFact[] {
+  const normalizedEvidenceText = normalizeForEvidenceMatch(evidenceText);
+  const normalizedMarker = normalizeForEvidenceMatch(SCENARIO_BOUNDARY_MARKER);
+  const markerPositions = findAllOccurrences(normalizedEvidenceText, normalizedMarker);
+  if (markerPositions.length === 0) return facts; // no declared boundary at all — nothing to resolve
+
+  const primaryZoneFacts = facts.filter(
+    (fact) => fragmentZone(fact.evidenceFragment, normalizedEvidenceText, markerPositions) === 0,
+  );
+  if (primaryZoneFacts.length === 0) return facts; // nothing in the primary zone to prefer — no-op
+
+  return primaryZoneFacts;
 }
 
 const EVIDENCE_FACT_SCHEMA = {

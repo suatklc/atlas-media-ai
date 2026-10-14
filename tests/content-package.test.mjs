@@ -63,7 +63,13 @@ const contentPackage = loadTypeScriptModule("src/lib/ai/content/contentPackage.t
 const evidenceExtraction = loadTypeScriptModule("src/lib/ai/research/retrieval/evidenceExtraction.ts");
 // Verified Fact Contract: real (not mocked) module — genuine
 // isEvidenceFactArray/filterCurrentTopicFacts behavior end-to-end.
-const factContract = loadTypeScriptModule("src/lib/ai/content/factContract.ts");
+// factContract.ts imports SCENARIO_BOUNDARY_MARKER from
+// evidenceExtraction.ts (Scenario Boundary Positional Rule), so this
+// sandboxed load needs that relative specifier resolved to the real,
+// already-loaded module above instead of the loader's default {}.
+const factContract = loadTypeScriptModule("src/lib/ai/content/factContract.ts", (specifier) =>
+  specifier.includes("evidenceExtraction") ? evidenceExtraction : {},
+);
 
 function makeSlide(overrides) {
   return {
@@ -1830,6 +1836,100 @@ test("findTokenBindingViolations: the original wrong binding is still rejected e
   assert.equal(violations.length, 1);
   assert.match(violations[0], /Unlicensed token pairing/);
   assert.match(violations[0], /2014\.2 sayılı/);
+});
+
+// ============================================================
+// Scenario Boundary Positional Rule — a real, live-observed defect:
+// Job 1 occasionally classifies a fact drawn from AFTER a scenario-
+// boundary connective ("bunlar dışındaki hâllerde") as "current-topic"
+// even though that connective, by its own meaning, always introduces
+// an exception relative to what was just stated. The rule is
+// positional, not a vote: the zone before the FIRST marker is always
+// the primary zone; a current-topic fact anchored to any later zone is
+// demoted — UNLESS the primary zone itself has no current-topic fact
+// at all, in which case nothing is demoted.
+// ============================================================
+
+const SCENARIO_MARKER = evidenceExtraction.SCENARIO_BOUNDARY_MARKER;
+
+// The exact real TKGM/DASK circular shape: a sale-scenario rule (zone
+// 0), then the marker, then the real 15-day/24-hour non-sale procedure
+// (zone 1) — the exact case reproduced in the live Run 1 defect.
+const TKGM_SCENARIO_EVIDENCE_TEXT =
+  "Satış ve muadili işlemler sebebiyle taşınmazın menfaat sahibinin değişmesi hâlinde, tapudaki tescil tarihi " +
+  "itibarıyla sözleşme sona erer. Tapu müdürlükleri veya işlemi yapmaya yetkili idareler tarafından, menfaat " +
+  "değişikliği için sonraki menfaat sahibine ait bir Zorunlu Deprem Sigortası sözleşmesi olup olmadığı kontrol " +
+  `edilir. ${SCENARIO_MARKER} Bunlar dışındaki hâllerde ise, sözleşme sonraki menfaat sahibi ile devam eder; ` +
+  "sonraki menfaat sahibi, değişikliği, sözleşmenin varlığını öğrendiği tarihten itibaren on beş gün içinde " +
+  "sözleşmeye aracılık eden sigorta şirketine bildirir. İlgili şirket veya acentesi, bildirimin alınmasından " +
+  "itibaren 24 saat içinde, menfaat değişikliği zeyli içeren poliçeyi sonraki menfaat sahibine vermekle " +
+  "yükümlüdür.";
+
+const ZONE0_FACT_1 = {
+  claim: "Satış işleminde sözleşme tescil tarihi itibarıyla sona erer.",
+  evidenceFragment: "tapudaki tescil tarihi itibarıyla sözleşme sona erer",
+  status: "current-topic",
+};
+const ZONE0_FACT_2 = {
+  claim: "Tapu müdürlükleri yeni menfaat sahibine ait sözleşmeyi kontrol eder.",
+  evidenceFragment: "menfaat değişikliği için sonraki menfaat sahibine ait bir Zorunlu Deprem Sigortası sözleşmesi olup olmadığı kontrol edilir",
+  status: "current-topic",
+};
+const ZONE1_FACT_1 = {
+  claim: "Sonraki menfaat sahibi 15 gün içinde bildirir.",
+  evidenceFragment: "on beş gün içinde sözleşmeye aracılık eden sigorta şirketine bildirir",
+  status: "current-topic",
+};
+const ZONE1_FACT_2 = {
+  claim: "Sigorta şirketi 24 saat içinde poliçeyi verir.",
+  evidenceFragment: "bildirimin alınmasından itibaren 24 saat içinde, menfaat değişikliği zeyli içeren poliçeyi sonraki menfaat sahibine vermekle yükümlüdür",
+  status: "current-topic",
+};
+
+test("resolveScenarioBoundaryConflicts: the exact Run 1 TKGM/DASK case — Job 1 marks both the sale-scenario facts AND the non-sale 15-day/24-hour facts current-topic; the post-marker facts are demoted", () => {
+  const resolved = factContract.resolveScenarioBoundaryConflicts(
+    [ZONE0_FACT_1, ZONE0_FACT_2, ZONE1_FACT_1, ZONE1_FACT_2],
+    TKGM_SCENARIO_EVIDENCE_TEXT,
+  );
+  assert.deepEqual(resolved.map((f) => f.claim).sort(), [ZONE0_FACT_1.claim, ZONE0_FACT_2.claim].sort());
+});
+
+test("resolveScenarioBoundaryConflicts: no marker present in the evidence text — a complete no-op", () => {
+  const evidenceWithoutMarker = "Satış işleminde sözleşme tescil tarihi itibarıyla sona erer. Başka bir cümle.";
+  const resolved = factContract.resolveScenarioBoundaryConflicts([ZONE0_FACT_1], evidenceWithoutMarker);
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0], ZONE0_FACT_1);
+});
+
+test("resolveScenarioBoundaryConflicts: all current-topic facts already agree on the primary zone — nothing demoted", () => {
+  const resolved = factContract.resolveScenarioBoundaryConflicts([ZONE0_FACT_1, ZONE0_FACT_2], TKGM_SCENARIO_EVIDENCE_TEXT);
+  assert.equal(resolved.length, 2);
+});
+
+test("resolveScenarioBoundaryConflicts: the primary zone has NO current-topic fact at all — no demotion (nothing to prefer it over)", () => {
+  const resolved = factContract.resolveScenarioBoundaryConflicts([ZONE1_FACT_1, ZONE1_FACT_2], TKGM_SCENARIO_EVIDENCE_TEXT);
+  assert.equal(resolved.length, 2);
+});
+
+test("resolveScenarioBoundaryConflicts: demotes the post-marker fact even when it outnumbers the primary-zone fact (positional rule, not a vote)", () => {
+  const resolved = factContract.resolveScenarioBoundaryConflicts(
+    [ZONE0_FACT_1, ZONE1_FACT_1, ZONE1_FACT_2],
+    TKGM_SCENARIO_EVIDENCE_TEXT,
+  );
+  assert.deepEqual(resolved.map((f) => f.claim), [ZONE0_FACT_1.claim]);
+});
+
+test("/api/content-package: the exact Run 1 regression — the post-marker 15-day/24-hour facts never reach Job 2's user message end-to-end", async () => {
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [ZONE0_FACT_1, ZONE0_FACT_2, ZONE1_FACT_1, ZONE1_FACT_2],
+    },
+  });
+  await route.POST({ json: async () => makeOpportunityWithEvidence(TKGM_SCENARIO_EVIDENCE_TEXT) });
+  const userMessage = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(userMessage, new RegExp(ZONE0_FACT_1.claim.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(userMessage, /15 gün içinde bildirir/);
+  assert.doesNotMatch(userMessage, /24 saat içinde poliçeyi verir/);
 });
 
 test("/api/content-package: a slide fact echoing the primary source's publishedAt (never extracted as a Job 1 fact) succeeds end-to-end", async () => {
