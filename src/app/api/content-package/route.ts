@@ -20,6 +20,7 @@ import {
 import {
   FACT_CONTRACT_JSON_SCHEMA,
   filterCurrentTopicFacts,
+  findTokenBindingViolations,
   isEvidenceFactArray,
   type EvidenceFact,
 } from "@/lib/ai/content/factContract";
@@ -531,6 +532,20 @@ export async function POST(request: NextRequest) {
   if (!validation.ok) {
     console.error("Content package failed deterministic validation:", validation.reason);
     return jsonError("Oluşturulan içerik paketi doğrulamadan geçemedi. Lütfen tekrar deneyin.", 502);
+  }
+
+  // Verified Token-to-Claim Binding Check (Gap 2, narrow slice): only
+  // meaningful when there's a verified fact set to bind against — a
+  // proven, live-observed defect where Job 2 combined a date verified
+  // under one fact with a different fact's subject inside one slide's
+  // facts[] string, asserting a claim neither fact actually made.
+  if (evidencePresentation.mode === "verified") {
+    const slideFactStrings = slides.flatMap((slide) => slide.facts);
+    const bindingViolations = findTokenBindingViolations(evidencePresentation.facts, slideFactStrings);
+    if (bindingViolations.length > 0) {
+      console.error("Content package failed token-binding check:", bindingViolations);
+      return jsonError("Oluşturulan içerik paketi doğrulamadan geçemedi. Lütfen tekrar deneyin.", 502);
+    }
   }
 
   return Response.json({ contentPackage });

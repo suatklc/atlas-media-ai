@@ -1529,6 +1529,263 @@ test("isEvidenceFragmentGrounded: accepts a genuine substring and rejects a fabr
   assert.equal(notGrounded, false);
 });
 
+// ============================================================
+// Verified Token-to-Claim Binding Check (Gap 2, narrow slice) — a real,
+// live-observed production defect: Job 2 combined a date verified
+// under ONE Job 1 fact with a DIFFERENT fact's subject inside a single
+// slide facts[] string, asserting a claim neither verified fact
+// actually made. These tests reproduce that exact TKGM/DASK case.
+// ============================================================
+
+test("extractNotableTokens: extracts a DD.MM.YYYY date and normalizes a slash-separated variant to the same token", () => {
+  const a = factContract.extractNotableTokens("Uygulama 05.09.2026 tarihinden itibaren başlar.");
+  const b = factContract.extractNotableTokens("Uygulama 05/09/2026 tarihinden itibaren başlar.");
+  assert.ok(a.has("05.09.2026"));
+  assert.deepEqual(a, b);
+});
+
+test("extractNotableTokens: extracts a 'sayılı' legal reference and a duration phrase", () => {
+  const tokens = factContract.extractNotableTokens(
+    "2014/2 sayılı Genelge uyarınca bildirim on beş gün içinde değil, 15 gün içinde yapılır.",
+  );
+  assert.ok(tokens.has("2014.2 sayılı"));
+  assert.ok(tokens.has("15 gün"));
+});
+
+test("extractNotableTokens: never extracts a checklist's list-marker digits", () => {
+  const tokens = factContract.extractNotableTokens(
+    "Tapu randevusundan önce 3 şeyi netleştirin:\n1. Poliçe var mı?\n2. Alıcı adına mı?\n3. Güncel mi?",
+  );
+  assert.equal(tokens.size, 0);
+});
+
+test("findTokenBindingViolations: no violation when a slide fact only repeats a single verified fact's own token", () => {
+  const facts = [
+    { claim: "x", evidenceFragment: "05.09.2026 tarihinden itibaren poliçe aranır.", status: "current-topic" },
+  ];
+  const violations = factContract.findTokenBindingViolations(facts, [
+    "05.09.2026 tarihinden itibaren alıcı adına poliçe aranacaktır.",
+  ]);
+  assert.equal(violations.length, 0);
+});
+
+test("findTokenBindingViolations: no violation for a paraphrase of one fact that keeps the same token", () => {
+  const facts = [
+    {
+      claim: "x",
+      evidenceFragment: "Tapu müdürlükleri 21.08.2026 tarihli Resmi Gazete değişikliğini uygular.",
+      status: "current-topic",
+    },
+  ];
+  const violations = factContract.findTokenBindingViolations(facts, [
+    "21.08.2026 tarihinde Resmi Gazete'de yayımlanan değişiklik artık tapu müdürlüklerinde uygulanıyor.",
+  ]);
+  assert.equal(violations.length, 0);
+});
+
+test("findTokenBindingViolations: no violation for a lone notable token with nothing to bind against", () => {
+  const facts = [{ claim: "x", evidenceFragment: "05.09.2026 tarihinden itibaren.", status: "current-topic" }];
+  const violations = factContract.findTokenBindingViolations(facts, ["05.09.2026 önemli bir tarih."]);
+  assert.equal(violations.length, 0);
+});
+
+test("findTokenBindingViolations: flags a token that appears in no verified fact at all", () => {
+  const facts = [{ claim: "x", evidenceFragment: "05.09.2026 tarihinden itibaren.", status: "current-topic" }];
+  const violations = factContract.findTokenBindingViolations(facts, ["21.08.2026 tarihinde bir şey oldu."]);
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /Unverified token/);
+});
+
+test("findTokenBindingViolations: the exact reproduced TKGM/DASK case — a date verified under one fact combined with a different fact's subject", () => {
+  const facts = [
+    {
+      claim: "Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.",
+      evidenceFragment: "satış dışındaki diğer işlemlerde ise 2014/2 sayılı Genelge hükümlerinin uygulanmaya devam edilmesi",
+      status: "current-topic",
+    },
+    {
+      claim: "Tapu müdürlüklerinde 05.09.2026 tarihinden itibaren alıcı adına poliçe aranacaktır.",
+      evidenceFragment: "satış işlemlerinde alıcı adına düzenlenmiş geçerli poliçelerin 05.09.2026 tarihinden itibaren aranılması",
+      status: "current-topic",
+    },
+  ];
+  // The real, live-observed Job 2 output that merged both facts' tokens
+  // into one claim neither fact actually made.
+  const violations = factContract.findTokenBindingViolations(facts, [
+    "Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri 05.09.2026 tarihinden itibaren uygulanmaya devam edecektir.",
+  ]);
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /Unlicensed token pairing/);
+  assert.match(violations[0], /2014\.2 sayılı/);
+  assert.match(violations[0], /05\.09\.2026/);
+});
+
+test("findTokenBindingViolations: the same two facts kept in separate slide facts strings produce no violation", () => {
+  const facts = [
+    {
+      claim: "Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.",
+      evidenceFragment: "satış dışındaki diğer işlemlerde ise 2014/2 sayılı Genelge hükümlerinin uygulanmaya devam edilmesi",
+      status: "current-topic",
+    },
+    {
+      claim: "Tapu müdürlüklerinde 05.09.2026 tarihinden itibaren alıcı adına poliçe aranacaktır.",
+      evidenceFragment: "satış işlemlerinde alıcı adına düzenlenmiş geçerli poliçelerin 05.09.2026 tarihinden itibaren aranılması",
+      status: "current-topic",
+    },
+  ];
+  const violations = factContract.findTokenBindingViolations(facts, [
+    "Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.",
+    "Tapu müdürlüklerinde 05.09.2026 tarihinden itibaren alıcı adına poliçe aranacaktır.",
+  ]);
+  assert.equal(violations.length, 0);
+});
+
+const TKGM_BINDING_EVIDENCE_TEXT =
+  "Satış işlemlerinde alıcı adına düzenlenmiş geçerli poliçelerin 05.09.2026 tarihinden itibaren aranılması, " +
+  "satış dışındaki diğer işlemlerde ise 2014/2 sayılı Genelge hükümlerinin uygulanmaya devam edilmesi hususunda " +
+  "bilgi verilmiştir. Bu düzenleme tapu müdürlüklerimizce uygulanacaktır.";
+
+test("/api/content-package: the exact reproduced TKGM/DASK token-binding defect fails CLOSED (502) end-to-end", async () => {
+  const { route } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        {
+          claim: "Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.",
+          evidenceFragment: "satış dışındaki diğer işlemlerde ise 2014/2 sayılı Genelge hükümlerinin uygulanmaya devam edilmesi",
+          status: "current-topic",
+        },
+        {
+          claim: "Tapu müdürlüklerinde 05.09.2026 tarihinden itibaren alıcı adına poliçe aranacaktır.",
+          evidenceFragment: "satış işlemlerinde alıcı adına düzenlenmiş geçerli poliçelerin 05.09.2026 tarihinden itibaren aranılması",
+          status: "current-topic",
+        },
+      ],
+    },
+    completionResponse: {
+      ...defaultCompletionResponseFixture(),
+      slides: [
+        { headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+        { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+        { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+        {
+          headline: "Ne yapmalı?",
+          body: "B4",
+          facts: [
+            "Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri 05.09.2026 tarihinden itibaren uygulanmaya devam edecektir.",
+          ],
+          visualBrief: "v4",
+        },
+        { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+      ],
+    },
+  });
+  const response = await route.POST({ json: async () => makeOpportunityWithEvidence(TKGM_BINDING_EVIDENCE_TEXT) });
+  assert.equal(response.status, 502);
+});
+
+test("/api/content-package: the same two verified facts kept in separate slide facts strings succeed (200) end-to-end", async () => {
+  const { route } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        {
+          claim: "Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.",
+          evidenceFragment: "satış dışındaki diğer işlemlerde ise 2014/2 sayılı Genelge hükümlerinin uygulanmaya devam edilmesi",
+          status: "current-topic",
+        },
+        {
+          claim: "Tapu müdürlüklerinde 05.09.2026 tarihinden itibaren alıcı adına poliçe aranacaktır.",
+          evidenceFragment: "satış işlemlerinde alıcı adına düzenlenmiş geçerli poliçelerin 05.09.2026 tarihinden itibaren aranılması",
+          status: "current-topic",
+        },
+      ],
+    },
+    completionResponse: {
+      ...defaultCompletionResponseFixture(),
+      slides: [
+        { headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+        { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+        { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+        {
+          headline: "Ne yapmalı?",
+          body: "B4",
+          facts: [
+            "Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.",
+            "Tapu müdürlüklerinde 05.09.2026 tarihinden itibaren alıcı adına poliçe aranacaktır.",
+          ],
+          visualBrief: "v4",
+        },
+        { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+      ],
+    },
+  });
+  const response = await route.POST({ json: async () => makeOpportunityWithEvidence(TKGM_BINDING_EVIDENCE_TEXT) });
+  assert.equal(response.status, 200);
+});
+
+test("/api/content-package: the token-binding check is skipped entirely when evidence is thin/none (no verified facts to bind against)", async () => {
+  const { route, state } = loadContentPackageRoute({
+    completionResponse: {
+      ...defaultCompletionResponseFixture(),
+      slides: [
+        { headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+        { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+        { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+        {
+          headline: "H4",
+          body: "B4",
+          // Would be an unlicensed pairing if any verified facts existed —
+          // but there are none (thin evidence), so the check never runs.
+          facts: ["2014/2 sayılı Genelge hükümleri 05.09.2026 tarihinden itibaren uygulanmaya devam edecektir."],
+          visualBrief: "v4",
+        },
+        { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+      ],
+    },
+  });
+  const response = await route.POST({
+    json: async () =>
+      makeOpportunityWithEvidence("Kısa ve gerçek ama yetersiz bir açıklama metni burada yer alıyor."),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(state.factExtractionCalls, 0);
+});
+
+test("/api/content-package: the token-binding check never inspects the top-level ContentPackage.facts[] (structured facts), only slide facts[] strings", async () => {
+  const { route } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        {
+          claim: "Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.",
+          evidenceFragment: "satış dışındaki diğer işlemlerde ise 2014/2 sayılı Genelge hükümlerinin uygulanmaya devam edilmesi",
+          status: "current-topic",
+        },
+        {
+          claim: "Tapu müdürlüklerinde 05.09.2026 tarihinden itibaren alıcı adına poliçe aranacaktır.",
+          evidenceFragment: "satış işlemlerinde alıcı adına düzenlenmiş geçerli poliçelerin 05.09.2026 tarihinden itibaren aranılması",
+          status: "current-topic",
+        },
+      ],
+    },
+    completionResponse: {
+      ...defaultCompletionResponseFixture(),
+      // A structured top-level fact that would combine both tokens if
+      // it were a plain string subject to this check — it is a
+      // ContentFact object, so the (unrelated) existing validator rules
+      // apply to it instead, never this one.
+      facts: [{ label: "2014/2 sayılı Genelge — 05.09.2026", value: 1, unit: "", role: "standalone" }],
+      slides: [
+        { headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+        { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+        { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+        { headline: "H4", body: "B4", facts: [], visualBrief: "v4" },
+        { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+      ],
+    },
+  });
+  const response = await route.POST({ json: async () => makeOpportunityWithEvidence(TKGM_BINDING_EVIDENCE_TEXT) });
+  assert.equal(response.status, 200);
+});
+
 test("content-package route's FACT_SCHEMA (ContentFact's own schema) is unchanged by the Verified Fact Contract work", () => {
   const routeSource = readContentPackageRouteSource();
   assert.match(
