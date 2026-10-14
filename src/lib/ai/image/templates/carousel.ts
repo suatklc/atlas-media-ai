@@ -90,6 +90,37 @@ function labelMarkup(x: number, y: number, label: string): string {
   return `<text x="${x}" y="${y}" font-family="${FONT_STACK}" font-size="22" font-weight="700" letter-spacing="2" fill="${GOLD}">${escapeXml(label.toLocaleUpperCase("tr-TR"))}</text>`;
 }
 
+// Carousel Final Quality: the real ContentPackage pipeline (Job 2) writes
+// full editorial sentences into Slide.facts[], not the short punchy
+// figures ("150.000 TL") the keyFact/considerations treatments below were
+// originally tuned for. Centering a text block inside its available zone
+// — instead of pinning it to a fixed offset below the label and leaving
+// whatever's left as dead space — is what lets a slide look properly
+// composed whether the real content is one short line or several.
+// "Span" here means the baseline-to-baseline distance from the first to
+// the last line (lineCount-1)*lineHeight — the same measure
+// buildClosingSlideSvg already centers on; treating that span's midpoint
+// as the zone's visual center is a proven-enough approximation (ascent/
+// descent above the first and below the last baseline are close enough
+// to symmetric for this font) without inventing a new metric.
+// biasRatio shifts the reference point used as "center" toward the top
+// of the zone (0.5 = true midpoint, lower = closer to zoneTop) — pure
+// midpoint centering left an empty gap both above AND below a short
+// text block (nothing visually anchors it to the label right above the
+// zone), which read as the text "floating" rather than composed. A
+// mild upward bias keeps content close to its label while still
+// guaranteeing it never collides with the logo/footer below.
+function centeredFirstBaselineY(
+  zoneTop: number,
+  zoneBottom: number,
+  totalSpan: number,
+  minFirstBaselineY: number,
+  biasRatio = 0.5,
+): number {
+  const referenceY = zoneTop + (zoneBottom - zoneTop) * biasRatio;
+  return Math.max(referenceY - totalSpan / 2, minFirstBaselineY);
+}
+
 // Shared "information design" background for slides 2-4 — a solid navy
 // panel plus a positioned radial gold accent, same visual language
 // buildClosingSlideSvg's own closingAccent already established for slide
@@ -150,6 +181,15 @@ function buildCoverSlideSvg(width: number, height: number, baseImage: Buffer, he
 // fact callout (only when the caller actually supplied one — never
 // fabricated here) + body text, on the shared info-card background.
 const KEY_FACT_Y_GAP = 30;
+// The 72px gold callout below is a "big number" treatment (e.g.
+// "150.000 TL") — a real editorial sentence ("Zorunlu Deprem Sigortası
+// Genel Şartlarında değişikliğe dair Tebliğin 1'inci maddesi...") does
+// not fit that treatment at any line count without being chopped into an
+// unreadable fragment. Rather than truncating a long fact into a giant,
+// broken headline, a keyFact over this length is treated exactly like no
+// keyFact was supplied — body text alone, never a fabricated shorter
+// fact in its place.
+const MAX_KEY_FACT_CHARS = 60;
 
 function buildWhatHappenedSlideSvg(
   width: number,
@@ -162,15 +202,24 @@ function buildWhatHappenedSlideSvg(
   const availableWidth = width - SAFE_PADDING_X * 2;
   const labelY = SAFE_PADDING_TOP + 140;
   const brandIconTopY = height - SAFE_PADDING_BOTTOM - LOGO_HEIGHT_SMALL;
+  const sourceReserve = sourceLabel ? 50 : 0;
+  const zoneTop = labelY + 56;
+  const zoneBottom = brandIconTopY - 40 - sourceReserve;
 
-  const keyFactLayout = keyFact ? layoutAtSize(keyFact, availableWidth, 72, 2) : null;
-  const keyFactFirstY = labelY + 96;
+  const usableKeyFact = keyFact && keyFact.length <= MAX_KEY_FACT_CHARS ? keyFact : undefined;
+  const keyFactLayout = usableKeyFact ? layoutAtSize(usableKeyFact, availableWidth, 72, 2) : null;
   const keyFactLineHeight = 78;
-  const keyFactBlockBottom = keyFactLayout ? keyFactFirstY + (keyFactLayout.lines.length - 1) * keyFactLineHeight : labelY + 40;
 
-  const bodyFirstY = keyFactLayout ? keyFactBlockBottom + KEY_FACT_Y_GAP + 40 : labelY + 60;
-  const bodyMaxLines = keyFactLayout ? 5 : 7;
-  const bodyLayout = wrapTwoTier(body || "", availableWidth, 32, bodyMaxLines, 26, bodyMaxLines + 2);
+  const bodyMaxLines = keyFactLayout ? 5 : 8;
+  const bodyLayout = wrapTwoTier(body || "", availableWidth, 32, bodyMaxLines, 25, bodyMaxLines + 3);
+
+  const keyFactSpan = keyFactLayout ? (keyFactLayout.lines.length - 1) * keyFactLineHeight : 0;
+  const bodySpan = (bodyLayout.lines.length - 1) * bodyLayout.lineHeight;
+  const gapBetween = keyFactLayout ? KEY_FACT_Y_GAP + 40 : 0;
+  const totalSpan = keyFactSpan + gapBetween + bodySpan;
+
+  const keyFactFirstY = centeredFirstBaselineY(zoneTop, zoneBottom, totalSpan, zoneTop + 40, 0.4);
+  const bodyFirstY = keyFactLayout ? keyFactFirstY + keyFactSpan + gapBetween : keyFactFirstY;
 
   const keyFactMarkup = keyFactLayout
     ? `<text font-family="${FONT_STACK}" font-size="72" font-weight="800" fill="${GOLD}" letter-spacing="-1">${tspans(keyFactLayout.lines, SAFE_PADDING_X, keyFactFirstY, keyFactLineHeight)}</text>`
@@ -198,8 +247,12 @@ function buildWhatHappenedSlideSvg(
 function buildWhyItMattersSlideSvg(width: number, height: number, body: string, logo: MattedLogoAsset): string {
   const availableWidth = width - SAFE_PADDING_X * 2;
   const labelY = SAFE_PADDING_TOP + 140;
+  const brandIconTopY = height - SAFE_PADDING_BOTTOM - LOGO_HEIGHT_SMALL;
+  const zoneTop = labelY + 56;
+  const zoneBottom = brandIconTopY - 40;
   const bodyLayout = wrapTwoTier(body || "", availableWidth, 34, 7, 28, 9);
-  const bodyFirstY = labelY + 70;
+  const bodySpan = (bodyLayout.lines.length - 1) * bodyLayout.lineHeight;
+  const bodyFirstY = centeredFirstBaselineY(zoneTop, zoneBottom, bodySpan, zoneTop + 40, 0.4);
 
   return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     ${infoCardBackgroundMarkup(width, height, ACCENT_VARIANTS["why-it-matters"])}
@@ -219,6 +272,17 @@ const MAX_CONSIDERATIONS = 4;
 const BADGE_SIZE = 46;
 const BADGE_TO_TITLE_GAP = 18;
 
+// Carousel Final Quality: real considerations are often full sentences
+// (the editorial pipeline writes supporting facts, not punchy checklist
+// phrases), so each item gets up to 3 lines instead of 2. Row height is
+// now driven by each item's OWN line count — summed and centered in the
+// zone — instead of evenly stretching every item across the whole zone
+// regardless of count, which is what produced huge dead gaps for a
+// 2-item list. Falls back to even distribution only if the natural
+// total genuinely can't fit (kept purely as an overlap safety net).
+const TITLE_LINE_HEIGHT = 40;
+const CONSIDERATION_ROW_GAP = 40;
+
 function buildConsiderationsSlideSvg(width: number, height: number, considerations: string[], logo: MattedLogoAsset): string {
   const availableWidth = width - SAFE_PADDING_X * 2;
   const labelY = SAFE_PADDING_TOP + 140;
@@ -228,19 +292,40 @@ function buildConsiderationsSlideSvg(width: number, height: number, consideratio
   const zoneTop = labelY + 60;
   const zoneBottom = brandIconTopY - 40;
   const zoneHeight = Math.max(zoneBottom - zoneTop, 1);
-  const rowSpacing = items.length > 0 ? zoneHeight / items.length : 0;
   const titleAvailableWidth = availableWidth - BADGE_SIZE - BADGE_TO_TITLE_GAP;
   const badgeCx = SAFE_PADDING_X + BADGE_SIZE / 2;
   const titleX = SAFE_PADDING_X + BADGE_SIZE + BADGE_TO_TITLE_GAP;
 
+  const titleLayouts = items.map((title) => layoutAtSize(title, titleAvailableWidth, 34, 3));
+  const rowHeights = titleLayouts.map((layout) => Math.max(BADGE_SIZE, layout.lines.length * TITLE_LINE_HEIGHT));
+  const naturalTotalHeight =
+    rowHeights.reduce((sum, h) => sum + h, 0) + CONSIDERATION_ROW_GAP * Math.max(items.length - 1, 0);
+
+  const rowCenters: number[] = [];
+  if (items.length > 0) {
+    if (naturalTotalHeight <= zoneHeight) {
+      // Same upward bias as centeredFirstBaselineY (0.4 vs a true 0.5
+      // midpoint) — keeps a short item list close to its label instead
+      // of floating in the middle of empty space.
+      let cursor = zoneTop + Math.max(zoneHeight * 0.4 - naturalTotalHeight / 2, 0);
+      for (const rowHeight of rowHeights) {
+        rowCenters.push(cursor + rowHeight / 2);
+        cursor += rowHeight + CONSIDERATION_ROW_GAP;
+      }
+    } else {
+      const rowSpacing = zoneHeight / items.length;
+      for (let i = 0; i < items.length; i++) rowCenters.push(zoneTop + rowSpacing * (i + 0.5));
+    }
+  }
+
   const itemsMarkup = items
     .map((title, index) => {
-      const rowCenterY = zoneTop + rowSpacing * (index + 0.5);
-      const titleLayout = layoutAtSize(title, titleAvailableWidth, 34, 2);
+      const rowCenterY = rowCenters[index];
+      const titleLayout = titleLayouts[index];
       const numberLabel = String(index + 1).padStart(2, "0");
       const titleTspans = titleLayout.lines
         .map((line, lineIndex) => {
-          const y = rowCenterY + (lineIndex - (titleLayout.lines.length - 1) / 2) * 40;
+          const y = rowCenterY + (lineIndex - (titleLayout.lines.length - 1) / 2) * TITLE_LINE_HEIGHT;
           return `<tspan x="${titleX}" y="${y}">${escapeXml(line)}</tspan>`;
         })
         .join("");
@@ -276,12 +361,28 @@ function buildConsiderationsSlideSvg(width: number, height: number, consideratio
 // slide's already-approved photo-free treatment as-is is the smallest
 // safe choice, and stronger brand presence (LOGO_HEIGHT_LARGE) applies
 // here too.
+// Carousel Final Quality: the real editorial closing paragraph (Job 2's
+// CTA-slide body) runs 2-3 full sentences, not the one-liner the
+// original (44,4)/(34,5) budget assumed — that combination truncated a
+// real closing mid-sentence. The larger line counts below give room for
+// the genuine content length; wrapTwoTier still only falls to the
+// smaller tier when the larger one would truncate, so a short closing
+// line still renders at the bigger, more impactful size exactly as
+// before. Centering within the full zone (progress indicator to logo)
+// — instead of a fixed height*0.46 — also closes the large dead-space
+// gap a short closing line previously left at the bottom of the slide.
 function buildClosingSlideSvg(width: number, height: number, closingLine: string, fixedCta: string | undefined, logo: MattedLogoAsset): string {
   const availableWidth = width - SAFE_PADDING_X * 2;
-  const closingLayout = wrapTwoTier(closingLine || "", availableWidth, 44, 4, 34, 5);
-  const centerY = height * 0.46;
-  const closingFirstY = centerY - ((closingLayout.lines.length - 1) * closingLayout.lineHeight) / 2;
-  const ctaY = centerY + ((closingLayout.lines.length - 1) * closingLayout.lineHeight) / 2 + 64;
+  const brandIconTopY = height - SAFE_PADDING_BOTTOM - LOGO_HEIGHT_LARGE;
+  const zoneTop = SAFE_PADDING_TOP + 80;
+  const zoneBottom = brandIconTopY - 60;
+
+  const closingLayout = wrapTwoTier(closingLine || "", availableWidth, 42, 5, 32, 8);
+  const closingSpan = (closingLayout.lines.length - 1) * closingLayout.lineHeight;
+  const gapToCta = fixedCta ? 64 : 0;
+
+  const closingFirstY = centeredFirstBaselineY(zoneTop, zoneBottom, closingSpan + gapToCta, zoneTop + 20);
+  const ctaY = closingFirstY + closingSpan + 64;
 
   const ctaMarkup = fixedCta
     ? `<text x="${SAFE_PADDING_X}" y="${ctaY}" font-family="${FONT_STACK}" font-size="28" font-weight="700" fill="${GOLD}">${escapeXml(fixedCta)}</text>`

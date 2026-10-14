@@ -151,6 +151,43 @@ test("renderCarousel handles realistic long Turkish copy without throwing (short
   assert.equal(buffers.length, 5);
 });
 
+// Carousel Final Quality — the exact real production shape (captured
+// from a genuine /api/content-package response on the live TKGM/DASK
+// source) that exposed three real defects: keyFact was a full editorial
+// sentence (150+ chars) rendered at the 72px "big number" size and
+// truncated into an unreadable fragment; considerations were full
+// sentences truncated at 2 lines with huge, uneven gaps between only 2
+// items; closingLine was a 3-sentence paragraph truncated mid-sentence.
+// This fixture is a regression anchor for that exact shape, not just
+// "long text" in general.
+const GOLD_STANDARD_REAL_SLIDE_TEXT = {
+  cover: "Satışta DASK başlığı artık işlem akışının daha görünür bir parçası.",
+  whatHappened:
+    "21.08.2026 tarihli Resmi Gazete’de yayımlanan değişikliğe göre, satış ve muadili işlemler nedeniyle taşınmazın menfaat sahibi değişirse zorunlu deprem sigortası sözleşmesi tapudaki tescil tarihi itibarıyla sona eriyor.",
+  keyFact:
+    "Zorunlu Deprem Sigortası Genel Şartlarında değişikliğe dair Tebliğ'in 1'inci maddesi 21.08.2026 tarihli ve 33347 sayılı Resmi Gazete’de yayımlandı.",
+  whyItMatters:
+    "Alıcı açısından bakıldığında, devralınan taşınmazda önceki poliçenin aynı şekilde devam edeceği varsayımıyla hareket etmek doğru olmayabilir. Bu gelişme, satış gününde sigorta tarafının yeni menfaat sahibi üzerinden ele alınması gerektiğini gösteriyor.",
+  considerations: [
+    "Tapu müdürlükleri veya işlemi yapmaya yetkili idareler kontrolü sonraki menfaat sahibine ait sözleşme üzerinden yapar.",
+    "Kontrol, menfaat değişikliği bağlamında yapılır.",
+  ],
+  closingLine:
+    "Bu duyuru, gayrimenkul satışında sigorta bilgisinin son aşamada hatırlanacak bir detay olmadığını gösteriyor. Özellikle alım-satım sürecinde tarafların tapu gününden önce poliçe hazırlığını netleştirmesi, süreci daha öngörülebilir hale getirebilir. İşlem öncesi evrak akışını baştan kurgulamak bugün daha önemli.",
+  fixedCta: "Detaylar İçin Mesaj Bırakın",
+  sourceLabel: "Tapu ve Kadastro Genel Müdürlüğü (TKGM) — Duyurular · 7 Eylül 2026",
+};
+
+test("renderCarousel: the exact real production content shape (long keyFact/considerations/closingLine) renders 5 valid, correctly-sized PNGs without throwing", async () => {
+  const buffers = await carousel.renderCarousel(TINY_BASE_IMAGE, "1080x1350", GOLD_STANDARD_REAL_SLIDE_TEXT);
+  assert.equal(buffers.length, 5);
+  for (const buffer of buffers) {
+    const { width, height } = readPngDimensions(buffer);
+    assert.equal(width, 1080);
+    assert.equal(height, 1350);
+  }
+});
+
 test("renderCarousel handles minimal/short copy without throwing", async () => {
   const buffers = await carousel.renderCarousel(TINY_BASE_IMAGE, "1080x1350", {
     cover: "Kısa Başlık",
