@@ -268,7 +268,9 @@ export function trustedSourceDateTokens(publishedAt: string | undefined): Set<st
 // facts nor the trusted set is flagged on its own (plain invention); a
 // pair of otherwise-verified tokens that never co-occurred in a single
 // fact is flagged as an unlicensed binding — the exact shape of the
-// reproduced defect.
+// reproduced defect — UNLESS one side of that pair is a trusted
+// source-metadata token (see the exemption below), which may coexist
+// with any individually-verified token without a shared fact.
 export function findTokenBindingViolations(
   verifiedFacts: EvidenceFact[],
   slideFactStrings: string[],
@@ -303,6 +305,17 @@ export function findTokenBindingViolations(
         const a = tokens[i];
         const b = tokens[j];
         if (!allVerifiedTokens.has(a) || !allVerifiedTokens.has(b)) continue; // already reported above
+        // A trusted source-metadata token (publishedAt) may coexist in
+        // the same slide fact with any OTHER individually-verified
+        // token without that exact pair having appeared inside one
+        // Job 1 fact — it is metadata Atlas itself supplies, not a
+        // claim Job 2 invented, so pairing it with a real fact (e.g.
+        // "in its 07.09.2026 announcement, TKGM said the rule applies
+        // from 05.09.2026") is not an unsupported binding. This
+        // exemption fires ONLY when one side of the pair is the
+        // trusted token — two ordinary verified-fact tokens still
+        // require a real shared fact below, unchanged.
+        if (trustedSourceTokens.has(a) || trustedSourceTokens.has(b)) continue;
         if (!licensedPairs.has(pairKey(a, b))) {
           violations.push(
             `Unlicensed token pairing "${a}" + "${b}" in slide fact "${factString}" — never verified together in a single fact.`,

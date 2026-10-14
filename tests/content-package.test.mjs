@@ -1691,17 +1691,84 @@ test("findTokenBindingViolations: an unrelated date that is NOT publishedAt and 
   assert.match(violations[0], /2026-09-20/);
 });
 
-test("findTokenBindingViolations: trusting publishedAt never licenses it as a NEW pairing with an unrelated verified token", () => {
+// Publishedat Pairing Exemption — a real, live-observed false positive:
+// "TKGM, 07.09.2026 tarihli duyurusunda, 05.09.2026 tarihinden itibaren
+// ... uygulanacağını belirtti." is a true, accurate sentence (the
+// announcement's own date, reporting the rule's genuinely-verified
+// effective date) that got rejected because publishedAt was trusted
+// individually but never allowed to PAIR with anything. publishedAt
+// may now coexist with any individually-verified token in the same
+// slide fact without that exact pair needing its own shared Job 1
+// fact — it is source metadata Atlas supplies, not a Job 2 invention.
+test("findTokenBindingViolations: a trusted publishedAt token may coexist with an unrelated verified token in the same slide fact without a shared fact", () => {
   const facts = [
     { claim: "x", evidenceFragment: "2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.", status: "current-topic" },
   ];
   const trustedTokens = factContract.trustedSourceDateTokens("07.09.2026");
-  // publishedAt (07.09.2026) is individually trusted, and "2014/2
-  // sayılı" is individually verified — but combining them in one
-  // slide fact is still an unlicensed pairing neither source supports.
   const violations = factContract.findTokenBindingViolations(
     facts,
     ["2014/2 sayılı Genelge hükümleri 07.09.2026 tarihli duyuru kapsamında uygulanır."],
+    trustedTokens,
+  );
+  assert.equal(violations.length, 0);
+});
+
+// The real reproduced false-positive case itself: a trusted publishedAt
+// date coexisting with a verified effective date in one, accurate
+// slide fact must PASS.
+test("findTokenBindingViolations: publishedAt + a verified effective date in the same correct slide fact produces no violation", () => {
+  const facts = [
+    { claim: "x", evidenceFragment: "05.09.2026 tarihinden itibaren yapılan tescil işlemlerinde uygulanır.", status: "current-topic" },
+  ];
+  const trustedTokens = factContract.trustedSourceDateTokens("07.09.2026");
+  const violations = factContract.findTokenBindingViolations(
+    facts,
+    [
+      "TKGM, 07.09.2026 tarihli duyurusunda, 05.09.2026 tarihinden itibaren yapılan tescil işlemlerinde yeni düzenlemenin uygulanacağını belirtti.",
+    ],
+    trustedTokens,
+  );
+  assert.equal(violations.length, 0);
+});
+
+// publishedAt must still never make an UNVERIFIED token trusted, and
+// must still never license a pairing between TWO ordinary (non-
+// trusted) verified-fact tokens — only a pair where one side IS the
+// trusted token is exempted.
+test("findTokenBindingViolations: publishedAt coexisting with an unrelated, genuinely unverified date is still rejected", () => {
+  const facts = [{ claim: "x", evidenceFragment: "2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.", status: "current-topic" }];
+  const trustedTokens = factContract.trustedSourceDateTokens("07.09.2026");
+  const violations = factContract.findTokenBindingViolations(
+    facts,
+    ["TKGM, 07.09.2026 tarihli duyurusunda, 2026-09-20 tarihinden itibaren yeni bir kural uygulanacağını belirtti."],
+    trustedTokens,
+  );
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /Unverified token/);
+  assert.match(violations[0], /2026-09-20/);
+});
+
+test("findTokenBindingViolations: two ORDINARY verified-fact tokens (neither one publishedAt) still require a real shared fact, even when publishedAt is also present and trusted", () => {
+  const facts = [
+    {
+      claim: "Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.",
+      evidenceFragment: "satış dışındaki diğer işlemlerde ise 2014/2 sayılı Genelge hükümlerinin uygulanmaya devam edilmesi",
+      status: "current-topic",
+    },
+    {
+      claim: "Tapu müdürlüklerinde 05.09.2026 tarihinden itibaren alıcı adına poliçe aranacaktır.",
+      evidenceFragment: "satış işlemlerinde alıcı adına düzenlenmiş geçerli poliçelerin 05.09.2026 tarihinden itibaren aranılması",
+      status: "current-topic",
+    },
+  ];
+  const trustedTokens = factContract.trustedSourceDateTokens("07.09.2026");
+  // The slide fact combines the two ordinary verified tokens (2014/2
+  // sayılı, 05.09.2026) WITHOUT publishedAt appearing in it at all —
+  // the exemption only ever fires for a pair where one side IS the
+  // trusted token, so this pair still goes through the normal check.
+  const violations = factContract.findTokenBindingViolations(
+    facts,
+    ["Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri 05.09.2026 tarihinden itibaren uygulanmaya devam edecektir."],
     trustedTokens,
   );
   assert.equal(violations.length, 1);
@@ -1728,6 +1795,36 @@ test("findTokenBindingViolations: the original TKGM wrong date-to-claim binding 
   const violations = factContract.findTokenBindingViolations(
     facts,
     ["Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri 05.09.2026 tarihinden itibaren uygulanmaya devam edecektir."],
+    trustedTokens,
+  );
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /Unlicensed token pairing/);
+  assert.match(violations[0], /2014\.2 sayılı/);
+});
+
+test("findTokenBindingViolations: the original wrong binding is still rejected even when publishedAt is ALSO mentioned in the very same slide fact", () => {
+  const facts = [
+    {
+      claim: "Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.",
+      evidenceFragment: "satış dışındaki diğer işlemlerde ise 2014/2 sayılı Genelge hükümlerinin uygulanmaya devam edilmesi",
+      status: "current-topic",
+    },
+    {
+      claim: "Tapu müdürlüklerinde 05.09.2026 tarihinden itibaren alıcı adına poliçe aranacaktır.",
+      evidenceFragment: "satış işlemlerinde alıcı adına düzenlenmiş geçerli poliçelerin 05.09.2026 tarihinden itibaren aranılması",
+      status: "current-topic",
+    },
+  ];
+  const trustedTokens = factContract.trustedSourceDateTokens("07.09.2026");
+  // publishedAt (07.09.2026) IS present in this slide fact, and its
+  // pairs with the other two tokens are exempted — but the pair
+  // BETWEEN the two ordinary verified tokens (2014/2 sayılı,
+  // 05.09.2026) is untouched by that exemption and must still fail.
+  const violations = factContract.findTokenBindingViolations(
+    facts,
+    [
+      "TKGM, 07.09.2026 tarihli duyurusunda, satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümlerinin 05.09.2026 tarihinden itibaren uygulanmaya devam edeceğini belirtti.",
+    ],
     trustedTokens,
   );
   assert.equal(violations.length, 1);
