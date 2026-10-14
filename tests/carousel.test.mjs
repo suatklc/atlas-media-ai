@@ -537,6 +537,130 @@ test("generate-visual route: visualFormat 'carousel' takes the REAL carousel pat
   assert.equal(state.capturedInsert.metadata.carouselImages.length, 5);
 });
 
+// ============================================================
+// Static Content V1 Freeze — genuine blocker fix: the Gold Standard
+// ContentPackage carousel branch (a separate branch from the marker-based
+// one above) persisted only contentPackage.caption as `content` —
+// contentPackage.hashtags is its own structured field, unlike the old
+// pipeline where hashtags already lived inline in the single raw caption
+// string. Since `content` is the exact field later sent verbatim as the
+// real Instagram caption on publish, an approved post's hashtags were
+// shown in the dashboard preview but silently dropped at actual publish
+// time. This test exercises the REAL ContentPackage branch end-to-end and
+// asserts the persisted content includes them.
+// ============================================================
+
+function loadGenerateVisualRouteForContentPackage() {
+  const state = { capturedInsert: null, carouselCalls: 0, uploadCalls: 0 };
+
+  const sampleContentPackage = {
+    topic: "t",
+    source: { name: "TKGM", url: "https://example.com", publishedAt: "2026-09-07" },
+    hook: "Kısa bir kanca.",
+    caption: "Kısa bir caption.\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı",
+    hashtags: ["#DASK", "#Gayrimenkul"],
+    format: "carousel",
+    slides: [
+      { index: 1, role: "hook", headline: "H1", body: "B1", facts: [], visualBrief: "v1" },
+      { index: 2, role: "what-happened", headline: "H2", body: "B2", facts: ["f1"], visualBrief: "v2" },
+      { index: 3, role: "why-it-matters", headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+      { index: 4, role: "what-to-do", headline: "H4", body: "B4", facts: ["c1", "c2"], visualBrief: "v4" },
+      { index: 5, role: "cta", headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+    ],
+    facts: [],
+  };
+
+  const defaultDeps = {
+    "next/server": {},
+    "@/lib/supabase/server": {
+      createClient: async () => ({
+        auth: { getUser: async () => ({ data: { user: { id: "user-1" } } }) },
+        from: () => ({
+          insert: async (row) => {
+            state.capturedInsert = row;
+            return { error: null };
+          },
+        }),
+      }),
+    },
+    "@/lib/ai/content/plan": { buildContentPlan: () => ({ intent: "educational", outputMode: "single", slideCount: 1, template: { id: "x" } }) },
+    "@/lib/ai/content/types": {},
+    "@/lib/ai/creative/brief": { buildCreativeBrief: () => ({ execution: {} }) },
+    "@/lib/ai/creative/image-prompt": { buildImagePrompt: () => "prompt" },
+    "@/lib/ai/media/router": {
+      generateImage: async () => ({ bytes: Buffer.from("fake-base-image"), contentType: "image/png" }),
+    },
+    "@/lib/ai/media/config": { DEFAULT_IMAGE_PROVIDER: "openai", DEFAULT_IMAGE_MODEL: "test-model", IMAGE_MODEL_CONFIGS: {} },
+    "@/lib/ai/platform/config": {
+      PLATFORM_CONFIGS: { instagram: { id: "instagram", label: "Instagram", aspectRatio: "4:5", dimensions: "1080x1350" } },
+      DEFAULT_PLATFORM: "instagram",
+      isPlatformId: (v) => v === "instagram",
+    },
+    "@/lib/ai/image/compose": { composeInstagramPost: async () => Buffer.from("composed") },
+    "@/lib/ai/image/templates/select": { selectVisualTemplateId: () => "educational" },
+    "@/lib/ai/image/templates/carousel": {
+      renderCarousel: async () => {
+        state.carouselCalls += 1;
+        return [1, 2, 3, 4, 5].map((n) => Buffer.from(`slide-${n}`));
+      },
+    },
+    "@/lib/supabase/storage": {
+      uploadGeneratedImage: async () => {
+        state.uploadCalls += 1;
+        return { url: `https://storage.example/${state.uploadCalls}.png` };
+      },
+    },
+    "@/lib/ai/creative/caption": { buildPublishableCaption: (v) => v },
+    "@/lib/ai/content/educational-points": { resolveEducationalPoints: () => [] },
+    "@/lib/ai/content/carousel-structure": { resolveCarouselStructure: () => undefined },
+    "@/lib/ai/research/opportunity": { buildSeedMessage: () => "seed", isContentOpportunity: () => false },
+    "@/lib/ai/research/formatRecommendation": {
+      isVisualFormat: (v) => v === "single" || v === "carousel",
+      buildFormatSuffix: () => "",
+    },
+    "@/lib/ai/content/contentPackage": {
+      isContentPackage: (v) => Boolean(v && typeof v === "object" && Array.isArray(v.slides)),
+      validateContentPackage: () => ({ ok: true }),
+    },
+    "@/lib/ai/creative/goldStandardImagePrompt": { buildGoldStandardImagePrompt: () => "prompt" },
+  };
+
+  const route = loadTypeScriptModule(
+    "src/app/api/generate-visual/route.ts",
+    (specifier) => defaultDeps[specifier] ?? {},
+    { Response, Buffer, process },
+  );
+
+  return { route, state, sampleContentPackage };
+}
+
+test("generate-visual route's Gold Standard ContentPackage branch includes hashtags in the persisted caption content, not just the preview", async () => {
+  const { route, state, sampleContentPackage } = loadGenerateVisualRouteForContentPackage();
+
+  const response = await route.POST({
+    json: async () => ({ message: "mesaj", contentPackage: sampleContentPackage, visualFormat: "carousel" }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(state.carouselCalls, 1);
+  assert.ok(state.capturedInsert, "a row must have been inserted");
+  assert.match(state.capturedInsert.content, /#DASK/);
+  assert.match(state.capturedInsert.content, /#Gayrimenkul/);
+  // The caption's own text must still be present, not replaced.
+  assert.match(state.capturedInsert.content, /Kısa bir caption\./);
+});
+
+test("generate-visual route's Gold Standard ContentPackage branch never appends an empty hashtags line when there are none", async () => {
+  const { route, state, sampleContentPackage } = loadGenerateVisualRouteForContentPackage();
+  const noHashtagsPackage = { ...sampleContentPackage, hashtags: [] };
+
+  await route.POST({
+    json: async () => ({ message: "mesaj", contentPackage: noHashtagsPackage, visualFormat: "carousel" }),
+  });
+
+  assert.equal(state.capturedInsert.content.trim(), noHashtagsPackage.caption.trim());
+});
+
 test("generate-visual route: carousel outputMode with no resolvable CAROUSEL_STRUCTURE returns 422 before any render/upload/persist side effect", async () => {
   const { route, state } = loadGenerateVisualRoute({
     buildContentPlan: () => ({ intent: "educational", outputMode: "carousel", slideCount: 5, template: { id: "EDUCATIONAL_CAROUSEL_01" } }),

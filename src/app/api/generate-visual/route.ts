@@ -67,6 +67,23 @@ function buildCarouselSourceLabel(source: { publisher: string; publishedAt: stri
   return `${source.publisher} · ${formatted}`;
 }
 
+// Static Content V1 Freeze — genuine blocker fix: ContentPackage.hashtags
+// is its own structured field (unlike the old marker pipeline, where
+// hashtags already lived inline inside the single raw caption string via
+// buildPublishableCaption's "Etiketler:" handling). Persisting only
+// contentPackage.caption as `content` — the exact field later sent
+// verbatim as the real Instagram caption when an approved post is
+// published — meant an approved post's hashtags, though shown in the
+// dashboard preview, were silently dropped at actual publish time.
+// Appending them here, before the existing sanitizeContent/length-cap
+// step, is the smallest fix: what the user approves is what actually
+// gets published, nothing more.
+function appendHashtagsToCaption(caption: string, hashtags: string[]): string {
+  if (hashtags.length === 0) return caption;
+  const normalized = hashtags.map((tag) => (tag.startsWith("#") ? tag : `#${tag}`)).join(" ");
+  return `${caption}\n\n${normalized}`;
+}
+
 // Server-side-only benchmark override: an env var naming a key in the
 // allowlisted IMAGE_MODEL_CONFIGS (media/config.ts) — never an arbitrary
 // browser-supplied provider/model string, and not exposed through the
@@ -350,9 +367,10 @@ export async function POST(request: NextRequest) {
     // metadata.carouselImages = all 5) — additionally stores the full
     // structured package in metadata.contentPackage, no schema migration.
     try {
+      const captionWithHashtags = appendHashtagsToCaption(contentPackage.caption, contentPackage.hashtags);
       const { error: insertError } = await supabase.from("generated_posts").insert({
         user_id: user.id,
-        content: sanitizeContent(contentPackage.caption) ?? contentPackage.caption,
+        content: sanitizeContent(captionWithHashtags) ?? captionWithHashtags,
         visual_headline: sanitizeHeadline(contentPackage.hook),
         final_image_url: uploadedSlides[0].imageUrl,
         base_image_url: uploadedBase.url,
