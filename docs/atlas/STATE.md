@@ -4,7 +4,7 @@ This document reflects VERIFIED current state as of the commit below. It
 changes often — keep it short and current, not a historical changelog
 (see ARCHITECTURE.md/PRODUCT.md for durable structure/decisions).
 
-**HEAD commit:** `3b5f958f6317149a793dca996a8bf1baa32fbdcd`
+**HEAD commit:** `de33c7cecb706265960b894345800c52cbf6be1c`
 
 ## Completed
 
@@ -173,6 +173,88 @@ changes often — keep it short and current, not a historical changelog
   - **Must not be reopened casually** — only a proven correctness
     blocker justifies revisiting this, same convention as every other
     V1 freeze above.
+- **STATIC CONTENT V1 = FROZEN** (commit `de33c7c`). The full static
+  workflow — real source → grounded `ContentPackage` → 5-slide carousel
+  → caption/hashtags → draft → explicit user approval → publishing
+  eligibility — was verified end-to-end and is accepted as the frozen
+  V1 baseline. Three real, live-observed gaps were found and closed in
+  the course of this acceptance pass (in addition to everything already
+  covered by Source-Grounding Safety V1 / ContentPackage Gold Standard
+  V1 above):
+  - **Gap 1 — Evidence Fragment Grounding** (`factContract.ts`'s
+    `isEvidenceFragmentGrounded`/`filterCurrentTopicFacts`): Job 1's own
+    `current-topic` classification was previously trusted without ever
+    confirming its self-reported `evidenceFragment` is a genuine
+    substring of the real evidence text — a hallucinated claim+fragment
+    pair would have reached Job 2 as "verified" purely on the model's
+    say-so. Now deterministically re-checked; fails closed (dropped) on
+    any fragment that isn't a real quote.
+  - **Gap 2 — Verified Token-to-Claim Binding** (`factContract.ts`'s
+    `findTokenBindingViolations`/`trustedSourceDateTokens`, wired into
+    `/api/content-package/route.ts`): a real production run showed Job 2
+    combining a date verified under one fact with a different fact's
+    subject inside one slide's `facts[]` string (a Genelge-continuation
+    claim paired with an unrelated sale-transaction date neither fact
+    stated together). Closed with a deterministic, digit-anchored check
+    scoped to slide `facts[]` in verified mode only, including two
+    follow-up false-positive fixes (date-format canonicalization
+    DD.MM.YYYY/DD/MM/YYYY/ISO; trusting the primary source's own
+    `publishedAt` to coexist with any verified token without requiring
+    that exact pair to share a Job 1 fact) — confirmed via 5 real TKGM/
+    DASK production runs with zero false rejections and zero
+    unsupported bindings reaching output.
+  - **Scenario Boundary Positional Rule** (`factContract.ts`'s
+    `resolveScenarioBoundaryConflicts`): Job 1 occasionally classified a
+    fact drawn from after a scenario-boundary connective
+    ("bunlar dışındaki hâllerde ise...") as `current-topic` even though
+    the source itself marks it as the opposite branch — confirmed
+    non-deterministic (same source text, different classification
+    across repeated real runs). A deterministic positional rule (the
+    zone before the first boundary marker is always primary; a later-
+    zone fact is demoted, never a vote) now runs after Gap 1, before
+    Job 2 — verified it actively intervenes (5/9 facts demoted per real
+    run) with zero scenario leakage across a second 5-run real batch.
+  - **Carousel Final Quality** (`src/lib/ai/image/templates/
+    carousel.ts`): rendering a real `ContentPackage` output through the
+    actual production carousel exposed a content/layout mismatch — Job
+    2 writes full editorial sentences, not the short punchy figures/
+    phrases the `keyFact`/`considerations` treatments were tuned for,
+    producing a truncated, broken-looking 72px "big number" fragment on
+    slide 2, a 2-item checklist with huge dead gaps on slide 4, and a
+    closing paragraph truncated mid-sentence on slide 5. Fixed entirely
+    within `carousel.ts` (a `keyFact` over 60 chars falls back to body-
+    only; checklist items get up to 3 lines with natural, centered row
+    spacing; the closing line budget was raised; body text is now
+    vertically centered, biased toward the top, within its label-to-
+    logo zone). Verified against two independent real `ContentPackage`
+    generations — all 10 resulting slides render complete, untruncated
+    text with consistent branding.
+  - **Hashtags-dropped-at-publish blocker**
+    (`src/app/api/generate-visual/route.ts`'s `appendHashtagsToCaption`):
+    the Gold Standard ContentPackage carousel branch persisted only
+    `contentPackage.caption` as `generated_posts.content` — the exact
+    field sent verbatim as the real Instagram caption on publish —
+    never `contentPackage.hashtags`. Hashtags were shown in the
+    dashboard preview but silently dropped at actual publish time, a
+    real mismatch between what the user approves and what gets
+    published. Fixed by appending hashtags to the persisted caption
+    before the existing length cap — restoring the behavior the old
+    marker-based pipeline already had (hashtags lived inline in its
+    single raw caption string).
+  - **Approval/publishing safety reconfirmed, not just preserved**:
+    `generated_posts.status` defaults to `'draft'` at the DB level
+    (`0002_generated_posts.sql`'s CHECK constraint allows only
+    `draft`/`approved`/`posted`); `updatePostStatus` (dashboard/
+    actions.ts) can only ever set `'approved'`, never `'posted'`
+    directly; `publishGeneratedPost` independently re-checks
+    `evaluatePublishEligibility` (status must already be `'approved'`,
+    plus valid platform/caption/image/provider) and writes `'posted'`
+    only after a real Meta publish call reports success. No code path
+    in content generation or grounding can set `'approved'`/`'posted'`
+    (confirmed by existing source-contract tests).
+  - **Must not be reopened casually** — only a proven correctness
+    blocker justifies revisiting this, same convention as every other
+    V1 freeze above.
 
 ## Current known issues / limitations
 
@@ -198,7 +280,7 @@ changes often — keep it short and current, not a historical changelog
   - `tests/output-mode.test.mjs` ×2 — `isContentOpportunity is not a
     function` (stale mock map, missing several real imports from an
     earlier refactor).
-- Full test suite: 230/234 passing (the 4 above).
+- Full test suite: 396/400 passing (the 4 above).
 
 ## Next work order (intentional — do not reorder without a genuine blocker)
 
@@ -219,6 +301,21 @@ changes often — keep it short and current, not a historical changelog
 9. ContentPackage Gold Standard V1 (Verified Fact Contract, Job 2 model
    upgrade, deterministic output normalization) — COMPLETE and
    user-accepted (see above).
-10. Canva Gold Standard PoC — not started (next).
-11. External publishing PoC (Buffer first candidate) — not started.
-12. Video / Reels generation — not started.
+10. STATIC CONTENT V1 — COMPLETE and frozen (see above): grounding
+    (Gap 1, Gap 2, Scenario Boundary Positional Rule), Carousel Final
+    Quality, and the hashtags-at-publish blocker.
+11. Canva Gold Standard PoC — not started (next, per CLAUDE.md's
+    Current Development Order).
+12. External publishing PoC (Buffer first candidate) — not started.
+13. Video / Reels generation — not started. Starting point when this
+    becomes active: `src/lib/ai/media/types.ts`'s provider contract is
+    *deliberately* image-only today ("Phase 1... excludes video job
+    types... later phases — not premature generalization here") — the
+    acknowledged seam is extending that contract with a video job type,
+    not a new abstraction. `fal.ai` is already configured as "server-
+    only image/video generation provider" (`.env.example`) — the
+    first real provider candidate, not a new vendor decision. Per
+    GUARDRAILS.md, video must reuse the existing `ContentOpportunity` →
+    `ContentPlan` → `CreativeBrief` pipeline as its planning brain, never
+    a parallel content-planning system — no new planning/grounding layer
+    for video.
