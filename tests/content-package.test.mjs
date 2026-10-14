@@ -1537,10 +1537,10 @@ test("isEvidenceFragmentGrounded: accepts a genuine substring and rejects a fabr
 // actually made. These tests reproduce that exact TKGM/DASK case.
 // ============================================================
 
-test("extractNotableTokens: extracts a DD.MM.YYYY date and normalizes a slash-separated variant to the same token", () => {
+test("extractNotableTokens: extracts a DD.MM.YYYY date and normalizes a slash-separated variant to the same canonical token", () => {
   const a = factContract.extractNotableTokens("Uygulama 05.09.2026 tarihinden itibaren başlar.");
   const b = factContract.extractNotableTokens("Uygulama 05/09/2026 tarihinden itibaren başlar.");
-  assert.ok(a.has("05.09.2026"));
+  assert.ok(a.has("2026-09-05"));
   assert.deepEqual(a, b);
 });
 
@@ -1557,6 +1557,72 @@ test("extractNotableTokens: never extracts a checklist's list-marker digits", ()
     "Tapu randevusundan önce 3 şeyi netleştirin:\n1. Poliçe var mı?\n2. Alıcı adına mı?\n3. Güncel mi?",
   );
   assert.equal(tokens.size, 0);
+});
+
+// ============================================================
+// Date Token Canonicalization — a real, live-observed false positive:
+// Job 2 sometimes echoes an already-verified date in ISO form
+// ("2026-09-07") instead of the DD.MM.YYYY form Job 1's facts carry
+// ("07.09.2026"), and the pre-fix token matcher treated them as two
+// unrelated values, wrongly rejecting a harmless reformat as
+// "unverified". These tests confirm DD.MM.YYYY, DD/MM/YYYY, and ISO
+// YYYY-MM-DD all collapse to the same token, and that this is scoped
+// to dates only.
+// ============================================================
+
+test("extractNotableTokens: 07.09.2026, 07/09/2026, and 2026-09-07 all canonicalize to the same date token", () => {
+  const dotted = factContract.extractNotableTokens("07.09.2026 tarihli duyuru");
+  const slashed = factContract.extractNotableTokens("07/09/2026 tarihli duyuru");
+  const iso = factContract.extractNotableTokens("2026-09-07 tarihinde yayımlandı");
+  assert.deepEqual([...dotted], [...slashed]);
+  assert.deepEqual([...dotted], [...iso]);
+  assert.equal(dotted.size, 1);
+});
+
+test("extractNotableTokens: a single-digit day/month date (07.9.2026) still canonicalizes to the same zero-padded token", () => {
+  const padded = factContract.extractNotableTokens("07.09.2026 tarihinde");
+  const unpadded = factContract.extractNotableTokens("7.9.2026 tarihinde");
+  assert.deepEqual([...padded], [...unpadded]);
+});
+
+test("extractNotableTokens: date canonicalization never affects a 'sayılı' legal reference that also contains a slash", () => {
+  const tokens = factContract.extractNotableTokens("2014/2 sayılı Genelge");
+  assert.ok(tokens.has("2014.2 sayılı"));
+  assert.equal(tokens.size, 1);
+});
+
+test("findTokenBindingViolations: a verified date (DD.MM.YYYY) echoed back in ISO form is accepted, not flagged as unverified", () => {
+  const facts = [
+    { claim: "x", evidenceFragment: "07.09.2026 tarihli duyuru yayımlandı.", status: "current-topic" },
+  ];
+  const violations = factContract.findTokenBindingViolations(facts, [
+    "TKGM duyurusu 2026-09-07 tarihinde yayımlandı.",
+  ]);
+  assert.equal(violations.length, 0);
+});
+
+test("findTokenBindingViolations: the real reproduced false-positive case — two verified dates (07.09.2026, 05.09.2026), one echoed in ISO form per slide, produce no violations", () => {
+  const facts = [
+    { claim: "x", evidenceFragment: "07.09.2026 tarihli duyuru yayımlandı.", status: "current-topic" },
+    {
+      claim: "y",
+      evidenceFragment: "05.09.2026 tarihinden itibaren yapılan tescil işlemlerinde uygulanır.",
+      status: "current-topic",
+    },
+  ];
+  const violations = factContract.findTokenBindingViolations(facts, [
+    "TKGM duyurusu 2026-09-07 tarihinde yayımlandı.",
+    "Yeni düzenlemenin uygulanması 2026-09-05 tarihinden itibaren yapılan tescil işlemleri için geçerli.",
+  ]);
+  assert.equal(violations.length, 0);
+});
+
+test("findTokenBindingViolations: an ISO-form date still correctly binds across facts when it was never verified at all", () => {
+  const facts = [{ claim: "x", evidenceFragment: "07.09.2026 tarihli duyuru yayımlandı.", status: "current-topic" }];
+  const violations = factContract.findTokenBindingViolations(facts, ["Yeni kural 2026-09-05 tarihinde başladı."]);
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /Unverified token/);
+  assert.match(violations[0], /2026-09-05/);
 });
 
 test("findTokenBindingViolations: no violation when a slide fact only repeats a single verified fact's own token", () => {

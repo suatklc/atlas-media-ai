@@ -134,21 +134,9 @@ const PERCENTAGE_PATTERN = /\b%\s?\d+(?:[.,]\d+)?\b|\b\d+(?:[.,]\d+)?\s?%\b/g;
 // something the real date/reference never did.
 const LARGE_NUMBER_PATTERN = /\b\d{1,3}(?:[.,]\d{3})+(?:[.,]\d+)?\b|\b\d{4,}\b/g;
 
-// Specific-to-generic priority order: every pattern here is tried
-// before LARGE_NUMBER_PATTERN, whose matches are discarded if they
-// overlap a span one of these already claimed.
-const PRIORITY_PATTERNS = [
-  DATE_PATTERN,
-  ISO_DATE_PATTERN,
-  LEGAL_REF_SLASH_PATTERN,
-  LEGAL_REF_PLAIN_PATTERN,
-  DURATION_PATTERN,
-  PERCENTAGE_PATTERN,
-];
-
-// One canonical form per token so separator variants of the same real
-// value ("05.09.2026" vs "05/09/2026") compare equal — consistency is
-// all that matters here, not which separator wins.
+// One canonical form per non-date token so separator variants of the
+// same real value ("2014/2 sayılı" vs "2014.2 sayılı") compare equal —
+// consistency is all that matters here, not which separator wins.
 function normalizeToken(raw: string): string {
   return raw
     .toLocaleLowerCase("tr-TR")
@@ -156,6 +144,45 @@ function normalizeToken(raw: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+// Date Token Canonicalization: a real, live-observed false positive —
+// Job 2 sometimes echoes an already-verified date in ISO form
+// ("2026-09-07") instead of the DD.MM.YYYY form Job 1's facts carry
+// ("07.09.2026"). normalizeToken alone treats those as two unrelated
+// tokens, so a harmless reformat of a genuinely verified date got
+// rejected as "unverified". Both DATE_PATTERN and ISO_DATE_PATTERN
+// matches are re-expressed in one canonical YYYY-MM-DD form here —
+// scoped to dates only; every other token kind keeps using
+// normalizeToken unchanged, and no new date shape is matched beyond
+// what DATE_PATTERN/ISO_DATE_PATTERN already recognized.
+function canonicalizeDateToken(raw: string): string {
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const [, year, month, day] = iso;
+    return `${year}-${month}-${day}`;
+  }
+  const dmy = raw.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+  if (dmy) {
+    const [, day, month, year] = dmy;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+  // Unreachable for any real DATE_PATTERN/ISO_DATE_PATTERN match — safe
+  // fallback to the generic normalizer rather than throwing.
+  return normalizeToken(raw);
+}
+
+// Specific-to-generic priority order: every pattern here is tried
+// before LARGE_NUMBER_PATTERN, whose matches are discarded if they
+// overlap a span one of these already claimed. Each pattern keeps its
+// own normalizer — only the two date patterns canonicalize format.
+const PRIORITY_PATTERNS: { pattern: RegExp; normalize: (raw: string) => string }[] = [
+  { pattern: DATE_PATTERN, normalize: canonicalizeDateToken },
+  { pattern: ISO_DATE_PATTERN, normalize: canonicalizeDateToken },
+  { pattern: LEGAL_REF_SLASH_PATTERN, normalize: normalizeToken },
+  { pattern: LEGAL_REF_PLAIN_PATTERN, normalize: normalizeToken },
+  { pattern: DURATION_PATTERN, normalize: normalizeToken },
+  { pattern: PERCENTAGE_PATTERN, normalize: normalizeToken },
+];
 
 type TokenSpan = { start: number; end: number };
 
@@ -176,10 +203,10 @@ export function extractNotableTokens(text: string): Set<string> {
   const tokens = new Set<string>();
   const claimedSpans: TokenSpan[] = [];
 
-  for (const pattern of PRIORITY_PATTERNS) {
+  for (const { pattern, normalize } of PRIORITY_PATTERNS) {
     for (const match of text.matchAll(pattern)) {
       const start = match.index ?? 0;
-      tokens.add(normalizeToken(match[0]));
+      tokens.add(normalize(match[0]));
       claimedSpans.push({ start, end: start + match[0].length });
     }
   }
