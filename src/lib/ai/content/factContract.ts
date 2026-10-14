@@ -224,18 +224,57 @@ function pairKey(a: string, b: string): string {
   return a < b ? `${a}‖${b}` : `${b}‖${a}`;
 }
 
+// Trusted Source-Metadata Token: a real, live-observed false positive —
+// Job 2 sometimes states the primary source's own publication date
+// (e.g. "TKGM duyurusu 07.09.2026 tarihinde yayımlandı") even when Job 1
+// never extracted a separate fact for it, because route.ts already
+// hands that exact date to Job 2 directly in the prompt
+// ("Kaynak: ... — ${publishedAt}") — it is data Atlas itself supplies
+// deterministically, never a model guess. Deliberately narrow: this is
+// the ONLY trusted field (publishedAt), and it is only ever ADDED to
+// the set of individually-acceptable tokens — never to licensedPairs,
+// so it can never license a NEW pairing with some other claim's token
+// (which is exactly the class of error this whole check exists to
+// catch). Accepts the same date shapes extractNotableTokens already
+// recognizes (DD.MM.YYYY, DD/MM/YYYY, ISO, including a full ISO
+// datetime string like "2026-09-07T00:00:00.000Z") — no new shape.
+function canonicalizeSourcePublishedAt(publishedAt: string): string | undefined {
+  const isoPrefix = publishedAt.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoPrefix) {
+    const [, year, month, day] = isoPrefix;
+    return `${year}-${month}-${day}`;
+  }
+  const dmyPrefix = publishedAt.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
+  if (dmyPrefix) {
+    const [, day, month, year] = dmyPrefix;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+  return undefined;
+}
+
+export function trustedSourceDateTokens(publishedAt: string | undefined): Set<string> {
+  const tokens = new Set<string>();
+  if (!publishedAt) return tokens;
+  const canonical = canonicalizeSourcePublishedAt(publishedAt);
+  if (canonical) tokens.add(canonical);
+  return tokens;
+}
+
 // Fail-closed entry point: given the grounded current-topic facts Job 2
-// was actually shown, and the plain-language facts[] strings Job 2 put
-// on each slide, returns a human-readable reason per violation found
-// (empty array = no violations). A token present in zero verified
-// facts is flagged on its own (plain invention); a pair of otherwise-
-// verified tokens that never co-occurred in a single fact is flagged
-// as an unlicensed binding — the exact shape of the reproduced defect.
+// was actually shown, the plain-language facts[] strings Job 2 put on
+// each slide, and (optionally) the trusted source-metadata tokens
+// above, returns a human-readable reason per violation found (empty
+// array = no violations). A token present in neither the verified
+// facts nor the trusted set is flagged on its own (plain invention); a
+// pair of otherwise-verified tokens that never co-occurred in a single
+// fact is flagged as an unlicensed binding — the exact shape of the
+// reproduced defect.
 export function findTokenBindingViolations(
   verifiedFacts: EvidenceFact[],
   slideFactStrings: string[],
+  trustedSourceTokens: Set<string> = new Set(),
 ): string[] {
-  const allVerifiedTokens = new Set<string>();
+  const allVerifiedTokens = new Set<string>(trustedSourceTokens);
   const licensedPairs = new Set<string>();
 
   for (const fact of verifiedFacts) {

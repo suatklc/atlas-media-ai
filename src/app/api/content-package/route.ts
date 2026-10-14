@@ -22,6 +22,7 @@ import {
   filterCurrentTopicFacts,
   findTokenBindingViolations,
   isEvidenceFactArray,
+  trustedSourceDateTokens,
   type EvidenceFact,
 } from "@/lib/ai/content/factContract";
 
@@ -541,7 +542,13 @@ export async function POST(request: NextRequest) {
   // facts[] string, asserting a claim neither fact actually made.
   if (evidencePresentation.mode === "verified") {
     const slideFactStrings = slides.flatMap((slide) => slide.facts);
-    const bindingViolations = findTokenBindingViolations(evidencePresentation.facts, slideFactStrings);
+    // Trusted Source-Metadata Token: the primary source's own
+    // publishedAt is handed to Job 2 directly in the prompt (see
+    // buildUserMessage's "Kaynak: ..." line) — Job 2 stating it back
+    // is not an unverified claim, even when Job 1 didn't separately
+    // extract it as a fact.
+    const trustedTokens = trustedSourceDateTokens(primarySource?.publishedAt);
+    const bindingViolations = findTokenBindingViolations(evidencePresentation.facts, slideFactStrings, trustedTokens);
     if (bindingViolations.length > 0) {
       console.error("Content package failed token-binding check:", bindingViolations);
       return jsonError("Oluşturulan içerik paketi doğrulamadan geçemedi. Lütfen tekrar deneyin.", 502);

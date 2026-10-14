@@ -1625,6 +1625,146 @@ test("findTokenBindingViolations: an ISO-form date still correctly binds across 
   assert.match(violations[0], /2026-09-05/);
 });
 
+// ============================================================
+// Trusted Source-Metadata Token — a real, live-observed false
+// positive: Job 2 states the primary source's own publication date
+// (handed to it directly in the prompt's "Kaynak: ..." line) even when
+// Job 1 never separately extracted a fact for it, and the pre-fix
+// check wrongly flagged that date as "unverified". trustedSourceDateTokens
+// turns a present/valid publishedAt into a trusted token that
+// findTokenBindingViolations accepts on its own — but never licenses
+// as a new PAIR with anything else, so it cannot be used to launder an
+// unrelated claim.
+// ============================================================
+
+test("trustedSourceDateTokens: accepts a full ISO datetime string, a plain ISO date, DD.MM.YYYY, and DD/MM/YYYY — all to the same canonical token", () => {
+  const isoDateTime = factContract.trustedSourceDateTokens("2026-09-07T00:00:00.000Z");
+  const isoDate = factContract.trustedSourceDateTokens("2026-09-07");
+  const dotted = factContract.trustedSourceDateTokens("07.09.2026");
+  const slashed = factContract.trustedSourceDateTokens("07/09/2026");
+  assert.deepEqual([...isoDateTime], ["2026-09-07"]);
+  assert.deepEqual([...isoDateTime], [...isoDate]);
+  assert.deepEqual([...isoDateTime], [...dotted]);
+  assert.deepEqual([...isoDateTime], [...slashed]);
+});
+
+test("trustedSourceDateTokens: returns an empty set for missing or unparseable publishedAt", () => {
+  assert.equal(factContract.trustedSourceDateTokens(undefined).size, 0);
+  assert.equal(factContract.trustedSourceDateTokens("").size, 0);
+  assert.equal(factContract.trustedSourceDateTokens("yakın tarihte").size, 0);
+});
+
+test("findTokenBindingViolations: publishedAt's date is accepted even though Job 1 never extracted it as a fact", () => {
+  const facts = [
+    { claim: "x", evidenceFragment: "05.09.2026 tarihinden itibaren yapılan tescil işlemlerinde uygulanır.", status: "current-topic" },
+  ];
+  const trustedTokens = factContract.trustedSourceDateTokens("2026-09-07T00:00:00.000Z");
+  const violations = factContract.findTokenBindingViolations(
+    facts,
+    ["TKGM duyurusu 07.09.2026 tarihinde yayımlandı."],
+    trustedTokens,
+  );
+  assert.equal(violations.length, 0);
+});
+
+test("findTokenBindingViolations: publishedAt is accepted regardless of which of the three equivalent forms the slide fact uses", () => {
+  const trustedTokens = factContract.trustedSourceDateTokens("07.09.2026");
+  for (const slideFact of [
+    "TKGM duyurusu 07.09.2026 tarihinde yayımlandı.",
+    "TKGM duyurusu 07/09/2026 tarihinde yayımlandı.",
+    "TKGM duyurusu 2026-09-07 tarihinde yayımlandı.",
+  ]) {
+    const violations = factContract.findTokenBindingViolations([], [slideFact], trustedTokens);
+    assert.equal(violations.length, 0, `expected no violation for: ${slideFact}`);
+  }
+});
+
+test("findTokenBindingViolations: an unrelated date that is NOT publishedAt and NOT verified is still rejected even with a trusted publishedAt token present", () => {
+  const trustedTokens = factContract.trustedSourceDateTokens("2026-09-07T00:00:00.000Z");
+  const violations = factContract.findTokenBindingViolations(
+    [],
+    ["Yeni kural 2026-09-20 tarihinde başladı."],
+    trustedTokens,
+  );
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /Unverified token/);
+  assert.match(violations[0], /2026-09-20/);
+});
+
+test("findTokenBindingViolations: trusting publishedAt never licenses it as a NEW pairing with an unrelated verified token", () => {
+  const facts = [
+    { claim: "x", evidenceFragment: "2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.", status: "current-topic" },
+  ];
+  const trustedTokens = factContract.trustedSourceDateTokens("07.09.2026");
+  // publishedAt (07.09.2026) is individually trusted, and "2014/2
+  // sayılı" is individually verified — but combining them in one
+  // slide fact is still an unlicensed pairing neither source supports.
+  const violations = factContract.findTokenBindingViolations(
+    facts,
+    ["2014/2 sayılı Genelge hükümleri 07.09.2026 tarihli duyuru kapsamında uygulanır."],
+    trustedTokens,
+  );
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /Unlicensed token pairing/);
+});
+
+test("findTokenBindingViolations: the original TKGM wrong date-to-claim binding is still rejected even with publishedAt trusted", () => {
+  const facts = [
+    {
+      claim: "Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri uygulanmaya devam eder.",
+      evidenceFragment: "satış dışındaki diğer işlemlerde ise 2014/2 sayılı Genelge hükümlerinin uygulanmaya devam edilmesi",
+      status: "current-topic",
+    },
+    {
+      claim: "Tapu müdürlüklerinde 05.09.2026 tarihinden itibaren alıcı adına poliçe aranacaktır.",
+      evidenceFragment: "satış işlemlerinde alıcı adına düzenlenmiş geçerli poliçelerin 05.09.2026 tarihinden itibaren aranılması",
+      status: "current-topic",
+    },
+  ];
+  // publishedAt is 07.09.2026 (the circular's own issue date) — a
+  // DIFFERENT date from the misattached 05.09.2026, so trusting it
+  // must not affect this case at all.
+  const trustedTokens = factContract.trustedSourceDateTokens("07.09.2026");
+  const violations = factContract.findTokenBindingViolations(
+    facts,
+    ["Satış dışındaki işlemlerde 2014/2 sayılı Genelge hükümleri 05.09.2026 tarihinden itibaren uygulanmaya devam edecektir."],
+    trustedTokens,
+  );
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /Unlicensed token pairing/);
+  assert.match(violations[0], /2014\.2 sayılı/);
+});
+
+test("/api/content-package: a slide fact echoing the primary source's publishedAt (never extracted as a Job 1 fact) succeeds end-to-end", async () => {
+  const { route } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        {
+          claim: "Satış işlemlerinde yeni malik adına poliçe aranır.",
+          evidenceFragment: "satış işlemlerinde yeni malik adına düzenlenmiş poliçe aranır",
+          status: "current-topic",
+        },
+      ],
+    },
+    completionResponse: {
+      ...defaultCompletionResponseFixture(),
+      slides: [
+        { headline: "H1", body: "B1", facts: ["TKGM duyurusu 07.09.2026 tarihinde yayımlandı."], visualBrief: "v1" },
+        { headline: "H2", body: "B2", facts: [], visualBrief: "v2" },
+        { headline: "H3", body: "B3", facts: [], visualBrief: "v3" },
+        { headline: "H4", body: "B4", facts: [], visualBrief: "v4" },
+        { headline: "H5", body: "B5", facts: [], visualBrief: "v5" },
+      ],
+    },
+  });
+  const opportunity = makeOpportunityWithEvidence(
+    "Satış işlemlerinde yeni malik adına düzenlenmiş poliçe aranır ve bu uygulama resmi olarak yürürlüktedir.",
+  );
+  opportunity.contentOpportunity.sources[0].publishedAt = "2026-09-07T00:00:00.000Z";
+  const response = await route.POST({ json: async () => opportunity });
+  assert.equal(response.status, 200);
+});
+
 test("findTokenBindingViolations: no violation when a slide fact only repeats a single verified fact's own token", () => {
   const facts = [
     { claim: "x", evidenceFragment: "05.09.2026 tarihinden itibaren poliçe aranır.", status: "current-topic" },
