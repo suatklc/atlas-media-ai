@@ -67,8 +67,11 @@ const evidenceExtraction = loadTypeScriptModule("src/lib/ai/research/retrieval/e
 // evidenceExtraction.ts (Scenario Boundary Positional Rule), so this
 // sandboxed load needs that relative specifier resolved to the real,
 // already-loaded module above instead of the loader's default {}.
+// Also turkishDate.ts (Turkey-local publishedAt + long-form Turkish date
+// tokens) — real module, same reason.
+const turkishDate = loadTypeScriptModule("src/lib/ai/research/retrieval/turkishDate.ts");
 const factContract = loadTypeScriptModule("src/lib/ai/content/factContract.ts", (specifier) =>
-  specifier.includes("evidenceExtraction") ? evidenceExtraction : {},
+  specifier.includes("evidenceExtraction") ? evidenceExtraction : specifier.includes("turkishDate") ? turkishDate : {},
 );
 
 function makeSlide(overrides) {
@@ -520,6 +523,7 @@ function loadContentPackageRoute(overrides = {}) {
     },
     "@/lib/ai/research/retrieval/evidenceExtraction": evidenceExtraction,
     "@/lib/ai/content/factContract": factContract,
+    "@/lib/ai/research/retrieval/turkishDate": turkishDate,
   };
 
   const route = loadTypeScriptModule(
@@ -1623,6 +1627,39 @@ test("findTokenBindingViolations: the real reproduced false-positive case — tw
   assert.equal(violations.length, 0);
 });
 
+// Spelled-Out Duration Canonicalization — the real, live-observed false
+// positive from TKGM's 2024/4 Genelge ("oniki ayı geçmeyecektir").
+test("findTokenBindingViolations: a duration the source spells out in words ('oniki ay') accepts its digit echo ('12 ay')", () => {
+  const facts = [
+    {
+      claim: "TTB ile başvuru arasındaki süre oniki ayı geçmeyecek.",
+      evidenceFragment: "TTB ile vatandaşlık kazanımı içeren işlem başvuru süresi arasındaki fark oniki ayı geçmeyecektir.",
+      status: "current-topic",
+    },
+  ];
+  const violations = factContract.findTokenBindingViolations(facts, [
+    "TTB ile vatandaşlık kazanımı içeren işlem başvuru süresi arasındaki fark 12 ayı geçmemeli.",
+    "12 ayı aşan TTB'lerde değerleme raporu yenilenecek.",
+  ]);
+  assert.equal(violations.length, 0);
+});
+
+test("spellOutDurationsToDigits: joined/spaced tens+units become digits; 'onay' and number words not before a unit are untouched", () => {
+  assert.match(factContract.spellOutDurationsToDigits("fark oniki ayı geçmeyecektir"), /12 ayı/);
+  assert.match(factContract.spellOutDurationsToDigits("on iki ay içinde"), /12 ay/);
+  assert.match(factContract.spellOutDurationsToDigits("otuz gün içinde"), /30 gün/);
+  assert.match(factContract.spellOutDurationsToDigits("Makam Onayı ile"), /onayı/);
+  assert.doesNotMatch(factContract.spellOutDurationsToDigits("Makam Onayı ile"), /\d/);
+  assert.doesNotMatch(factContract.spellOutDurationsToDigits("iki taraf da"), /\d/);
+});
+
+test("findTokenBindingViolations: a spelled-out duration on the verified side never licenses a DIFFERENT number on the slide", () => {
+  const facts = [{ claim: "x", evidenceFragment: "fark oniki ayı geçmeyecektir.", status: "current-topic" }];
+  const violations = factContract.findTokenBindingViolations(facts, ["Fark 6 ayı geçmemeli."]);
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /6 ay/);
+});
+
 test("findTokenBindingViolations: an ISO-form date still correctly binds across facts when it was never verified at all", () => {
   const facts = [{ claim: "x", evidenceFragment: "07.09.2026 tarihli duyuru yayımlandı.", status: "current-topic" }];
   const violations = factContract.findTokenBindingViolations(facts, ["Yeni kural 2026-09-05 tarihinde başladı."]);
@@ -2201,4 +2238,73 @@ test("content-package prompt treats the scenario boundary marker as a structural
   const routeSource = readContentPackageRouteSource();
   assert.match(routeSource, /yalnızca yapısal bir ipuçtur/);
   assert.match(routeSource, /otomatik bir "different-scenario" kararı DEĞİLDİR/);
+});
+
+// ============================================================
+// Turkey-local source dates + long-form/capitalized tokens — real,
+// live-observed defects on TKGM's 2024/4 Genelge card (dated "29 Eylül
+// 2026", stored as "2026-09-28T21:00:00.000Z"): Job 2 was handed the raw
+// UTC instant and wrote "28 Eylül 2026"; "28 Eylül 2026" and "2024/4
+// Sayılı" were then flagged as unverified bare numbers.
+// ============================================================
+
+test("turkishDate: a Turkey-midnight publishedAt formats to its own Turkish calendar day, never the UTC prefix", () => {
+  const iso = turkishDate.parseTurkishLongDate("29 Eylül 2026");
+  assert.equal(iso, "2026-09-28T21:00:00.000Z");
+  assert.equal(turkishDate.formatTurkeyDateDMY(iso), "29.09.2026");
+  assert.equal(turkishDate.formatTurkeyDateLong(iso), "29 Eylül 2026");
+  assert.equal(turkishDate.formatTurkeyDateDMY("2026-09-07"), "07.09.2026");
+  assert.equal(turkishDate.formatTurkeyDateDMY("not a date"), null);
+});
+
+test("trustedSourceDateTokens: a Turkey-midnight UTC instant canonicalizes to the Turkish calendar day", () => {
+  assert.deepEqual([...factContract.trustedSourceDateTokens("2026-09-28T21:00:00.000Z")], ["2026-09-29"]);
+});
+
+test("extractNotableTokens: a long-form Turkish date is ONE canonical date token (its year is never a separate bare number)", () => {
+  assert.deepEqual([...factContract.extractNotableTokens("TKGM duyurusu 29 Eylül 2026 tarihinde yayımlandı.")], ["2026-09-29"]);
+  assert.deepEqual(
+    [...factContract.extractNotableTokens("29.09.2026")],
+    [...factContract.extractNotableTokens("29 eylül 2026")],
+  );
+});
+
+test("extractNotableTokens: a capitalized 'Sayılı' legal reference is matched like the lowercase form", () => {
+  assert.deepEqual(
+    [...factContract.extractNotableTokens("2024/4 Sayılı Genelge")],
+    [...factContract.extractNotableTokens("2024/4 sayılı genelge")],
+  );
+  assert.ok(factContract.extractNotableTokens("2024/4 Sayılı Genelge").has("2024.4 sayılı"));
+});
+
+test("findTokenBindingViolations: the real reproduced case — the source's own date (long form) and the source title's own document number are trusted metadata", () => {
+  const facts = [
+    { claim: "x", evidenceFragment: "TTB ile vatandaşlık kazanımı içeren işlem başvuru süresi arasındaki fark oniki ayı geçmeyecektir.", status: "current-topic" },
+  ];
+  const trusted = factContract.trustedSourceMetadataTokens({
+    publishedAt: "2026-09-28T21:00:00.000Z",
+    title: "2024/4 Sayılı Genelge Değişikliği Hakkında Duyuru",
+  });
+  const violations = factContract.findTokenBindingViolations(
+    facts,
+    [
+      "TKGM duyurusu 29 Eylül 2026 tarihinde yayımlandı.",
+      "TKGM, 2024/4 Sayılı Genelge değişikliği hakkında duyuruyu 29.09.2026 tarihinde yayımladı.",
+    ],
+    trusted,
+  );
+  assert.equal(violations.length, 0);
+  // ...but a DIFFERENT date or document number is still unverified.
+  const wrong = factContract.findTokenBindingViolations(
+    facts,
+    ["TKGM duyurusu 28 Eylül 2026 tarihinde yayımlandı.", "2025/8 Sayılı Genelge değişti."],
+    trusted,
+  );
+  assert.equal(wrong.length, 2);
+});
+
+test("/api/content-package hands Job 2 the Turkey-local source date, never the raw UTC instant", () => {
+  const routeSource = fs.readFileSync(path.join(projectRoot, "src/app/api/content-package/route.ts"), "utf8");
+  assert.match(routeSource, /formatTurkeyDateDMY\(source\.publishedAt\)/);
+  assert.doesNotMatch(routeSource, /— \$\{source\.publishedAt\}`/);
 });

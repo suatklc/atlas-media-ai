@@ -14,6 +14,7 @@
 // confidence score, no source IDs, no embeddings, no citation system.
 
 import { SCENARIO_BOUNDARY_MARKER } from "../research/retrieval/evidenceExtraction";
+import { toTurkeyCalendarDate, TURKISH_MONTH_NAMES, turkishMonthNumber } from "../research/retrieval/turkishDate";
 
 export type EvidenceFactStatus = "current-topic" | "different-scenario" | "unsupported";
 
@@ -183,8 +184,20 @@ const DURATION_PATTERN = /\b\d{1,3}\s*(?:gün|saat|ay|yıl|sene)\b/g;
 // U+0131) never matches — it would silently make these two patterns
 // never match anything. The literal "sayılı" text already anchors the
 // match precisely enough without it.
-const LEGAL_REF_SLASH_PATTERN = /\b\d{1,4}\/\d{1,2}\s*sayılı/g;
-const LEGAL_REF_PLAIN_PATTERN = /\b\d{3,6}\s*sayılı/g;
+// Case-insensitive: a real, live-observed false positive — "2024/4
+// Sayılı Genelge" (capital S, as TKGM's own titles write it) never
+// matched, so its "2024" fell through to LARGE_NUMBER_PATTERN as a bare,
+// unverified number.
+const LEGAL_REF_SLASH_PATTERN = /\b\d{1,4}\/\d{1,2}\s*sayılı/gi;
+const LEGAL_REF_PLAIN_PATTERN = /\b\d{3,6}\s*sayılı/gi;
+// Long-form Turkish date ("29 Eylül 2026") — a real, live-observed false
+// positive: Job 2 wrote a verified/trusted date in this form, which no
+// date pattern recognized, so its year was flagged as a bare unverified
+// number. Canonicalized to the same YYYY-MM-DD token as the numeric forms.
+const TURKISH_LONG_DATE_PATTERN = new RegExp(
+  `(?<![\\p{L}\\d])\\d{1,2}\\s+(?:${TURKISH_MONTH_NAMES.join("|")})\\s+\\d{4}(?!\\d)`,
+  "giu",
+);
 const PERCENTAGE_PATTERN = /\b%\s?\d+(?:[.,]\d+)?\b|\b\d+(?:[.,]\d+)?\s?%\b/g;
 // Large standalone numbers (thousand-grouped, or any bare 4+ digit
 // run such as a year) — deliberately NOT the small list-marker digits
@@ -231,6 +244,11 @@ function canonicalizeDateToken(raw: string): string {
     const [, day, month, year] = dmy;
     return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
   }
+  const long = raw.match(/^(\d{1,2})\s+(\p{L}+)\s+(\d{4})$/u);
+  const longMonth = long ? turkishMonthNumber(long[2]) : undefined;
+  if (long && longMonth) {
+    return `${long[3]}-${longMonth}-${long[1].padStart(2, "0")}`;
+  }
   // Unreachable for any real DATE_PATTERN/ISO_DATE_PATTERN match — safe
   // fallback to the generic normalizer rather than throwing.
   return normalizeToken(raw);
@@ -243,6 +261,7 @@ function canonicalizeDateToken(raw: string): string {
 const PRIORITY_PATTERNS: { pattern: RegExp; normalize: (raw: string) => string }[] = [
   { pattern: DATE_PATTERN, normalize: canonicalizeDateToken },
   { pattern: ISO_DATE_PATTERN, normalize: canonicalizeDateToken },
+  { pattern: TURKISH_LONG_DATE_PATTERN, normalize: canonicalizeDateToken },
   { pattern: LEGAL_REF_SLASH_PATTERN, normalize: normalizeToken },
   { pattern: LEGAL_REF_PLAIN_PATTERN, normalize: normalizeToken },
   { pattern: DURATION_PATTERN, normalize: normalizeToken },
@@ -285,6 +304,37 @@ export function extractNotableTokens(text: string): Set<string> {
   return tokens;
 }
 
+// Spelled-Out Duration Canonicalization: a real, live-observed false
+// positive — TKGM's own 2024/4 Genelge text writes "oniki ayı
+// geçmeyecektir" (number in words), Job 2 correctly echoed it as
+// "12 ayı geçmemeli", and the digit-only DURATION_PATTERN found no "12 ay"
+// token on the verified side, rejecting a genuinely supported claim.
+// Applied ONLY to the verified (Job 1 fact) side in
+// findTokenBindingViolations below, so it can only ever accept a value the
+// source itself stated — slide-side strings are matched exactly as before,
+// never made more permissive. Covers 1-99 in Turkish words, written joined
+// ("oniki") or spaced ("on iki"), followed by whitespace and then a
+// duration unit — the required whitespace is what keeps an ordinary word
+// like "onay" from ever reading as "on ay".
+const TURKISH_TENS: Record<string, number> = {
+  on: 10, yirmi: 20, otuz: 30, kırk: 40, elli: 50, altmış: 60, yetmiş: 70, seksen: 80, doksan: 90,
+};
+const TURKISH_UNITS: Record<string, number> = {
+  bir: 1, iki: 2, üç: 3, dört: 4, beş: 5, altı: 6, yedi: 7, sekiz: 8, dokuz: 9,
+};
+const SPELLED_DURATION_PATTERN = new RegExp(
+  `(?<!\\p{L})(?:(${Object.keys(TURKISH_TENS).join("|")})\\s?)?(${Object.keys(TURKISH_UNITS).join("|")})?\\s+(?=(?:gün|saat|ay|yıl|sene))`,
+  "gu",
+);
+
+export function spellOutDurationsToDigits(text: string): string {
+  return text.toLocaleLowerCase("tr-TR").replace(SPELLED_DURATION_PATTERN, (whole: string, tens?: string, units?: string) => {
+    if (!tens && !units) return whole;
+    const value = (tens ? TURKISH_TENS[tens] : 0) + (units ? TURKISH_UNITS[units] : 0);
+    return `${value} `;
+  });
+}
+
 function pairKey(a: string, b: string): string {
   return a < b ? `${a}‖${b}` : `${b}‖${a}`;
 }
@@ -303,11 +353,14 @@ function pairKey(a: string, b: string): string {
 // catch). Accepts the same date shapes extractNotableTokens already
 // recognizes (DD.MM.YYYY, DD/MM/YYYY, ISO, including a full ISO
 // datetime string like "2026-09-07T00:00:00.000Z") — no new shape.
+// A full ISO datetime is read as its Turkey-local calendar date, never its
+// UTC prefix — these sources' publishedAt is Turkey midnight stored in UTC
+// ("2026-09-28T21:00:00.000Z" is the source's own 29.09.2026; see
+// turkishDate.ts's toTurkeyCalendarDate).
 function canonicalizeSourcePublishedAt(publishedAt: string): string | undefined {
-  const isoPrefix = publishedAt.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (isoPrefix) {
-    const [, year, month, day] = isoPrefix;
-    return `${year}-${month}-${day}`;
+  if (/^\d{4}-\d{2}-\d{2}/.test(publishedAt)) {
+    const date = toTurkeyCalendarDate(publishedAt);
+    return date ? `${date.year}-${date.month}-${date.day}` : undefined;
   }
   const dmyPrefix = publishedAt.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
   if (dmyPrefix) {
@@ -322,6 +375,21 @@ export function trustedSourceDateTokens(publishedAt: string | undefined): Set<st
   if (!publishedAt) return tokens;
   const canonical = canonicalizeSourcePublishedAt(publishedAt);
   if (canonical) tokens.add(canonical);
+  return tokens;
+}
+
+// Trusted Source-Title Tokens: same principle and same narrow treatment as
+// publishedAt above — the primary source's own title is deterministic
+// metadata Atlas hands Job 2 in the prompt ("Konu: ..."), not a model
+// claim. A real, live-observed false positive: a slide fact naming the
+// source document itself ("2024/4 Sayılı Genelge değişikliği hakkında
+// duyuru") was rejected because Job 1 had no separate fact for the
+// document's own number.
+export function trustedSourceMetadataTokens(source: { publishedAt?: string; title?: string } | undefined): Set<string> {
+  const tokens = trustedSourceDateTokens(source?.publishedAt);
+  if (source?.title) {
+    for (const token of extractNotableTokens(source.title)) tokens.add(token);
+  }
   return tokens;
 }
 
@@ -345,7 +413,10 @@ export function findTokenBindingViolations(
   const licensedPairs = new Set<string>();
 
   for (const fact of verifiedFacts) {
-    const tokens = Array.from(extractNotableTokens(`${fact.claim} ${fact.evidenceFragment}`));
+    const factText = `${fact.claim} ${fact.evidenceFragment}`;
+    const tokens = Array.from(
+      new Set([...extractNotableTokens(factText), ...extractNotableTokens(spellOutDurationsToDigits(factText))]),
+    );
     for (const token of tokens) allVerifiedTokens.add(token);
     for (let i = 0; i < tokens.length; i++) {
       for (let j = i + 1; j < tokens.length; j++) {

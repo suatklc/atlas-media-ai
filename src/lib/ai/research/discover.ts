@@ -4,6 +4,7 @@ import type { ContentIntent } from "../content/types";
 import type { ContentOpportunityFreshness, ResearchSource, SourceTier } from "./types";
 import type { NormalizedResearchResult, RankedContentOpportunity, RetrievalQuery, TopicFamily } from "./retrieval/types";
 import { retrieveCurrentInformation } from "./retrieval/router";
+import { toTurkeyCalendarDate } from "./retrieval/turkishDate";
 
 // Phase 2/3 (Current Content Engine — live research foundation +
 // diversity): the deterministic RETRIEVAL -> NORMALIZATION -> CONTENT
@@ -50,7 +51,11 @@ import { retrieveCurrentInformation } from "./retrieval/router";
 // was — every original term (konut, faiz, kredi, tapu, imar, fiyat,
 // piyasa, gayrimenkul) is still present, unchanged in meaning.
 const TOPIC_KEYWORD_CATEGORIES: { category: string; keywords: string[] }[] = [
-  { category: "tapu-kadastro", keywords: ["tapu", "kadastro", "takbis", "tescil"] },
+  // "taşınmaz" — the official legal term for real property (TKGM's own
+  // subject lines use it, rarely "gayrimenkul"); its absence was live-
+  // observed to drop a genuine TKGM circular on foreigners' property
+  // valuation reports ("Yabancıların Taşınmaz Edinimlerinde ...").
+  { category: "tapu-kadastro", keywords: ["tapu", "kadastro", "takbis", "tescil", "taşınmaz"] },
   { category: "imar-yapilasma", keywords: ["imar", "inşaat", "ruhsat", "kentsel dönüşüm"] },
   { category: "konut-piyasasi", keywords: ["konut", "satış", "fiyat"] },
   { category: "kira", keywords: ["kira", "kiralık"] },
@@ -273,6 +278,11 @@ function buildRiskCaveat(sources: ResearchSource[], title: string): string | und
 // results got RETRIEVED/RANKED in the first place (see buildRetrievalQuery
 // /rankContentOpportunities above/below) — relevance bias and factual
 // claims are kept strictly separate.
+function toTurkeyIsoDate(publishedAt: string): string {
+  const date = toTurkeyCalendarDate(publishedAt);
+  return date ? `${date.year}-${date.month}-${date.day}` : publishedAt.slice(0, 10);
+}
+
 export function buildContentOpportunities(
   results: NormalizedResearchResult[],
   now: Date = new Date(),
@@ -297,8 +307,10 @@ export function buildContentOpportunities(
       angle: "Bu gelişmenin gayrimenkul alıcı ve yatırımcıları için pratik anlamı",
       // No trailing period: opportunity.ts's buildSeedMessage renders this
       // as "Güncellik nedeni: ${whyNow}." — appending its own period.
+      // Turkey-local calendar day, never the UTC prefix (a Turkey-midnight
+      // publishedAt is the previous day in UTC — see turkishDate.ts).
       whyNow: result.publishedAt
-        ? `${result.publisher} tarafından ${result.publishedAt.slice(0, 10)} tarihinde yayımlandı`
+        ? `${result.publisher} tarafından ${toTurkeyIsoDate(result.publishedAt)} tarihinde yayımlandı`
         : `${result.publisher} tarafından yayımlandı; yayım tarihi bu kaynaktan doğrulanamadı`,
       keyFacts: [result.title],
       sources: [source],

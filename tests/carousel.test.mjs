@@ -90,6 +90,9 @@ const carouselStructureModule = loadTypeScriptModule(
 const directive = loadTypeScriptModule("src/lib/ai/creative/directive.ts");
 const formatRecommendation = loadTypeScriptModule("src/lib/ai/research/formatRecommendation.ts");
 const format = loadTypeScriptModule("src/lib/ai/content/format.ts");
+// Real module: generate-visual/route.ts formats the carousel source label
+// in Turkey-local time through it.
+const turkishDate = loadTypeScriptModule("src/lib/ai/research/retrieval/turkishDate.ts");
 
 // A real, minimal, valid 1x1 transparent PNG — a genuine base image the
 // resvg <image> embedding actually decodes, not a synthetic/malformed
@@ -457,6 +460,7 @@ function loadGenerateVisualRoute(overrides = {}) {
     "@/lib/ai/creative/goldStandardImagePrompt": {
       buildGoldStandardImagePrompt: () => "gold-standard-prompt",
     },
+    "@/lib/ai/research/retrieval/turkishDate": turkishDate,
   };
 
   const route = loadTypeScriptModule(
@@ -623,6 +627,7 @@ function loadGenerateVisualRouteForContentPackage() {
       validateContentPackage: () => ({ ok: true }),
     },
     "@/lib/ai/creative/goldStandardImagePrompt": { buildGoldStandardImagePrompt: () => "prompt" },
+    "@/lib/ai/research/retrieval/turkishDate": turkishDate,
   };
 
   const route = loadTypeScriptModule(

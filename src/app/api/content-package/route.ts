@@ -17,13 +17,14 @@ import {
   classifyEvidenceSufficiency,
   EVIDENCE_TEXT_MAX_CHARS,
 } from "@/lib/ai/research/retrieval/evidenceExtraction";
+import { formatTurkeyDateDMY } from "@/lib/ai/research/retrieval/turkishDate";
 import {
   FACT_CONTRACT_JSON_SCHEMA,
   filterCurrentTopicFacts,
   findTokenBindingViolations,
   isEvidenceFactArray,
   resolveScenarioBoundaryConflicts,
-  trustedSourceDateTokens,
+  trustedSourceMetadataTokens,
   type EvidenceFact,
 } from "@/lib/ai/content/factContract";
 
@@ -286,7 +287,11 @@ async function extractVerifiedFacts(
         type: "json_schema",
         json_schema: { name: "evidence_fact_contract", schema: FACT_CONTRACT_JSON_SCHEMA, strict: true },
       },
-      max_completion_tokens: 1200,
+      // 1200 was live-observed to truncate mid-JSON on a dense, real
+      // 4800-char TKGM Genelge (~10 facts of Turkish legal text) — the
+      // run then failed closed to title-only copy. Still fails closed on
+      // any truncation; this only gives a complete answer room to fit.
+      max_completion_tokens: 2400,
       messages: [
         { role: "system", content: buildFactExtractionPrompt() },
         { role: "user", content: buildFactExtractionUserMessage(opportunity, evidenceText) },
@@ -335,7 +340,11 @@ function buildUserMessage(
     `Kaynağın bildirdiği olgular: ${opportunity.keyFacts.join("; ")}`,
   ];
   if (source) {
-    lines.push(`Kaynak: ${source.publisher} — ${source.url} — ${source.publishedAt}`);
+    // Turkey-local calendar date, never the raw UTC instant — see
+    // turkishDate.ts's toTurkeyCalendarDate for the live-observed
+    // one-day-early defect this prevents.
+    const sourceDate = formatTurkeyDateDMY(source.publishedAt) ?? source.publishedAt;
+    lines.push(`Kaynak: ${source.publisher} — ${source.url} — ${sourceDate}`);
 
     if (evidence.mode === "verified") {
       // Verified Fact Contract: this is now the ONLY factual boundary
@@ -368,7 +377,7 @@ function buildUserMessage(
         lines.push("GERÇEK KAYNAK METNİ: YOK");
       }
       lines.push(
-        `Bu kaynak için ayrıntılı doğrulanmış bilgi YOK; yalnızca başlık düzeyinde bilgi var say. Tarih, tutar, belge zorunluluğu, işlem sonucu, yüzde, ücret, istatistik gibi HİÇBİR kesin ayrıntıyı UYDURMA. Yayım tarihi (${source.publishedAt}) bir yürürlük/başlangıç/son tarihi OLARAK sunulamaz.`,
+        `Bu kaynak için ayrıntılı doğrulanmış bilgi YOK; yalnızca başlık düzeyinde bilgi var say. Tarih, tutar, belge zorunluluğu, işlem sonucu, yüzde, ücret, istatistik gibi HİÇBİR kesin ayrıntıyı UYDURMA. Yayım tarihi (${sourceDate}) bir yürürlük/başlangıç/son tarihi OLARAK sunulamaz.`,
       );
     }
   }
@@ -555,7 +564,7 @@ export async function POST(request: NextRequest) {
     // buildUserMessage's "Kaynak: ..." line) — Job 2 stating it back
     // is not an unverified claim, even when Job 1 didn't separately
     // extract it as a fact.
-    const trustedTokens = trustedSourceDateTokens(primarySource?.publishedAt);
+    const trustedTokens = trustedSourceMetadataTokens(primarySource);
     const bindingViolations = findTokenBindingViolations(evidencePresentation.facts, slideFactStrings, trustedTokens);
     if (bindingViolations.length > 0) {
       console.error("Content package failed token-binding check:", bindingViolations);

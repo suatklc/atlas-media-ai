@@ -59,6 +59,8 @@ function loadRealTsModule(absPath) {
   return moduleObj.exports;
 }
 
+// Real module — discover.ts renders whyNow in Turkey-local time through it.
+const turkishDateForDiscover = loadTypeScriptModule("src/lib/ai/research/retrieval/turkishDate.ts");
 const sourceQuality = loadTypeScriptModule("src/lib/ai/research/retrieval/sourceQuality.ts", () => ({}), { URL });
 const evidenceExtraction = loadTypeScriptModule("src/lib/ai/research/retrieval/evidenceExtraction.ts");
 
@@ -283,6 +285,7 @@ test("discover.ts's buildContentOpportunities propagates a real evidenceText int
     (specifier) => {
       if (specifier === "../context/businessProfile") return businessProfile;
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => [] };
+      if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
       return {};
     },
     { URL },

@@ -23,6 +23,7 @@ import { buildSeedMessage, isContentOpportunity } from "@/lib/ai/research/opport
 import { isVisualFormat, buildFormatSuffix } from "@/lib/ai/research/formatRecommendation";
 import { isContentPackage, validateContentPackage, type ContentPackage } from "@/lib/ai/content/contentPackage";
 import { buildGoldStandardImagePrompt } from "@/lib/ai/creative/goldStandardImagePrompt";
+import { formatTurkeyDateLong } from "@/lib/ai/research/retrieval/turkishDate";
 
 const MAX_MESSAGE_LENGTH = 4000;
 // Kept aligned with AIAssistantPanel.tsx's own extractor bound — a full
@@ -59,11 +60,13 @@ const MAX_CAROUSEL_CONSIDERATIONS = 4;
 // opportunity carried no source.
 function buildCarouselSourceLabel(source: { publisher: string; publishedAt: string } | undefined): string | undefined {
   if (!source) return undefined;
-  const date = new Date(source.publishedAt);
-  if (Number.isNaN(date.getTime())) {
+  // Turkey-local, never the server timezone: on Vercel (UTC) a Turkey-
+  // midnight publishedAt formatted with toLocaleDateString printed the
+  // previous day (see turkishDate.ts's toTurkeyCalendarDate).
+  const formatted = formatTurkeyDateLong(source.publishedAt);
+  if (!formatted) {
     return source.publisher;
   }
-  const formatted = date.toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" });
   return `${source.publisher} · ${formatted}`;
 }
 

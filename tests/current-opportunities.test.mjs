@@ -23,12 +23,15 @@ function loadTypeScriptModule(relativePath, dependencyLoader = () => ({}), globa
   return loadedModule.exports;
 }
 
+// Real module — discover.ts renders whyNow in Turkey-local time through it.
+const turkishDateForDiscover = loadTypeScriptModule("src/lib/ai/research/retrieval/turkishDate.ts");
 const businessProfile = loadTypeScriptModule("src/lib/ai/context/businessProfile.ts");
 const discover = loadTypeScriptModule(
   "src/lib/ai/research/discover.ts",
   (specifier) => {
     if (specifier === "../context/businessProfile") return businessProfile;
     if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => [] };
+    if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
     return {};
   },
   { URL },
@@ -111,6 +114,7 @@ test("maxAgeDays end-to-end via discoverCurrentContentOpportunities: old Februar
     (specifier) => {
       if (specifier === "../context/businessProfile") return businessProfile;
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => fixedResults };
+      if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
       return {};
     },
     { URL },
@@ -132,6 +136,7 @@ test("maxAgeDays: a missing publication date is never treated as current", async
     (specifier) => {
       if (specifier === "../context/businessProfile") return businessProfile;
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => fixedResults };
+      if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
       return {};
     },
     { URL },
@@ -157,6 +162,7 @@ test("maxAgeDays: fewer than the requested limit is returned rather than padding
     (specifier) => {
       if (specifier === "../context/businessProfile") return businessProfile;
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => fixedResults };
+      if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
       return {};
     },
     { URL },
@@ -177,6 +183,7 @@ test("maxAgeDays omitted (undefined): existing callers/tests are byte-for-byte u
     (specifier) => {
       if (specifier === "../context/businessProfile") return businessProfile;
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => fixedResults };
+      if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
       return {};
     },
     { URL },

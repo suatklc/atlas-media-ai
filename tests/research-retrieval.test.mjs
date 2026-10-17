@@ -28,6 +28,8 @@ function loadTypeScriptModule(relativePath, dependencyLoader = () => ({}), globa
 // (see the same established pattern in tests/meta-oauth-callback.test.mjs)
 // — vm.runInNewContext's isolated global object does not include Node's
 // globals unless explicitly passed in here.
+// Real module — discover.ts renders whyNow in Turkey-local time through it.
+const turkishDateForDiscover = loadTypeScriptModule("src/lib/ai/research/retrieval/turkishDate.ts");
 const sourceQuality = loadTypeScriptModule("src/lib/ai/research/retrieval/sourceQuality.ts", () => ({}), { URL });
 const turkishDate = loadTypeScriptModule("src/lib/ai/research/retrieval/turkishDate.ts");
 // Source-Grounding Minimal Fix: real (not mocked) module — tkgm.ts's and
@@ -42,6 +44,7 @@ const discover = loadTypeScriptModule(
   (specifier) => {
     if (specifier === "../context/businessProfile") return businessProfile;
     if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => [] };
+    if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
     return {};
   },
   { URL },
@@ -184,6 +187,15 @@ test("duplicate-event deduplication: same URL from two feeds becomes one opportu
   ];
   const opportunities = discover.buildContentOpportunities(results, now);
   assert.equal(opportunities.length, 2);
+});
+
+test("whyNow states the source's own Turkish calendar day, never the UTC prefix of a Turkey-midnight publishedAt", () => {
+  // Real live-observed case: TKGM card "29 Eylül 2026" -> 2026-09-28T21:00:00.000Z.
+  const [opportunity] = discover.buildContentOpportunities(
+    [makeResult({ title: "2024/4 Sayılı Genelge Değişikliği", url: "https://www.tkgm.gov.tr/d/1", publishedAt: "2026-09-28T21:00:00.000Z" })],
+    new Date("2026-10-17T00:00:00.000Z"),
+  );
+  assert.match(opportunity.whyNow, /2026-09-29 tarihinde yayımlandı/);
 });
 
 // ============================================================
@@ -488,6 +500,7 @@ test("tkgm.ts: an unparsable date is left as explicit unknown, never guessed", a
     (specifier) => {
       if (specifier === "../sourceQuality") return sourceQuality;
       if (specifier === "../turkishDate") return turkishDate;
+      if (specifier === "../evidenceExtraction") return evidenceExtraction;
       return {};
     },
     { fetch: makeMockFetch(badDateHtml), URL, TextEncoder, Buffer, AbortController, setTimeout, clearTimeout, console: { error: () => {}, log: () => {}, warn: () => {} } },
@@ -496,6 +509,53 @@ test("tkgm.ts: an unparsable date is left as explicit unknown, never guessed", a
   const results = await tkgm.fetchTkgmAnnouncements();
   assert.ok(results.length > 0);
   assert.ok(results.every((r) => r.publishedAt === ""));
+});
+
+// Real tkgm.gov.tr markup as of 2026-10: card titles are now wrapped in
+// inline rich-text markup (live-observed regression — raw <span>/<p> HTML
+// reached opportunity titles and the dashboard).
+const TKGM_WRAPPED_TITLE_HTML = `<a class="group block border-[#E4E4E7] rounded-[10px] border  p-4" href="/duyurular/20244-sayili-genelge-degisikligi-hakkinda-duyuru"><div class="flex flex-col gap-4"><h3 class="line-clamp-2 text-lg font-semibold"><span class="[&amp;_*]:![font-family:inherit] [&amp;_p]:inline [&amp;_p]:m-0"><p>2024/4 Sayılı Genelge Değişikliği Hakkında Duyuru </p></span></h3><div class="flex items-center justify-between"><span class="rounded-full">Duyuru</span><p class="text-[15px] font-medium text-gray-500">29 Eylül 2026</p></div></div></a>`;
+
+test("tkgm.ts: a rich-text-wrapped card title is reduced to plain text, never raw HTML", async () => {
+  const tkgm = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/tkgm.ts",
+    (specifier) => {
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../turkishDate") return turkishDate;
+      if (specifier === "../evidenceExtraction") return evidenceExtraction;
+      return {};
+    },
+    { fetch: makeMockFetch(TKGM_WRAPPED_TITLE_HTML), URL, TextEncoder, Buffer, AbortController, setTimeout, clearTimeout, Promise, console: { error: () => {}, log: () => {}, warn: () => {} } },
+  );
+
+  const results = await tkgm.fetchTkgmAnnouncements();
+  assert.ok(results.length > 0);
+  for (const result of results) {
+    assert.equal(result.title, "2024/4 Sayılı Genelge Değişikliği Hakkında Duyuru");
+    assert.doesNotMatch(result.snippet, /<|&amp;/);
+  }
+});
+
+test("tkgm.ts: extractSubjectLine reads the official 'Konu :' subject from real TKGM PDF text, bounded by the next heading", () => {
+  const tkgm = loadTypeScriptModule("src/lib/ai/research/retrieval/providers/tkgm.ts", (specifier) =>
+    specifier === "../evidenceExtraction" ? evidenceExtraction : {},
+  );
+  assert.equal(
+    tkgm.extractSubjectLine(
+      "13.06.2024Sayı : E-36189470-125.01.01-12973768 Konu : Türk Vatandaşlığı Kanununun Uygulanmasına İlişkin Yönetmelik Hk İlgi GENELGE 2024/4 : a) 11/06/2024 tarihli",
+    ),
+    "Türk Vatandaşlığı Kanununun Uygulanmasına İlişkin Yönetmelik Hk",
+  );
+  assert.equal(
+    tkgm.extractSubjectLine(
+      "1 / 8 Sayı : E-76015859-010.06.02-11942959 01/03/2024 Konu:Yabancıların Taşınmaz Edinimlerinde ve Bazı İşlemlerde Kullanılacak Değerleme Raporlarına İlişkin Usul ve Esaslar GENELGE 2024/2 İlgi : a)",
+    ),
+    "Yabancıların Taşınmaz Edinimlerinde ve Bazı İşlemlerde Kullanılacak Değerleme Raporlarına İlişkin Usul ve Esaslar",
+  );
+  // No "Konu" line, or no terminating heading within the bound -> absent,
+  // never a guessed subject.
+  assert.equal(tkgm.extractSubjectLine("Duyuru metni için tıklayınız."), undefined);
+  assert.equal(tkgm.extractSubjectLine(`Konu : ${"uzun metin ".repeat(40)}`), undefined);
 });
 
 // ============================================================

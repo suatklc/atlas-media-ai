@@ -1,7 +1,12 @@
 import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { parseTurkishLongDate } from "../turkishDate";
-import { toEvidenceTextOrUndefined, extractPdfTextOrUndefined, MAX_PDF_BYTES } from "../evidenceExtraction";
+import {
+  toEvidenceTextOrUndefined,
+  extractPdfTextOrUndefined,
+  stripHtmlToText,
+  MAX_PDF_BYTES,
+} from "../evidenceExtraction";
 
 // LIVE, real provider — the Turkish Land Registry and Cadastre General
 // Directorate (TKGM)'s own public announcement/news listing pages. No API
@@ -74,7 +79,11 @@ function extractListingItems(html: string, basePath: string): { title: string; u
 
   while ((match = pattern.exec(html))) {
     const url = match[1].trim();
-    const title = match[2].trim();
+    // TKGM's markup now wraps each card title in inline rich-text markup
+    // (<span class="..."><p>TITLE</p></span>, verified live 2026-10) —
+    // reduced to plain text so raw HTML never reaches a title/snippet,
+    // relevance matching, or the dashboard.
+    const title = stripHtmlToText(match[2]);
     const dateText = match[3].trim();
     if (title && url) {
       items.push({ title, url, dateText });
@@ -151,6 +160,22 @@ async function fetchPdfBytes(url: string): Promise<Uint8Array> {
   }
 }
 
+// TKGM's official correspondence (the linked PDF) states its own subject
+// on a "Konu :" line, terminated by the next all-caps heading ("GENELGE",
+// "GENEL MÜDÜRLÜK MAKAMINA", ...) or the "İlgi" references block —
+// verified live against multiple real announcements. Many TKGM card
+// titles carry no subject at all (e.g. "2024/2 Sayılı Genelge
+// Güncellemesi Hakkında Duyuru"), so without this the item's snippet is
+// just a repeat of an uninformative title. Genuine source text only; no
+// match within the bound -> undefined, and the snippet stays the title.
+const SUBJECT_LINE_PATTERN = /Konu\s*:\s*([\s\S]{3,200}?)(?=\s+(?:İlgi\b|[A-ZÇĞİÖŞÜ]{4,}\b))/u;
+
+export function extractSubjectLine(evidenceText: string): string | undefined {
+  const match = evidenceText.match(SUBJECT_LINE_PATTERN);
+  const subject = match?.[1].replace(/\s+/g, " ").trim();
+  return subject ? subject : undefined;
+}
+
 async function attachDetailPageEvidence(results: NormalizedResearchResult[]): Promise<void> {
   await Promise.allSettled(
     results.slice(0, MAX_DETAIL_FETCHES).map(async (result) => {
@@ -215,6 +240,13 @@ export async function fetchTkgmAnnouncements(): Promise<NormalizedResearchResult
   }
 
   await attachDetailPageEvidence(results);
+
+  for (const result of results) {
+    const subject = result.evidenceText ? extractSubjectLine(result.evidenceText) : undefined;
+    if (subject) {
+      result.snippet = `${result.title} — Konu: ${subject}`;
+    }
+  }
 
   return results;
 }
