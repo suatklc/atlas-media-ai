@@ -32,6 +32,17 @@ import {
   trustedSourceMetadataTokens,
   type EvidenceFact,
 } from "@/lib/ai/content/factContract";
+import {
+  buildEditorialGatePrompt,
+  buildEditorialGateUserMessage,
+  EDITORIAL_GATE_SCHEMA_NAME,
+  findNewFactTokens,
+  GATE_CATEGORIES,
+  isEditorialGateResult,
+  shouldRevise,
+  type EditorialGateResult,
+  type EditorialRevisionOutcome,
+} from "@/lib/ai/content/editorialRevision";
 
 // Gold Standard V1 — the structured generation path for Current Content
 // Radar opportunities. Deliberately separate from /api/assistant (which
@@ -108,6 +119,21 @@ const CONTENT_PACKAGE_JSON_SCHEMA = {
     facts: { type: "array", items: FACT_SCHEMA },
   },
   required: ["topic", "source", "hook", "caption", "hashtags", "slides", "facts"],
+  additionalProperties: false,
+};
+
+// Editorial Quality Repair — the gate+revise call's output (see
+// editorialRevision.ts). `revised` is the same package shape as Job 2's,
+// or null when the gate passes or the failure isn't wording-level.
+const EDITORIAL_GATE_JSON_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    verdict: { type: "string", enum: ["PASS", "FAIL"] },
+    failCategories: { type: "array", items: { type: "string", enum: [...GATE_CATEGORIES] } },
+    issues: { type: "array", items: { type: "string" } },
+    revised: { anyOf: [CONTENT_PACKAGE_JSON_SCHEMA, { type: "null" }] },
+  },
+  required: ["verdict", "failCategories", "issues", "revised"],
   additionalProperties: false,
 };
 
@@ -468,7 +494,7 @@ export async function POST(request: NextRequest) {
   const format = rawVisualFormat;
   const expectedSlideCount = format === "carousel" ? 5 : 1;
 
-  let openai;
+  let openai: ReturnType<typeof getOpenAITextClient>;
   try {
     openai = getOpenAITextClient();
   } catch {
@@ -573,60 +599,147 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Stamp the deterministic index/role sequence and the caller's own
-  // format choice — never read from the model's own output.
-  const slides: ContentSlide[] = modelPackage.slides.map((slide, i) => ({
-    index: i + 1,
-    role: roleSequence[i],
-    headline: slide.headline,
-    body: slide.body,
-    facts: slide.facts,
-    visualBrief: slide.visualBrief,
-  }));
+  const verifiedFacts = evidencePresentation.mode === "verified" ? evidencePresentation.facts : [];
+  const verifiedClaims = verifiedFacts.map((f) => f.claim);
+  const trustedTokens = trustedSourceMetadataTokens(primarySource);
 
-  const verifiedClaims = evidencePresentation.mode === "verified" ? evidencePresentation.facts.map((f) => f.claim) : [];
-
-  const contentPackage: ContentPackage = {
-    topic: modelPackage.topic,
-    source: modelPackage.source,
-    hook: modelPackage.hook,
-    caption: ensureSignature(modelPackage.caption),
-    hashtags: sanitizeLocalityHashtags(modelPackage.hashtags, contentOpportunity.topic, verifiedClaims),
+  // One assembly path for BOTH Job 2's package and the editorial
+  // revision (below), so a revision can never skip a normalization step.
+  const assemblePackage = (model: ModelPackage): ContentPackage => ({
+    topic: model.topic,
+    source: model.source,
+    hook: model.hook,
+    caption: ensureSignature(model.caption),
+    hashtags: sanitizeLocalityHashtags(model.hashtags, contentOpportunity.topic, verifiedClaims),
+    // Stamp the deterministic index/role sequence and the caller's own
+    // format choice — never read from the model's own output.
     format,
-    slides,
+    slides: model.slides.map((slide, i) => ({
+      index: i + 1,
+      role: roleSequence[i],
+      headline: slide.headline,
+      body: slide.body,
+      facts: slide.facts,
+      visualBrief: slide.visualBrief,
+    })),
     // Deterministic Calendar-Date Fact Sanitizer: strips the exact
     // proven invalid pattern (a date decomposed into role="component"
     // facts) before validation runs, so this specific model mistake
     // degrades to a smaller/possibly-empty facts[] rather than failing
     // the whole package.
-    facts: sanitizeCalendarDateFacts(modelPackage.facts),
+    facts: sanitizeCalendarDateFacts(model.facts),
+  });
+
+  // One safety path for both, too: returns the first failure reason, or
+  // null when the package passes every deterministic check.
+  const findSafetyViolation = (candidate: ContentPackage): string | null => {
+    const validation = validateContentPackage(candidate);
+    if (!validation.ok) return `validation: ${validation.reason}`;
+    // Verified Token-to-Claim Binding Check (Gap 2, narrow slice): only
+    // meaningful when there's a verified fact set to bind against — a
+    // proven, live-observed defect where Job 2 combined a date verified
+    // under one fact with a different fact's subject inside one slide's
+    // facts[] string, asserting a claim neither fact actually made.
+    // trustedTokens: the primary source's own publishedAt/title are
+    // handed to Job 2 directly in the prompt — stating them back is not
+    // an unverified claim.
+    if (evidencePresentation.mode === "verified") {
+      const slideFactStrings = candidate.slides.flatMap((slide) => slide.facts);
+      const bindingViolations = findTokenBindingViolations(verifiedFacts, slideFactStrings, trustedTokens);
+      if (bindingViolations.length > 0) return `token-binding: ${bindingViolations.join(" | ")}`;
+    }
+    return null;
   };
 
-  const validation = validateContentPackage(contentPackage);
-  if (!validation.ok) {
-    console.error("Content package failed deterministic validation:", validation.reason);
+  const contentPackage = assemblePackage(modelPackage);
+  const violation = findSafetyViolation(contentPackage);
+  if (violation) {
+    console.error("Content package failed deterministic checks:", violation);
     return jsonError("Oluşturulan içerik paketi doğrulamadan geçemedi. Lütfen tekrar deneyin.", 502);
   }
 
-  // Verified Token-to-Claim Binding Check (Gap 2, narrow slice): only
-  // meaningful when there's a verified fact set to bind against — a
-  // proven, live-observed defect where Job 2 combined a date verified
-  // under one fact with a different fact's subject inside one slide's
-  // facts[] string, asserting a claim neither fact actually made.
-  if (evidencePresentation.mode === "verified") {
-    const slideFactStrings = slides.flatMap((slide) => slide.facts);
-    // Trusted Source-Metadata Token: the primary source's own
-    // publishedAt is handed to Job 2 directly in the prompt (see
-    // buildUserMessage's "Kaynak: ..." line) — Job 2 stating it back
-    // is not an unverified claim, even when Job 1 didn't separately
-    // extract it as a fact.
-    const trustedTokens = trustedSourceMetadataTokens(primarySource);
-    const bindingViolations = findTokenBindingViolations(evidencePresentation.facts, slideFactStrings, trustedTokens);
-    if (bindingViolations.length > 0) {
-      console.error("Content package failed token-binding check:", bindingViolations);
-      return jsonError("Oluşturulan içerik paketi doğrulamadan geçemedi. Lütfen tekrar deneyin.", 502);
-    }
-  }
+  // Editorial Quality Repair (final step, max ONE attempt) — see
+  // editorialRevision.ts. Never blocks: any failure keeps the original,
+  // which has already passed every check above.
+  const { finalPackage, outcome } = await runEditorialQualityRepair(contentPackage);
+  console.log(
+    `Editorial gate: verdict=${outcome.verdict} categories=${outcome.failCategories.join(",") || "-"} revisionTriggered=${outcome.triggered}${
+      outcome.triggered ? ` revisionAccepted=${outcome.accepted}` : ""
+    }${outcome.reason ? ` reason=${outcome.reason}` : ""}`,
+  );
 
-  return Response.json({ contentPackage });
+  return Response.json({ contentPackage: finalPackage, editorialRevision: outcome });
+
+  async function runEditorialQualityRepair(
+    original: ContentPackage,
+  ): Promise<{ finalPackage: ContentPackage; outcome: EditorialRevisionOutcome }> {
+    // OFF unless explicitly enabled: live-measured (2026-10-17, 4 gated
+    // TKGM runs) it did not raise independent Quality Gate scores and once
+    // widened a rule's audience — a semantic change no deterministic guard
+    // here can detect. Disabled = exactly the pre-revision pipeline.
+    if (process.env.EDITORIAL_REVISION_ENABLED !== "true") {
+      return { finalPackage: original, outcome: { triggered: false, verdict: "DISABLED", failCategories: [] } };
+    }
+    let gate: EditorialGateResult & { revised: ModelPackage | null };
+    try {
+      const completion = await openai.chat.completions.create({
+        model: CONTENT_PACKAGE_EDITORIAL_MODEL,
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: EDITORIAL_GATE_SCHEMA_NAME, schema: EDITORIAL_GATE_JSON_SCHEMA, strict: true },
+        },
+        max_completion_tokens: 6000,
+        messages: [
+          { role: "system", content: buildEditorialGatePrompt() },
+          { role: "user", content: buildEditorialGateUserMessage(userMessage, original) },
+        ],
+      });
+      const raw = completion.choices[0]?.message?.content;
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      if (!isEditorialGateResult(parsed)) throw new Error("malformed gate response");
+      gate = parsed as EditorialGateResult & { revised: ModelPackage | null };
+    } catch (error) {
+      return {
+        finalPackage: original,
+        outcome: {
+          triggered: false,
+          verdict: "UNAVAILABLE",
+          failCategories: [],
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+
+    if (!shouldRevise(gate)) {
+      return {
+        finalPackage: original,
+        outcome: {
+          triggered: false,
+          verdict: gate.verdict,
+          failCategories: gate.failCategories,
+          reason: gate.verdict === "FAIL" ? "non-revisable category — original kept for review" : undefined,
+        },
+      };
+    }
+
+    const reject = (reason: string) => ({
+      finalPackage: original,
+      outcome: { triggered: true as const, verdict: "FAIL" as const, failCategories: gate.failCategories, accepted: false, reason },
+    });
+    const revisedModel = gate.revised;
+    if (!revisedModel || !Array.isArray(revisedModel.slides) || revisedModel.slides.length !== expectedSlideCount) {
+      return reject("revision missing or wrong slide count");
+    }
+    // topic/source are never the revision's to change.
+    const revised = assemblePackage({ ...revisedModel, topic: original.topic, source: original.source });
+    const revisedViolation = findSafetyViolation(revised);
+    if (revisedViolation) return reject(revisedViolation);
+    const newTokens = findNewFactTokens(original, revised, verifiedFacts, trustedTokens);
+    if (newTokens.length > 0) return reject(`new fact tokens: ${newTokens.join(", ")}`);
+
+    return {
+      finalPackage: revised,
+      outcome: { triggered: true, verdict: "FAIL", failCategories: gate.failCategories, accepted: true },
+    };
+  }
 }

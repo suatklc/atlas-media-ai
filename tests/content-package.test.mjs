@@ -73,6 +73,10 @@ const turkishDate = loadTypeScriptModule("src/lib/ai/research/retrieval/turkishD
 const factContract = loadTypeScriptModule("src/lib/ai/content/factContract.ts", (specifier) =>
   specifier.includes("evidenceExtraction") ? evidenceExtraction : specifier.includes("turkishDate") ? turkishDate : {},
 );
+// Editorial Quality Repair: real module, wired to the real factContract.
+const editorialRevision = loadTypeScriptModule("src/lib/ai/content/editorialRevision.ts", (specifier) =>
+  specifier === "./factContract" ? factContract : {},
+);
 
 function makeSlide(overrides) {
   return {
@@ -356,7 +360,7 @@ test("/api/content-package stamps format from the caller's own validated input, 
   // "format" is deliberately absent from CONTENT_PACKAGE_JSON_SCHEMA's own
   // properties — the model is never even given a field to decide it in.
   assert.doesNotMatch(routeSource, /properties:\s*\{[^}]*format/s);
-  assert.match(routeSource, /format,\s*\n\s*slides,/);
+  assert.match(routeSource, /format,\s*\n\s*slides[,:]/);
 });
 
 test("generate-visual route's Gold Standard branch never sets status to 'approved'/'posted' and never calls a publish function", () => {
@@ -429,6 +433,7 @@ function loadContentPackageRoute(overrides = {}) {
     completionCalls: 0,
     factExtractionCalls: 0,
     contentPackageCalls: 0,
+    editorialGateCalls: 0,
     lastMessages: null,
     lastFactExtractionMessages: null,
   };
@@ -488,6 +493,14 @@ function loadContentPackageRoute(overrides = {}) {
                   choices: response === "malformed" ? [{ message: { content: "not json" } }] : [{ message: { content: JSON.stringify(response) } }],
                 };
               }
+              if (schemaName === "editorial_gate") {
+                state.editorialGateCalls += 1;
+                state.lastEditorialGateMessages = args.messages;
+                state.lastEditorialGateModel = args.model;
+                if (overrides.editorialGateError) throw overrides.editorialGateError;
+                const gateResponse = overrides.editorialGateResponse ?? { verdict: "PASS", failCategories: [], issues: [], revised: null };
+                return { choices: [{ message: { content: JSON.stringify(gateResponse) } }] };
+              }
               state.contentPackageCalls += 1;
               state.lastMessages = args.messages;
               state.lastContentPackageModel = args.model;
@@ -523,19 +536,31 @@ function loadContentPackageRoute(overrides = {}) {
     },
     "@/lib/ai/research/retrieval/evidenceExtraction": evidenceExtraction,
     "@/lib/ai/content/factContract": factContract,
+    "@/lib/ai/content/editorialRevision": editorialRevision,
     "@/lib/ai/research/retrieval/turkishDate": turkishDate,
   };
 
   const route = loadTypeScriptModule(
     "src/app/api/content-package/route.ts",
     (specifier) => defaultDeps[specifier] ?? {},
-    { Response, Buffer, process, JSON, console },
+    {
+      Response,
+      Buffer,
+      // Editorial Quality Repair is OFF by default in production; route
+      // tests exercise it ON unless a test opts out.
+      process: { ...process, env: { ...process.env, EDITORIAL_REVISION_ENABLED: overrides.editorialRevisionDisabled ? "" : "true" } },
+      JSON,
+      console,
+    },
   );
 
   return { route, state };
 }
 
-test("/api/content-package makes exactly ONE OpenAI generation call per request — never a second call to reformat", async () => {
+// Updated for Editorial Quality Repair (approved by Suat, 2026-10-17):
+// still exactly ONE content-generation call; the only other call is the
+// single editorial gate(+revise) call — never a loop, never a regeneration.
+test("/api/content-package makes exactly ONE content-generation call plus at most ONE editorial gate call per request", async () => {
   const { route, state } = loadContentPackageRoute();
   const request = {
     json: async () => ({
@@ -547,7 +572,9 @@ test("/api/content-package makes exactly ONE OpenAI generation call per request 
   const response = await route.POST(request);
   const body = await response.json();
 
-  assert.equal(state.completionCalls, 1);
+  assert.equal(state.contentPackageCalls, 1);
+  assert.equal(state.editorialGateCalls, 1);
+  assert.equal(state.completionCalls, 2);
   assert.equal(body.contentPackage.format, "carousel");
   assert.equal(body.contentPackage.slides.length, 5);
 });
@@ -2501,4 +2528,190 @@ test("extractNotableTokens: a thousand-grouped amount equals its bare digits (re
   assert.deepEqual([...factContract.extractNotableTokens("1.000.000 Amerikan Doları")], ["1000000"]);
   assert.deepEqual([...factContract.extractNotableTokens("1000000 Amerikan Doları")], ["1000000"]);
   assert.deepEqual([...factContract.extractNotableTokens("400.000 USD")], [...factContract.extractNotableTokens("400000 USD")]);
+});
+
+// ============================================================
+// Editorial Quality Repair (approved by Suat, 2026-10-17) — the final,
+// single gate+revise step. A revision is accepted only when it passes the
+// same validation + Gap 2 checks as the original AND introduces no new
+// fact token; anything else falls back to the already-safe original.
+// ============================================================
+
+const VERIFIED_SALE_FACT = {
+  claim: "Satışta deprem sigortası poliçesi 1 Ekim 2026'dan itibaren zorunlu.",
+  evidenceFragment: "1 Ekim 2026 tarihinden itibaren zorunlu olacağını",
+  status: "current-topic",
+};
+
+function makeRevisionModel(overrides = {}) {
+  const slide = (n, extra = {}) => ({ headline: `Revize H${n}`, body: `Revize B${n}`, facts: [], visualBrief: `v${n}`, ...extra });
+  return {
+    topic: "MODEL_TOPIC_CHANGE_ATTEMPT",
+    source: { name: "BAŞKA", url: "https://evil.example", publishedAt: "2020-01-01" },
+    hook: "Ev satıyorsanız deprem sigortası şartını kaçırmayın.",
+    caption: "Revize caption. Sorularınız için mesaj atabilirsiniz.",
+    hashtags: ["#Tapu", "#Gayrimenkul", "#DASK", "#KonutSatışı", "#GayrimenkulYatırımı"],
+    slides: [slide(1), slide(2), slide(3), slide(4), slide(5)],
+    facts: [],
+    ...overrides,
+  };
+}
+
+function loadRevisionRoute(gateResponse, extra = {}) {
+  return loadContentPackageRoute({
+    factContractResponse: { facts: [VERIFIED_SALE_FACT] },
+    editorialGateResponse: gateResponse,
+    ...extra,
+  });
+}
+
+async function postWithEvidence(route) {
+  const response = await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  return response.json();
+}
+
+test("editorial repair: a gate PASS keeps Job 2's package unchanged and never triggers a revision", async () => {
+  const { route, state } = loadRevisionRoute({ verdict: "PASS", failCategories: [], issues: [], revised: null });
+  const body = await postWithEvidence(route);
+  assert.equal(state.editorialGateCalls, 1);
+  assert.equal(body.contentPackage.slides[0].headline, "H1");
+  assert.equal(body.editorialRevision.triggered, false);
+  assert.equal(body.editorialRevision.verdict, "PASS");
+});
+
+test("editorial repair: a wording-level FAIL with a clean revision is accepted — topic/source stay the original's", async () => {
+  const { route, state } = loadRevisionRoute({
+    verdict: "FAIL",
+    failCategories: ["repetition", "style"],
+    issues: ["slide 3 repeats slide 1"],
+    revised: makeRevisionModel(),
+  });
+  const body = await postWithEvidence(route);
+  assert.equal(state.contentPackageCalls, 1);
+  assert.equal(state.editorialGateCalls, 1);
+  assert.equal(body.contentPackage.slides[0].headline, "Revize H1");
+  assert.equal(body.contentPackage.topic, "Deprem sigortası zorunluluğu");
+  assert.equal(body.contentPackage.source.url, "https://example.com/duyuru");
+  assert.match(body.contentPackage.caption, /Suat Kılıç\nGayrimenkul Yatırım Danışmanı$/);
+  assert.equal(body.contentPackage.slides[4].role, "cta");
+  assert.equal(body.editorialRevision.triggered, true);
+  assert.equal(body.editorialRevision.accepted, true);
+});
+
+test("editorial repair: a revision that introduces a NEW fact token is discarded — original returned", async () => {
+  const { route } = loadRevisionRoute({
+    verdict: "FAIL",
+    failCategories: ["style"],
+    issues: ["weak hook"],
+    revised: makeRevisionModel({ caption: "Başvuru 30 gün içinde yapılmalı." }),
+  });
+  const body = await postWithEvidence(route);
+  assert.equal(body.contentPackage.slides[0].headline, "H1");
+  assert.equal(body.editorialRevision.accepted, false);
+  assert.match(body.editorialRevision.reason, /new fact tokens: 30 gün/);
+});
+
+test("editorial repair: a revision whose slide facts fail Gap 2 token binding is discarded", async () => {
+  const revised = makeRevisionModel();
+  revised.slides[1] = { ...revised.slides[1], facts: ["2025/8 sayılı Genelge 1 Ekim 2026'dan itibaren uygulanır."] };
+  const { route } = loadRevisionRoute({ verdict: "FAIL", failCategories: ["writing"], issues: ["x"], revised });
+  const body = await postWithEvidence(route);
+  assert.equal(body.contentPackage.slides[0].headline, "H1");
+  assert.equal(body.editorialRevision.accepted, false);
+  assert.match(body.editorialRevision.reason, /token-binding/);
+});
+
+test("editorial repair: a revision that fails validateContentPackage is discarded", async () => {
+  const { route } = loadRevisionRoute(
+    { verdict: "FAIL", failCategories: ["style"], issues: ["x"], revised: makeRevisionModel({ hook: "BAD" }) },
+    { validateContentPackage: (pkg) => (pkg.hook === "BAD" ? { ok: false, reason: "bad hook" } : { ok: true }) },
+  );
+  const body = await postWithEvidence(route);
+  assert.equal(body.contentPackage.slides[0].headline, "H1");
+  assert.equal(body.editorialRevision.accepted, false);
+  assert.match(body.editorialRevision.reason, /validation: bad hook/);
+});
+
+test("editorial repair: a revision with the wrong slide count is discarded", async () => {
+  const revised = makeRevisionModel();
+  revised.slides = revised.slides.slice(0, 4);
+  const { route } = loadRevisionRoute({ verdict: "FAIL", failCategories: ["repetition"], issues: ["x"], revised });
+  const body = await postWithEvidence(route);
+  assert.equal(body.contentPackage.slides.length, 5);
+  assert.equal(body.contentPackage.slides[0].headline, "H1");
+  assert.equal(body.editorialRevision.accepted, false);
+});
+
+test("editorial repair: a FAIL that includes a factual or audience category is NEVER revised — original kept for review", async () => {
+  for (const category of ["factual", "audience"]) {
+    const { route } = loadRevisionRoute({
+      verdict: "FAIL",
+      failCategories: ["style", category],
+      issues: ["x"],
+      revised: makeRevisionModel(),
+    });
+    const body = await postWithEvidence(route);
+    assert.equal(body.contentPackage.slides[0].headline, "H1");
+    assert.equal(body.editorialRevision.triggered, false);
+    assert.match(body.editorialRevision.reason, /non-revisable/);
+  }
+});
+
+test("editorial repair: a gate call failure or malformed response keeps the original — never blocks the request", async () => {
+  const failing = loadRevisionRoute(undefined, { editorialGateError: new Error("network down") });
+  const failingBody = await postWithEvidence(failing.route);
+  assert.equal(failingBody.contentPackage.slides[0].headline, "H1");
+  assert.equal(failingBody.editorialRevision.verdict, "UNAVAILABLE");
+
+  const malformed = loadRevisionRoute({ verdict: "MAYBE", failCategories: [], issues: [], revised: null });
+  const malformedBody = await postWithEvidence(malformed.route);
+  assert.equal(malformedBody.contentPackage.slides[0].headline, "H1");
+  assert.equal(malformedBody.editorialRevision.verdict, "UNAVAILABLE");
+});
+
+test("editorial repair: an original that fails the deterministic checks is rejected BEFORE any gate call — the gate never repairs safety", async () => {
+  const { route, state } = loadRevisionRoute(
+    { verdict: "FAIL", failCategories: ["style"], issues: ["x"], revised: makeRevisionModel() },
+    { validateContentPackage: () => ({ ok: false, reason: "unsafe" }) },
+  );
+  const response = await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  assert.equal(response.status, 502);
+  assert.equal(state.editorialGateCalls, 0);
+});
+
+test("editorial repair: the gate sees the same verified facts (NE DEĞİŞTİ / ARKA PLAN input) Job 2 saw, and runs on the editorial model", async () => {
+  const { route, state } = loadRevisionRoute({ verdict: "PASS", failCategories: [], issues: [], revised: null });
+  await postWithEvidence(route);
+  const gateUser = state.lastEditorialGateMessages.find((m) => m.role === "user").content;
+  assert.match(gateUser, /1 Ekim 2026 tarihinden itibaren zorunlu olacağını/);
+  assert.match(gateUser, /DEĞERLENDİRİLECEK İÇERİK PAKETİ/);
+  assert.equal(state.lastEditorialGateModel, "gpt-5.4");
+});
+
+test("shouldRevise / findNewFactTokens unit behavior", () => {
+  assert.equal(editorialRevision.shouldRevise({ verdict: "PASS", failCategories: [], issues: [] }), false);
+  assert.equal(editorialRevision.shouldRevise({ verdict: "FAIL", failCategories: [], issues: [] }), false);
+  assert.equal(editorialRevision.shouldRevise({ verdict: "FAIL", failCategories: ["novelty-framing"], issues: [] }), true);
+  assert.equal(editorialRevision.shouldRevise({ verdict: "FAIL", failCategories: ["style", "factual"], issues: [] }), false);
+
+  const pkg = (text) => ({ hook: text, caption: "", slides: [{ headline: "", body: "", facts: [] }] });
+  const facts = [{ claim: "fark oniki ayı geçmeyecektir", evidenceFragment: "oniki ayı", status: "current-topic" }];
+  // Moving/rewording an existing number, or one stated by a verified fact (incl. spelled out), is fine.
+  assert.equal(editorialRevision.findNewFactTokens(pkg("400.000 USD"), pkg("400000 USD eşiği"), [], new Set()).length, 0);
+  assert.equal(editorialRevision.findNewFactTokens(pkg("x"), pkg("TTB 12 ayı geçemez"), facts, new Set()).length, 0);
+  // A brand-new amount is caught.
+  assert.equal(editorialRevision.findNewFactTokens(pkg("x"), pkg("250.000 USD yeterli"), facts, new Set()).join(), "250000");
+});
+
+test("editorial repair is OFF unless EDITORIAL_REVISION_ENABLED=true — then no gate call happens and Job 2's package is returned as before", async () => {
+  const { route, state } = loadContentPackageRoute({
+    editorialRevisionDisabled: true,
+    factContractResponse: { facts: [VERIFIED_SALE_FACT] },
+    editorialGateResponse: { verdict: "FAIL", failCategories: ["style"], issues: ["x"], revised: makeRevisionModel() },
+  });
+  const body = await postWithEvidence(route);
+  assert.equal(state.editorialGateCalls, 0);
+  assert.equal(state.completionCalls, 2); // Job 1 + Job 2 only
+  assert.equal(body.contentPackage.slides[0].headline, "H1");
+  assert.equal(body.editorialRevision.verdict, "DISABLED");
 });

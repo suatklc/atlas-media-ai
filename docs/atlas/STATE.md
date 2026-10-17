@@ -280,7 +280,7 @@ changes often — keep it short and current, not a historical changelog
   - `tests/output-mode.test.mjs` ×2 — `isContentOpportunity is not a
     function` (stale mock map, missing several real imports from an
     earlier refactor).
-- Full test suite: 432/436 passing (the 4 above).
+- Full test suite: 444/448 passing (the 4 above).
 - **"Actual change lost before writing" — ROOT CAUSE FIXED (2026-10-17,
   second pass).** `factContract.ts`: Sentence-Anchored Citation (Job 1
   cites `[S<n>]` segments; a current-topic fact whose own quote fails
@@ -293,10 +293,22 @@ changes often — keep it short and current, not a historical changelog
   the Editorial Quality Gate. Remaining gap is editorial craft only
   (gate FAIL on run-level language/repetition, ready 4–5/10) — see the
   open decision below.
-- **Open decision for Suat:** allow ONE extra editorial-revision call
-  (gate → revise, all deterministic checks re-run, fail-safe fallback to
-  the original) inside `/api/content-package`? This changes the frozen
-  "ONE OpenAI call" ContentPackage design, so it needs explicit approval.
+- **Editorial Quality Repair — implemented, SHIPPED DISABLED
+  (2026-10-17).** Suat approved one gate+revise call
+  (`src/lib/ai/content/editorialRevision.ts`, wired at the end of
+  `/api/content-package`): one attempt max, wording-level categories
+  only, revision re-assembled and re-run through validation + Gap 2 + a
+  no-new-fact-token guard, fail-safe fallback, outcome logged. Live
+  result on the TKGM 2024/4 topic (6 runs, 4 independently gated):
+  in-app gate FAILed and revision was accepted every time, but the
+  independent Quality Gate stayed at ready 4–5/10 (same as without
+  revision), and one revision widened a foreign-buyer rule to all buyers
+  (a semantic scope change no deterministic guard catches). Hence
+  `EDITORIAL_REVISION_ENABLED` defaults OFF = exact pre-revision
+  pipeline. Remaining root cause for this topic is evidence-level: the
+  2024/4 text never states the previous rule, while the same-event 2024/2
+  announcement does ("Bu kez … herhangi bir …"); Radar's dedupe keeps
+  only one source and `/api/content-package` reads only `sources[0]`.
 - **First real publish attempt (2026-10-17) — NOT yet Gold Standard.**
   Today's only strong live topic: TKGM's 28.09.2026 update to Genelge
   2024/4 + 2024/2 (citizenship-by-property valuation reports may now be
