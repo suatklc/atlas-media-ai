@@ -73,6 +73,8 @@ const turkishDate = loadTypeScriptModule("src/lib/ai/research/retrieval/turkishD
 const factContract = loadTypeScriptModule("src/lib/ai/content/factContract.ts", (specifier) =>
   specifier.includes("evidenceExtraction") ? evidenceExtraction : specifier.includes("turkishDate") ? turkishDate : {},
 );
+// Source Intelligence: real registry module (pure; no dependencies).
+const sourceRegistry = loadTypeScriptModule("src/lib/ai/research/sourceRegistry.ts", () => ({}), { URL });
 // Editorial Quality Repair: real module, wired to the real factContract.
 const editorialRevision = loadTypeScriptModule("src/lib/ai/content/editorialRevision.ts", (specifier) =>
   specifier === "./factContract" ? factContract : {},
@@ -537,6 +539,7 @@ function loadContentPackageRoute(overrides = {}) {
     "@/lib/ai/research/retrieval/evidenceExtraction": evidenceExtraction,
     "@/lib/ai/content/factContract": factContract,
     "@/lib/ai/content/editorialRevision": editorialRevision,
+    "@/lib/ai/research/sourceRegistry": sourceRegistry,
     "@/lib/ai/research/retrieval/turkishDate": turkishDate,
   };
 
@@ -2714,4 +2717,209 @@ test("editorial repair is OFF unless EDITORIAL_REVISION_ENABLED=true — then no
   assert.equal(state.completionCalls, 2); // Job 1 + Job 2 only
   assert.equal(body.contentPackage.slides[0].headline, "H1");
   assert.equal(body.editorialRevision.verdict, "DISABLED");
+});
+
+// ============================================================
+// Source Intelligence (Radar V2) — registry/trust model + multi-source
+// evidence bundles with per-source provenance. Regression fixture: the
+// real TKGM 29.09.2026 same-event pair (Genelge 2024/4 amended rule +
+// Genelge 2024/2 "Bu kez ..." change context), verbatim excerpts.
+// ============================================================
+
+const REAL_2024_4_EVIDENCE =
+  "Konu : Türk Vatandaşlığı Kanununun Uygulanmasına İlişkin Yönetmelik Hk İlgi GENELGE 2024/4 : a) 11/06/2024 tarihli Bakanlık Makamı Oluru. Bu nedenle yabancıların taraf olduğu vatandaşlık kazanımı içeren işlemler dışındaki diğer işlemlerde taşınmaz değerleme raporu aranılmayacak, vatandaşlık kazanımı içeren işlemlerde ise yatırım tutarının teyidi TTB ile sağlanacaktır. TTB, Sermaye Piyasa Kurulu tarafından yetkilendirilmiş herhangi bir Değerleme Kuruluşu tarafından düzenlenen (İlgi (ı) Makam Oluru ile değişik ifade) taşınmaz değerleme raporundan elde edilen dokümandır. TTB ile vatandaşlık kazanımı içeren işlem başvuru süresi arasındaki fark oniki ayı geçmeyecektir. Oniki ayı geçen TTB'lerde belgeye esas değerleme raporu yenilenecektir. (İlgi (ı) Makam Oluru ile değişik ifade) Diğer hükümler aynen uygulanır.";
+
+function bundleSources() {
+  return [
+    { label: "K1", title: "2024/4 Sayılı Genelge Değişikliği Hakkında Duyuru", publisher: "TKGM", url: "https://www.tkgm.gov.tr/duyurular/20244", publishedAt: "2026-09-28T21:00:00.000Z", roleLabel: "resmi birincil kaynak", text: REAL_2024_4_EVIDENCE },
+    { label: "K2", title: "2024/2 Sayılı Genelge Güncellemesi Hakkında Duyuru", publisher: "TKGM", url: "https://www.tkgm.gov.tr/duyurular/20242", publishedAt: "2026-09-28T21:00:00.000Z", roleLabel: "resmi birincil kaynak", text: REAL_2024_2_EVIDENCE },
+  ];
+}
+
+test("sourceRegistry: every LIVE web source's tier agrees with the existing classifySourceTier allowlist (no drift)", () => {
+  const sourceQualityModule = loadTypeScriptModule("src/lib/ai/research/retrieval/sourceQuality.ts", () => ({}), { URL });
+  for (const entry of sourceRegistry.SOURCE_REGISTRY.filter((e) => e.status === "live")) {
+    for (const domain of entry.domains) {
+      assert.equal(sourceQualityModule.classifySourceTier(`https://www.${domain}/x`), entry.tier, `${entry.id} ${domain}`);
+    }
+  }
+});
+
+test("sourceRegistry: trust roles — official = fact authority, news = discovery-context, social never provides fact evidence, unknown never promoted", () => {
+  assert.equal(sourceRegistry.sourceRoleFor({ url: "https://www.tkgm.gov.tr/x", tier: "official-authority" }), "fact-authority");
+  assert.equal(sourceRegistry.sourceRoleFor({ url: "https://www.aa.com.tr/x", tier: "financial-news" }), "discovery-context");
+  assert.equal(sourceRegistry.sourceRoleFor({ url: "https://instagram.com/p/x", tier: "commentary" }), "social-intelligence");
+  assert.equal(sourceRegistry.sourceRoleFor({ url: "https://unknown.example/x", tier: "commentary" }), "social-intelligence");
+  assert.equal(sourceRegistry.mayProvideFactEvidence("social-intelligence"), false);
+  assert.equal(sourceRegistry.mayProvideFactEvidence("fact-authority"), true);
+  assert.ok(sourceRegistry.SOURCE_REGISTRY.filter((e) => e.role === "social-intelligence").every((e) => e.status === "planned"));
+});
+
+test("sourceRegistry: orderSourcesByAuthority puts fact authorities first, stable otherwise", () => {
+  const ordered = sourceRegistry.orderSourcesByAuthority([
+    { url: "https://www.aa.com.tr/a", tier: "financial-news" },
+    { url: "https://www.tkgm.gov.tr/b", tier: "official-authority" },
+    { url: "https://www.tkgm.gov.tr/c", tier: "official-authority" },
+  ]);
+  assert.equal(ordered.map((s) => s.url.slice(-1)).join(""), "bca");
+});
+
+test("socialIntelligence: a social signal can only become a discovery lead, and a factual lead always requires a primary source", () => {
+  const social = loadTypeScriptModule("src/lib/ai/research/socialIntelligence.ts");
+  const signal = { platform: "instagram", accountName: "Emlak Haber", postUrl: "https://instagram.com/p/x", observedAt: "2026-10-17", topicHint: "tapu harcı" };
+  assert.equal(social.toDiscoveryLead(signal, "factual-development").requiresPrimarySource, true);
+  assert.equal(social.toDiscoveryLead(signal, "format-or-hook").requiresPrimarySource, false);
+  assert.equal("evidenceText" in social.toDiscoveryLead(signal, "factual-development"), false);
+});
+
+test("segmentBundle: ids are global, offsets are per source, and every segment is an exact substring of ITS OWN source", () => {
+  const sources = bundleSources();
+  const segments = factContract.segmentBundle(sources);
+  assert.deepEqual(segments.map((s) => s.id).join(","), segments.map((_, i) => i + 1).join(","));
+  for (const segment of segments) {
+    assert.equal(sources[segment.sourceIndex].text.slice(segment.start, segment.end), segment.text);
+  }
+  assert.ok(segments.some((s) => s.sourceIndex === 0) && segments.some((s) => s.sourceIndex === 1));
+});
+
+test("groundBundleFacts: each fact is grounded in exactly ONE source and keeps its provenance; change markers come from that source", () => {
+  const sources = bundleSources();
+  const segments = factContract.segmentBundle(sources);
+  const facts = [
+    { claim: "12 ayı geçen TTB'de rapor yenilenir.", evidenceFragment: "Oniki ayı geçen TTB'lerde belgeye esas değerleme raporu yenilenecektir.", status: "current-topic" },
+    { claim: "SPK lisanslı herhangi bir değerleme kuruluşu raporu düzenleyebilir.", evidenceFragment: "Sermaye Piyasası Kurulu lisanslı herhangi bir Değerleme Kuruluşu tarafından düzenlenebileceğine karar verilmiştir.", status: "current-topic" },
+    { claim: "Diğer işlemlerde rapor aranmaz.", evidenceFragment: "diğer işlemlerde taşınmaz değerleme raporu aranılmayacak", status: "current-topic" },
+  ];
+  const grounded = factContract.groundBundleFacts(facts, sources, segments);
+  assert.equal(grounded.length, 3);
+  const bySource = (needle) => grounded.find((f) => f.claim.includes(needle));
+  assert.equal(bySource("12 ayı").sourceIndex, 0);
+  assert.equal(bySource("SPK").sourceIndex, 1);
+  assert.equal(bySource("12 ayı").changedBySource, true);
+  assert.equal(bySource("SPK").changedBySource, true); // "Bu kez ..." in 2024/2
+  assert.equal(bySource("Diğer").changedBySource, undefined); // background rule
+});
+
+test("groundBundleFacts NEVER builds a cross-source quote: a fragment stitched from two sources, or a citation spanning both, fails closed", () => {
+  const sources = bundleSources();
+  const segments = factContract.segmentBundle(sources);
+  const lastOfFirst = segments.filter((s) => s.sourceIndex === 0).at(-1).id;
+  const stitched = {
+    claim: "Birleşik iddia.",
+    evidenceFragment: "Diğer hükümler aynen uygulanır. Konu:Yabancıların Taşınmaz Edinimlerinde",
+    status: "current-topic",
+    sentenceIds: [lastOfFirst, lastOfFirst + 1],
+  };
+  assert.equal(factContract.groundBundleFacts([stitched], sources, segments).length, 0);
+});
+
+test("groundBundleFacts: a misquoted fact may only be rescued from the source it cites, and the cited span stays inside that source", () => {
+  const sources = bundleSources();
+  const segments = factContract.segmentBundle(sources);
+  const changeId = segments.find((s) => s.sourceIndex === 1 && s.text.startsWith("Bu kez ilgi (b)")).id;
+  const [rescued] = factContract.groundBundleFacts([{ ...BLENDED_SPK_FACT, sentenceIds: [changeId] }], sources, segments);
+  assert.equal(rescued.sourceIndex, 1);
+  assert.ok(sources[1].text.includes(rescued.evidenceFragment));
+  assert.match(rescued.evidenceFragment, /^Bu kez ilgi \(b\)/);
+});
+
+test("groundBundleFacts on a single-source bundle matches the original single-source pipeline exactly", () => {
+  const single = [bundleSources()[1]];
+  const segments = factContract.segmentBundle(single);
+  const id = segments.find((s) => s.text.startsWith("Bu kez ilgi (b)")).id;
+  const facts = [
+    { ...BLENDED_SPK_FACT, sentenceIds: [id] },
+    { claim: "x", evidenceFragment: "değerleme raporu talep edilmektedir", status: "current-topic" },
+    { claim: "y", evidenceFragment: "uydurma bir alıntı", status: "current-topic" },
+  ];
+  const text = single[0].text;
+  const legacySegments = factContract.segmentEvidence(text);
+  const legacy = factContract.markSourceChanges(
+    factContract.resolveScenarioBoundaryConflicts(
+      factContract.filterCurrentTopicFacts(factContract.rescueCitedFacts(facts, text, legacySegments), text),
+      text,
+    ),
+    text,
+    legacySegments,
+  );
+  const bundle = factContract.groundBundleFacts(facts, single, segments);
+  const withoutProvenance = bundle.map((fact) => {
+    const copy = { ...fact };
+    delete copy.sourceIndex;
+    return copy;
+  });
+  assert.equal(JSON.stringify(withoutProvenance), JSON.stringify(legacy));
+  assert.ok(bundle.every((f) => f.sourceIndex === 0));
+});
+
+test("/api/content-package: a merged same-event opportunity reaches Job 1 as separate labeled sources, Job 2 sees source-tagged facts, and the response carries provenance", async () => {
+  const sources = bundleSources();
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        { claim: "12 ayı geçen TTB'de rapor yenilenir.", evidenceFragment: "Oniki ayı geçen TTB'lerde belgeye esas değerleme raporu yenilenecektir.", sentenceIds: [], status: "current-topic" },
+        { claim: "SPK lisanslı herhangi bir kuruluş raporu düzenleyebilir.", evidenceFragment: "Sermaye Piyasası Kurulu lisanslı herhangi bir Değerleme Kuruluşu tarafından düzenlenebileceğine karar verilmiştir.", sentenceIds: [], status: "current-topic" },
+      ],
+    },
+  });
+  const response = await route.POST({
+    json: async () => ({
+      contentOpportunity: {
+        topic: sources[0].title,
+        angle: "a",
+        whyNow: "w",
+        keyFacts: ["k"],
+        sources: [
+          ...sources.map(({ title, publisher, url, publishedAt, text }) => ({ title, publisher, url, publishedAt, tier: "official-authority", evidenceText: text })),
+          // A social/unknown source is never part of the fact bundle.
+          { title: "Sosyal paylaşım", publisher: "Instagram", url: "https://instagram.com/p/x", publishedAt: "2026-09-30", tier: "commentary", evidenceText: "SOSYAL_METIN ".repeat(40) },
+        ],
+      },
+      visualFormat: "carousel",
+    }),
+  });
+  const body = await response.json();
+  const jobOne = state.lastFactExtractionMessages.find((m) => m.role === "user").content;
+  assert.match(jobOne, /KAYNAK K1 \(resmi birincil kaynak\) — TKGM — "2024\/4/);
+  assert.match(jobOne, /KAYNAK K2 \(resmi birincil kaynak\) — TKGM — "2024\/2/);
+  assert.doesNotMatch(jobOne, /SOSYAL_METIN/);
+  const jobTwo = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(jobTwo, /K2: TKGM — "2024\/2 Sayılı Genelge Güncellemesi Hakkında Duyuru" — 29\.09\.2026/);
+  assert.match(jobTwo, /- \[K2\] SPK lisanslı herhangi bir kuruluş/);
+  assert.match(jobTwo, /- \[K1\] 12 ayı geçen TTB/);
+  assert.equal(body.provenance.sources.length, 2);
+  assert.equal(body.provenance.facts.find((f) => f.claim.startsWith("SPK")).source, "K2");
+  assert.equal(body.provenance.facts.every((f) => f.changedBySource), true);
+});
+
+test("/api/content-package: an internal source label (K1/K2) leaking into public copy fails closed — real live-observed 'K1'e göre' leak", async () => {
+  const sources = bundleSources();
+  const leaky = {
+    topic: "t",
+    source: { name: "TKGM", url: "https://www.tkgm.gov.tr/duyurular/20244", publishedAt: "29.09.2026" },
+    hook: "Vatandaşlık için ev alıyorsanız rapor kuralı değişti.",
+    caption: "Kısa caption.",
+    hashtags: ["#Tapu", "#TKGM", "#Gayrimenkul", "#GayrimenkulYatırımı", "#TürkVatandaşlığı"],
+    facts: [],
+    slides: [1, 2, 3, 4, 5].map((n) => ({ headline: `H${n}`, body: n === 2 ? "K1’e göre TTB rapordan üretilir." : `B${n}`, facts: [], visualBrief: "v" })),
+  };
+  const { route, state } = loadContentPackageRoute({
+    completionResponse: leaky,
+    factContractResponse: {
+      facts: [{ claim: "12 ayı geçen TTB'de rapor yenilenir.", evidenceFragment: "Oniki ayı geçen TTB'lerde belgeye esas değerleme raporu yenilenecektir.", sentenceIds: [], status: "current-topic" }],
+    },
+  });
+  const response = await route.POST({
+    json: async () => ({
+      contentOpportunity: {
+        topic: sources[0].title, angle: "a", whyNow: "w", keyFacts: ["k"],
+        sources: sources.map(({ title, publisher, url, publishedAt, text }) => ({ title, publisher, url, publishedAt, tier: "official-authority", evidenceText: text })),
+      },
+      visualFormat: "carousel",
+    }),
+  });
+  assert.equal(response.status, 502);
+  assert.equal(state.editorialGateCalls, 0);
+  const jobTwo = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(jobTwo, /K1\/K2\/K3 yalnızca SİSTEM İÇİ etiketlerdir/);
 });

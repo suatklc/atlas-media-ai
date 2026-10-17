@@ -673,7 +673,54 @@ export function rankContentOpportunities(
     pick(entry);
   }
 
-  return picked.slice(0, limit);
+  return picked.slice(0, limit).map((opportunity) => attachCorroboratingSources(opportunity, opportunities));
+}
+
+// ============================================================
+// Source Intelligence — multi-source evidence seam (Radar V2). Ranking and
+// selection above are untouched; this only stops THROWING AWAY the
+// sources of same-event items the shortlist suppressed. A real, live-
+// observed defect: TKGM published two announcements for one 29.09.2026
+// approval (Genelge 2024/4: the amended rule; Genelge 2024/2: the
+// explicit "Bu kez ..." change context). isSameUnderlyingDevelopment
+// correctly merged them into one opportunity — and the second source,
+// the one that actually explained the change, was lost before
+// generation. The picked item's own primary source stays first unless a
+// related source has a stronger tier (fact authority before news); each
+// source keeps its own identity and evidence (never concatenated —
+// /api/content-package grounds every fact against ONE source).
+// ============================================================
+
+const MAX_BUNDLE_SOURCES = 3;
+const TIER_RANK: Record<SourceTier, number> = {
+  "official-authority": 0,
+  "primary-data": 1,
+  "financial-news": 2,
+  specialist: 3,
+  commentary: 4,
+};
+
+function attachCorroboratingSources(
+  picked: RankedContentOpportunity,
+  pool: RankedContentOpportunity[],
+): RankedContentOpportunity {
+  const related = pool
+    .filter((other) => other !== picked && isSameUnderlyingDevelopment(picked, other))
+    .flatMap((other) => other.sources);
+  if (related.length === 0) return picked;
+
+  const seenUrls = new Set<string>();
+  const merged = [...picked.sources, ...related].filter((source) => {
+    if (seenUrls.has(source.url)) return false;
+    seenUrls.add(source.url);
+    return true;
+  });
+  const ordered = merged
+    .map((source, index) => ({ source, index }))
+    .sort((a, b) => TIER_RANK[a.source.tier] - TIER_RANK[b.source.tier] || a.index - b.index)
+    .map(({ source }) => source)
+    .slice(0, MAX_BUNDLE_SOURCES);
+  return { ...picked, sources: ordered };
 }
 
 // ============================================================

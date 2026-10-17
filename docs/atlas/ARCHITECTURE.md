@@ -166,3 +166,45 @@ feedback/lead loop. Planned seam, in order:
 
 Guardrails: ChatPlace never publishes Atlas content and never triggers
 generation; every outbound post still goes Draft → Approved → Publish.
+
+## J. Source Intelligence (Radar V2 seam)
+
+- **Source Registry + trust roles** — `src/lib/ai/research/sourceRegistry.ts`.
+  TIER 1 `fact-authority` (TKGM, Resmî Gazete, ÇŞİDB, TCMB live; TÜİK, GİB,
+  SPK, BDDK, Sarıyer Belediyesi planned) may support facts — still only via
+  Job 1 / Gap 1 / Gap 2 / Scenario Boundary. TIER 2 `discovery-context`
+  (AA, Dünya) = "something may have happened" + context; ranked below
+  fact authorities in any bundle. TIER 3 `social-intelligence` (Emlak
+  Haber, Emlak Fikirleri, Emlak Haber Türkiye, Gayrimenkul Gündemi —
+  planned, no integration) = topics/formats/hooks only, NEVER fact
+  evidence (`socialIntelligence.ts`: a signal can only become a
+  `DiscoveryLead`; a factual lead requires a primary source). Adding a
+  source = one registry entry (+ an adapter when it should be fetched).
+  `classifySourceTier` (sourceQuality.ts) is unchanged; a test guards that
+  both agree for every live source.
+- **Multi-source opportunities** — `discover.ts` `attachCorroboratingSources`:
+  ranking/selection unchanged; the sources of same-event items the
+  shortlist suppresses (`isSameUnderlyingDevelopment`) are kept on the
+  picked opportunity (fact authorities first, max 3).
+- **Evidence bundle with provenance** — `/api/content-package`
+  `buildEvidenceBundle` + `factContract.ts` `segmentBundle` /
+  `groundBundleFacts`: each source keeps its identity (K1, K2, ...) and its
+  own evidence; every fact is resolved to exactly ONE source, then citation
+  rescue → Gap 1 → Scenario Boundary → change markers run per source,
+  unchanged. No cross-source quote can exist (spans are looked up within one
+  source). Job 2 sees source-tagged facts; the response carries
+  `provenance` (sources + fact → source label). Conflicts between sources
+  are surfaced (separate facts, instruction not to merge), not
+  deterministically detected yet.
+
+## K. Content streams (all feed the same Atlas Content Agent)
+
+A. **Current developments** (implemented): regulation, tax, title deed,
+   credit, housing data → Radar → evidence bundle → ContentPackage.
+B. **Evergreen expert content** (seam only): villa buying, land due
+   diligence, zoning, Zekeriyaköy/Sarıyer expertise — future input is a
+   topic + `businessProfile.ts`, not a news source; facts still need a
+   fact-authority source.
+C. **Social / market intelligence** (seam only): `DiscoveryLead`s for
+   topics, recurring audience questions, formats and hooks — never facts.
+   The ChatPlace seam (section I) feeds the same `audience_signals` idea.

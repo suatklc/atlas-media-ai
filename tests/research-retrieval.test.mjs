@@ -1522,3 +1522,23 @@ test("recurring series: distinct, non-recurring titles are never merged by the s
   const ranked = discover.rankContentOpportunities(built, ["faiz"], 5);
   assert.equal(ranked.length, 2, "two genuinely different recurring-title series must both be kept");
 });
+
+// Source Intelligence (Radar V2) — real regression: TKGM published two
+// announcements for one 29.09.2026 approval. The shortlist still shows
+// ONE opportunity, but it now carries BOTH official sources (each with its
+// own identity/evidence) instead of silently dropping the second.
+test("rankContentOpportunities: a suppressed same-event item's source is kept on the picked opportunity, authority first, ranking unchanged", () => {
+  const now = new Date("2026-10-17T00:00:00.000Z");
+  const results = [
+    makeResult({ title: "2024/4 Sayılı Genelge Değişikliği Hakkında Duyuru", url: "https://www.tkgm.gov.tr/duyurular/20244", publishedAt: "2026-09-28T21:00:00.000Z", tier: "official-authority", evidenceText: "A kanıtı" }),
+    makeResult({ title: "2024/2 Sayılı Genelge Güncellemesi Hakkında Duyuru", url: "https://www.tkgm.gov.tr/duyurular/20242", publishedAt: "2026-09-28T21:00:00.000Z", tier: "official-authority", evidenceText: "B kanıtı" }),
+    makeResult({ title: "Konut kredisi faiz oranlarında yeni dönem", url: "https://www.aa.com.tr/x", publishedAt: "2026-10-10T00:00:00.000Z", tier: "financial-news" }),
+  ];
+  const ranked = discover.rankContentOpportunities(discover.buildContentOpportunities(results, now), ["genelge", "konut", "kredi"], 5);
+  const genelge = ranked.filter((o) => /Genelge/.test(o.topic));
+  assert.equal(genelge.length, 1, "same-event items still collapse to one opportunity");
+  assert.equal(genelge[0].sources.length, 2);
+  assert.deepEqual(genelge[0].sources.map((s) => s.evidenceText).sort().join("|"), "A kanıtı|B kanıtı");
+  const other = ranked.find((o) => /Konut/.test(o.topic));
+  assert.equal(other.sources.length, 1, "unrelated opportunities are untouched");
+});

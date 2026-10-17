@@ -31,6 +31,9 @@ export type EvidenceFact = {
   // fact's own source span carries an explicit amendment marker — this
   // is what the source itself says it changed.
   changedBySource?: boolean;
+  // Set by CODE only (groundBundleFacts): index of the ONE evidence-bundle
+  // source this fact is grounded in — its provenance.
+  sourceIndex?: number;
 };
 
 const VALID_STATUSES = new Set<EvidenceFactStatus>(["current-topic", "different-scenario", "unsupported"]);
@@ -185,11 +188,17 @@ function citedSpan(sentenceIds: number[] | undefined, segments: EvidenceSegment[
   if (!sentenceIds || sentenceIds.length === 0 || sentenceIds.length > MAX_CITED_SEGMENTS) return undefined;
   const ids = Array.from(new Set(sentenceIds)).sort((a, b) => a - b);
   if (ids.length !== sentenceIds.length) return undefined;
-  if (ids[0] < 1 || ids[ids.length - 1] > segments.length) return undefined;
   for (let i = 1; i < ids.length; i++) {
     if (ids[i] !== ids[i - 1] + 1) return undefined; // contiguous only — one real span
   }
-  return evidenceText.slice(segments[ids[0] - 1].start, segments[ids[ids.length - 1] - 1].end);
+  // Looked up by id within THIS source's segments only: an id belonging to
+  // another source (multi-source bundles) is simply not found, so a span
+  // can never cross a source boundary.
+  const first = segments.find((segment) => segment.id === ids[0]);
+  const last = segments.find((segment) => segment.id === ids[ids.length - 1]);
+  if (!first || !last) return undefined;
+  if (ids.some((id) => !segments.some((segment) => segment.id === id))) return undefined;
+  return evidenceText.slice(first.start, last.end);
 }
 
 function tokensOf(text: string): Set<string> {
@@ -228,6 +237,88 @@ export function markSourceChanges(facts: EvidenceFact[], evidenceText: string, s
     }
     return changed ? { ...fact, changedBySource: true } : fact;
   });
+}
+
+// ============================================================
+// Source Intelligence — multi-source evidence bundle (Radar V2). One
+// opportunity may carry several sources for the same real-world event
+// (e.g. TKGM's 29.09.2026 Genelge 2024/4 amendment AND its 2024/2
+// announcement saying "Bu kez ..."). Every source keeps its own identity
+// and its own evidence text; nothing is ever concatenated into one quote.
+// Each fact is resolved to exactly ONE source, and every existing safety
+// rule then runs per source, unchanged: citation rescue, Gap 1
+// (filterCurrentTopicFacts against THAT source's text), the Scenario
+// Boundary rule (zones of THAT source) and source change markers. A fact
+// that can't be tied to one source fails closed. A single-source bundle
+// behaves byte-for-byte like the previous single-source pipeline.
+// ============================================================
+
+export type EvidenceBundleSource = {
+  label: string; // "K1", "K2", ... — what Job 1/Job 2 see
+  title: string;
+  publisher: string;
+  url: string;
+  publishedAt: string;
+  roleLabel: string; // human-readable trust role, e.g. "resmi birincil kaynak"
+  text: string;
+};
+
+export type BundleSegment = EvidenceSegment & { sourceIndex: number };
+
+// Per-source segmentation (offsets stay relative to each source's own
+// text), numbered globally so Job 1 can cite [S<n>] unambiguously.
+export function segmentBundle(sources: EvidenceBundleSource[]): BundleSegment[] {
+  const all: BundleSegment[] = [];
+  sources.forEach((source, sourceIndex) => {
+    for (const segment of segmentEvidence(source.text)) {
+      all.push({ ...segment, id: all.length + 1, sourceIndex });
+    }
+  });
+  return all;
+}
+
+export function formatBundleForCitation(sources: EvidenceBundleSource[], segments: BundleSegment[]): string {
+  return sources
+    .map((source, sourceIndex) => {
+      const date = toTurkeyCalendarDate(source.publishedAt);
+      const shownDate = date ? `${date.day}.${date.month}.${date.year}` : source.publishedAt;
+      const header = `KAYNAK ${source.label} (${source.roleLabel}) — ${source.publisher} — "${source.title}" — ${shownDate}`;
+      return [header, formatSegmentsForCitation(segments.filter((s) => s.sourceIndex === sourceIndex))].join("\n");
+    })
+    .join("\n\n");
+}
+
+function resolveFactSource(fact: EvidenceFact, sources: EvidenceBundleSource[], segments: BundleSegment[]): number | undefined {
+  const cited = (fact.sentenceIds ?? []).map((id) => segments.find((segment) => segment.id === id));
+  const citedSources = new Set(cited.map((segment) => segment?.sourceIndex));
+  const citedSource =
+    cited.length > 0 && cited.every(Boolean) && citedSources.size === 1 ? cited[0]!.sourceIndex : undefined;
+  const groundedIn = sources
+    .map((source, index) => (isEvidenceFragmentGrounded(fact, source.text) ? index : -1))
+    .filter((index) => index >= 0);
+  if (citedSource !== undefined && groundedIn.includes(citedSource)) return citedSource;
+  if (groundedIn.length > 0) return groundedIn[0]; // the real quote decides, not the citation
+  return citedSource; // ungrounded: only the cited source may attempt a rescue
+}
+
+export function groundBundleFacts(
+  facts: EvidenceFact[],
+  sources: EvidenceBundleSource[],
+  segments: BundleSegment[],
+): EvidenceFact[] {
+  const grounded: EvidenceFact[] = [];
+  sources.forEach((source, sourceIndex) => {
+    const sourceFacts = facts.filter((fact) => resolveFactSource(fact, sources, segments) === sourceIndex);
+    if (sourceFacts.length === 0) return;
+    const sourceSegments = segments.filter((segment) => segment.sourceIndex === sourceIndex);
+    const rescued = rescueCitedFacts(sourceFacts, source.text, sourceSegments);
+    const gapOne = filterCurrentTopicFacts(rescued, source.text);
+    const scenarioSafe = resolveScenarioBoundaryConflicts(gapOne, source.text);
+    for (const fact of markSourceChanges(scenarioSafe, source.text, sourceSegments)) {
+      grounded.push({ ...fact, sourceIndex });
+    }
+  });
+  return grounded;
 }
 
 // ============================================================

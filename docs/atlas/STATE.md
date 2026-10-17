@@ -280,7 +280,7 @@ changes often — keep it short and current, not a historical changelog
   - `tests/output-mode.test.mjs` ×2 — `isContentOpportunity is not a
     function` (stale mock map, missing several real imports from an
     earlier refactor).
-- Full test suite: 444/448 passing (the 4 above).
+- Full test suite: 456/460 passing (the 4 above).
 - **"Actual change lost before writing" — ROOT CAUSE FIXED (2026-10-17,
   second pass).** `factContract.ts`: Sentence-Anchored Citation (Job 1
   cites `[S<n>]` segments; a current-topic fact whose own quote fails
@@ -329,6 +329,27 @@ changes often — keep it short and current, not a historical changelog
   evidence (now 2400); token-binding false rejections for long-form dates
   ("29 Eylül 2026"), capitalized "Sayılı", spelled-out durations ("oniki
   ay"), and the source title's own document number.
+
+- **SOURCE INTELLIGENCE (Radar V2 seam) — implemented 2026-10-17**
+  (ARCHITECTURE.md §J/§K): Source Registry + trust roles, social seam,
+  multi-source opportunities, per-source evidence bundle with provenance,
+  internal-label leak guard. Verified live: Radar now delivers the TKGM
+  29.09.2026 event as ONE opportunity with BOTH official sources (2024/4 +
+  2024/2), each with full evidence. 3 real multi-source runs: the actual
+  change ("SPK yetkili herhangi bir değerleme kuruluşu") and the audience
+  (foreign buyers seeking citizenship) now reach the copy, but the
+  independent Quality Gate still FAILs every run (ready 4/3/3) on
+  writer-level errors that differ run to run (novelty language on
+  background rules, an invented timing endpoint, a wrong change date, an
+  internal "K1" label leak — now guarded —, repetition, TTB never
+  explained). In those 3 runs Job 1 still classified the 2024/2 source's
+  facts as "different-scenario" (0 grounded K2 facts); a bundle-aware
+  Job 1 instruction was added but could NOT be live-verified: the OpenAI
+  account ran out of credits (429) mid-test.
+- **Recommendation (not implemented, needs Suat's decision):** replace/
+  absorb the single-pass Job 2 writer with the Atlas Content Agent
+  (Strategist skill + independent Quality Gate loop) as a PoC on the same
+  grounded evidence bundle — see the final report of this task.
 
 ## Next work order (intentional — do not reorder without a genuine blocker)
 

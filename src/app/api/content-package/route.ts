@@ -9,7 +9,6 @@ import {
   sanitizeCalendarDateFacts,
   validateContentPackage,
   type ContentPackage,
-  type ContentSlide,
 } from "@/lib/ai/content/contentPackage";
 import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "@/lib/ai/context/businessProfile";
 import {
@@ -20,18 +19,18 @@ import {
 import { formatTurkeyDateDMY } from "@/lib/ai/research/retrieval/turkishDate";
 import {
   FACT_CONTRACT_JSON_SCHEMA,
-  filterCurrentTopicFacts,
   findTokenBindingViolations,
+  formatBundleForCitation,
+  groundBundleFacts,
   isEvidenceFactArray,
-  formatSegmentsForCitation,
-  markSourceChanges,
-  rescueCitedFacts,
-  resolveScenarioBoundaryConflicts,
-  segmentEvidence,
+  segmentBundle,
   SOURCE_CHANGE_LABEL,
   trustedSourceMetadataTokens,
+  type EvidenceBundleSource,
   type EvidenceFact,
 } from "@/lib/ai/content/factContract";
+import { mayProvideFactEvidence, orderSourcesByAuthority, sourceRoleFor, type SourceRole } from "@/lib/ai/research/sourceRegistry";
+import type { SourceTier } from "@/lib/ai/research/types";
 import {
   buildEditorialGatePrompt,
   buildEditorialGateUserMessage,
@@ -195,6 +194,12 @@ Kural — EDİTORYAL KALİTE KAPISI (Suat bunu HİÇ DÜZENLEMEDEN yayımlamalı
 - Slayt 4'teki her madde okuyucunun gerçekten atlayabileceği somut bir kontrol olsun — "işlemin X amaçlı olduğundan emin olun" gibi herkesin zaten bildiği boş maddeler YOK.
 - Slayt 5 ve caption'daki uzman görüşü BU değişikliğe özgü olsun (başka bir konuya da aynen uyabilecek genel bir cümle değil): imzadan önce sorulacak soru, sık yapılan hata veya zamanlama riski gibi.
 - caption, imzadan hemen önce ölçülü tek bir eylem çağrısıyla bitsin (ör. sorularınız için mesaj).
+- Yazmadan önce olguları şu yapıya oturt (yalnızca kaynak destekliyorsa): (A) YENİ değişiklik — "NE DEĞİŞTİ" olguları; (B) MEVCUT kural — "ARKA PLAN" olguları, "zaten/mevcut kural" diye anılır; (C) KİMİ etkiliyor; (D) NE ZAMAN uygulanıyor (kaynak açıkça söylemiyorsa tarih verme); (E) gayrimenkul kararına PRATİK etkisi; (F) Suat'ın YORUMU ("bence", "sahada gördüğüm" — olgu gibi değil).
+- Kitle: hook ve caption'ın ilk cümlesi kuralın KİME uygulandığını açıkça söylesin; belirli bir kitleye ait kuralı (ör. yalnızca yabancılar, yalnızca vatandaşlık başvurusu) herkes içinmiş gibi yazma ve kaynaktaki kitle kısıtını asla düşürme.
+- Benzer olgular: NE DEĞİŞTİ ile ARKA PLAN'da aynı sayı/süre/kavram geçiyorsa hangisinin yeni hüküm, hangisinin mevcut kural olduğunu açıkça ayır; "X kuralı değişti" gibi belirsiz ifade kullanma, değişen hükmü ayırt edici kelimeleriyle (ör. "herhangi bir") tam söyle.
+- Teknik kısaltmayı ilk geçtiği yerde, kaynaktaki tam adıyla bir kez aç ve normal bir okuyucu için ne işe yaradığını kısaca söyle.
+- Her tavsiye/fikir paketin TAMAMINDA yalnızca bir kez ana mesaj olsun: slayt 3, slayt 4, slayt 5 ve caption her biri farklı bir şey söylesin.
+- Geçmiş bir tarih aralığına ait kuralı bugünkü okuyucu için kontrol maddesi gibi sunma.
 
 Kural — OLGU / YORUM AYRIMI VE UYDURMA YASAĞI:
 - ContentSlide.facts ve ContentPackage.facts alanları SADECE kaynağın gerçekten belirttiği sayısal/olgusal bilgileri içersin.
@@ -291,7 +296,7 @@ function sanitizeLocalityHashtags(hashtags: string[], topic: string, verifiedCla
 function buildFactExtractionPrompt(): string {
   return `Görev: SADECE olgusal iddiaları çıkar ve sınıflandır. Sosyal medya metni, başlık, caption, tavsiye veya yorum ÜRETME — bu senin işin değil.
 
-Aşağıda bir KONU/FIRSAT ve bir KAYNAK METNİ verilecek. Kaynak metindeki HER ayrı olgusal iddiayı çıkar (en fazla 10) ve şu üç durumdan birine sınıflandır:
+Aşağıda bir KONU/FIRSAT ve aynı gelişmeye ait bir veya birden fazla KAYNAK (K1, K2, ...) verilecek. Kaynak metinlerindeki HER ayrı olgusal iddiayı çıkar (en fazla 12) ve şu üç durumdan birine sınıflandır:
 - "current-topic": Kanıtta açıkça belirtilmiş VE verilen konuya doğrudan uygulanır.
 - "different-scenario": Kanıtta gerçekten geçer AMA farklı bir koşula/istisnaya/tarafa/senaryoya aittir — verilen konuya doğrudan uygulanmaz.
 - "unsupported": Kanıtın açıkça belirtmediği, önerilen/olası bir iddia.
@@ -300,6 +305,8 @@ Kurallar:
 - Bir sayı/süre/prosedür/yükümlülük geçmesi, onu otomatik olarak "current-topic" yapmaz — SADECE kaynağın o bilgiyi verilen konuya açıkça bağladığı durumda "current-topic" ver.
 - Kaynak metninde "[AYRI KOŞUL / SENARYO BLOĞU]" işareti yalnızca yapısal bir ipuçtur — otomatik bir "different-scenario" kararı DEĞİLDİR; işaretten sonraki metin GERÇEKTEN farklı bir senaryoyu tanımlıyorsa "different-scenario" ver, tanımlamıyorsa "current-topic" verebilirsin.
 - Kaynağın YAYIM TARİHİ, metin açıkça belirtmedikçe bir yürürlük/başlangıç tarihi değildir; bunu ayrı bir olgu olarak değerlendir.
+- Birden fazla kaynak verildiyse hepsi AYNI gelişmeyi anlatır (sistem bunları aynı olay olarak birleştirdi): bir kaynağın başlığı/numarası konudan farklı görünse de onun olguları bu konunun parçasıdır. "different-scenario"yu yalnızca o kaynağın KENDİ metni farklı bir koşul/istisna/tarafı anlatıyorsa ver.
+- Her olgu TEK bir kaynaktan gelmeli: farklı kaynaklardaki bilgileri tek bir iddiada/alıntıda BİRLEŞTİRME. İki kaynak birbiriyle çelişiyorsa her birini ayrı olgu olarak çıkar.
 - Kaynak metni [S1], [S2], ... şeklinde numaralı bölümlere ayrılmıştır. sentenceIds, iddiayı destekleyen bölüm numaralarıdır (en fazla 3, ardışık; örn. [4] veya [4,5]).
 - evidenceFragment, kaynaktan kısa ve BİREBİR alıntı olmalı (numara etiketi hariç) — kelimeleri değiştirme, iki bölümü karıştırma, asla icat edilmiş bir alıntı verme.
 - "${SOURCE_CHANGE_LABEL}" etiketli bölümler, kaynağın kendisinin değişiklik olarak işaretlediği hükümlerdir — bu bölümlerdeki olguları mutlaka çıkar.
@@ -308,17 +315,50 @@ Kurallar:
 
 function buildFactExtractionUserMessage(
   opportunity: { topic: string; angle: string; whyNow: string },
-  evidenceText: string,
+  formattedBundle: string,
 ): string {
   return [
     `Konu/Fırsat: ${opportunity.topic}`,
     `Bağlam (yorum, olgu değil): ${opportunity.angle}`,
-    // Numbered exact source spans (Sentence-Anchored Citation) — the text
-    // itself is unmodified; see factContract.ts's segmentEvidence.
-    "Kaynak metni (numaralı bölümler):",
-    formatSegmentsForCitation(segmentEvidence(evidenceText)),
+    // Numbered exact source spans per source (Sentence-Anchored Citation
+    // + source identity) — the texts themselves are unmodified; see
+    // factContract.ts's segmentBundle/formatBundleForCitation.
+    "Kaynak metinleri (numaralı bölümler):",
+    formattedBundle,
     "Yukarıdaki kaynak metnindeki olguları çıkar ve sınıflandır.",
   ].join("\n");
+}
+
+// Source Intelligence — the evidence bundle Job 1 grounds against: every
+// source whose trust role may provide fact evidence (never social
+// intelligence) and whose evidence is MEANINGFUL, fact authorities first.
+// Thin/absent sources are left out here (the existing thin/none path for
+// the primary source still applies when the bundle is empty).
+const MAX_BUNDLE_SOURCES = 3;
+// "K1", "K2'ye", "(K3)" — a bundle label used as a word in public copy.
+const INTERNAL_SOURCE_LABEL_PATTERN = /(?<![\p{L}\d])K[1-9](?![\p{L}\d]|[.,]\d)/u;
+const ROLE_LABELS: Record<SourceRole, string> = {
+  "fact-authority": "resmi birincil kaynak",
+  "discovery-context": "haber/sektör kaynağı — bağlam",
+  "social-intelligence": "sosyal medya — olgu kaynağı değil",
+};
+
+function buildEvidenceBundle(
+  sources: { title: string; publisher: string; url: string; publishedAt: string; tier?: SourceTier; evidenceText?: string }[],
+): EvidenceBundleSource[] {
+  return orderSourcesByAuthority(sources)
+    .filter((source) => mayProvideFactEvidence(sourceRoleFor(source)))
+    .filter((source) => source.evidenceText && classifyEvidenceSufficiency(source.evidenceText) === "meaningful")
+    .slice(0, MAX_BUNDLE_SOURCES)
+    .map((source, index) => ({
+      label: `K${index + 1}`,
+      title: source.title,
+      publisher: source.publisher,
+      url: source.url,
+      publishedAt: source.publishedAt,
+      roleLabel: ROLE_LABELS[sourceRoleFor(source)],
+      text: source.evidenceText as string,
+    }));
 }
 
 // Job 1: a separate, narrow AI call whose only output is the small
@@ -330,7 +370,7 @@ function buildFactExtractionUserMessage(
 async function extractVerifiedFacts(
   openai: ReturnType<typeof getOpenAITextClient>,
   opportunity: { topic: string; angle: string; whyNow: string },
-  evidenceText: string,
+  formattedBundle: string,
 ): Promise<EvidenceFact[] | null> {
   try {
     const completion = await openai.chat.completions.create({
@@ -343,10 +383,11 @@ async function extractVerifiedFacts(
       // 4800-char TKGM Genelge (~10 facts of Turkish legal text) — the
       // run then failed closed to title-only copy. Still fails closed on
       // any truncation; this only gives a complete answer room to fit.
-      max_completion_tokens: 2400,
+      // Raised again for multi-source bundles (up to 3 sources, 12 facts).
+      max_completion_tokens: 3600,
       messages: [
         { role: "system", content: buildFactExtractionPrompt() },
-        { role: "user", content: buildFactExtractionUserMessage(opportunity, evidenceText) },
+        { role: "user", content: buildFactExtractionUserMessage(opportunity, formattedBundle) },
       ],
     });
 
@@ -371,7 +412,7 @@ async function extractVerifiedFacts(
 // document), so the editorial call can never independently re-discover
 // the very cross-scenario facts Job 1 exists to filter out.
 type EvidencePresentation =
-  | { mode: "verified"; facts: EvidenceFact[] }
+  | { mode: "verified"; facts: EvidenceFact[]; sources: EvidenceBundleSource[] }
   | { mode: "thin-or-none"; rawEvidenceText: string | undefined };
 
 function buildUserMessage(
@@ -397,6 +438,18 @@ function buildUserMessage(
     // one-day-early defect this prevents.
     const sourceDate = formatTurkeyDateDMY(source.publishedAt) ?? source.publishedAt;
     lines.push(`Kaynak: ${source.publisher} — ${source.url} — ${sourceDate}`);
+    // Source Intelligence: same-event related sources, each with its own
+    // identity — facts below carry the label of the ONE source they come from.
+    if (evidence.mode === "verified" && evidence.sources.length > 1) {
+      for (const bundleSource of evidence.sources) {
+        lines.push(
+          `${bundleSource.label}: ${bundleSource.publisher} — "${bundleSource.title}" — ${formatTurkeyDateDMY(bundleSource.publishedAt) ?? bundleSource.publishedAt} (${bundleSource.roleLabel})`,
+        );
+      }
+      lines.push(
+        "K1/K2/K3 yalnızca SİSTEM İÇİ etiketlerdir — paketin hiçbir metninde (hook, caption, slaytlar, facts) ASLA kullanma; kaynağı adıyla an (ör. \"TKGM duyurusuna göre\"). Bu kaynaklar AYNI gelişmeyi anlatır. Farklı kaynaklardaki olguları tek bir alıntı/iddia gibi birleştirme; bir kaynak değişikliği açıkça anlatıyorsa (ör. \"Bu kez ...\") değişikliği ONDAN anlat. Kaynaklar çelişirse kesinlik uydurma — ikisini ayrı ayrı belirt.",
+      );
+    }
 
     if (evidence.mode === "verified") {
       // Verified Fact Contract: this is now the ONLY factual boundary
@@ -411,7 +464,9 @@ function buildUserMessage(
       // amendment (deterministic — see factContract.ts's
       // markSourceChanges); otherwise this block is byte-for-byte as before.
       const changeFacts = evidence.facts.filter((fact) => fact.changedBySource);
-      const formatFact = (fact: EvidenceFact) => `- ${fact.claim} (kanıt: "${fact.evidenceFragment}")`;
+      const sourceTag = (fact: EvidenceFact) =>
+        evidence.sources.length > 1 && fact.sourceIndex !== undefined ? `[${evidence.sources[fact.sourceIndex].label}] ` : "";
+      const formatFact = (fact: EvidenceFact) => `- ${sourceTag(fact)}${fact.claim} (kanıt: "${fact.evidenceFragment}")`;
       if (changeFacts.length > 0) {
         // Two separate sections — structure, not a softer inline hint: a
         // live run showed inline labels alone still let Job 2 headline a
@@ -513,42 +568,34 @@ export async function POST(request: NextRequest) {
   const sufficiency = classifyEvidenceSufficiency(primarySource?.evidenceText);
   let evidencePresentation: EvidencePresentation;
 
-  if (sufficiency === "meaningful" && primarySource?.evidenceText) {
-    const verifiedFacts = await extractVerifiedFacts(openai, contentOpportunity, primarySource.evidenceText);
-    // Evidence Fragment Grounding Check: a "current-topic" fact whose own
-    // evidenceFragment isn't a genuine, verifiable quote from the real
-    // evidenceText is dropped here, same as if Job 1 never reported it —
-    // see factContract.ts's filterCurrentTopicFacts/isEvidenceFragmentGrounded.
-    // Sentence-Anchored Citation: before Gap 1, a current-topic fact whose
-    // own fragment is NOT a genuine quote may have it replaced by the
-    // exact source span it cited (strict conditions — see factContract.ts's
-    // rescueCitedFacts). Gap 1 below is unchanged and still decides.
-    const evidenceSegments = segmentEvidence(primarySource.evidenceText);
-    const citedFacts = verifiedFacts
-      ? rescueCitedFacts(verifiedFacts, primarySource.evidenceText, evidenceSegments)
-      : null;
-    const currentTopicFacts = citedFacts ? filterCurrentTopicFacts(citedFacts, primarySource.evidenceText) : [];
-    // Scenario Boundary Positional Rule: a code-level backstop on Job 1's
-    // OWN classification — a fact drawn from after a scenario-boundary
-    // connective ("bunlar dışındaki hâllerde", ...) is demoted when it
-    // disagrees with the primary (pre-boundary) zone every other
-    // current-topic fact anchors to. See factContract.ts's own header
-    // comment for why this runs separately from Gap 1/Gap 2.
-    // Source Change Markers: code (never the model) flags which of the
-    // surviving facts the source itself marks as amended — Job 2 is told
-    // which facts are THE change and which are background rules.
-    const resolvedFacts = markSourceChanges(
-      resolveScenarioBoundaryConflicts(currentTopicFacts, primarySource.evidenceText),
-      primarySource.evidenceText,
-      evidenceSegments,
+  // Source Intelligence — multi-source evidence bundle: every source of
+  // this opportunity whose trust role may provide fact evidence (fact
+  // authority / discovery-context, never social) AND whose evidence is
+  // MEANINGFUL, fact authorities first, max MAX_BUNDLE_SOURCES. Each keeps
+  // its own identity; see factContract.ts's groundBundleFacts.
+  const evidenceBundle = buildEvidenceBundle(contentOpportunity.sources);
+
+  if (evidenceBundle.length > 0) {
+    const bundleSegments = segmentBundle(evidenceBundle);
+    const verifiedFacts = await extractVerifiedFacts(
+      openai,
+      contentOpportunity,
+      formatBundleForCitation(evidenceBundle, bundleSegments),
     );
+    // Per source, unchanged and in the same order as the single-source
+    // pipeline: citation rescue → Gap 1 (exact quote in THAT source) →
+    // Scenario Boundary rule (THAT source's zones) → source change markers.
+    // A fact that can't be tied to exactly one source is dropped.
+    const resolvedFacts = verifiedFacts ? groundBundleFacts(verifiedFacts, evidenceBundle, bundleSegments) : [];
     // Observability (Section 10): counts only, never evidence content.
     console.log(
-      `Fact contract: extracted=${verifiedFacts?.length ?? 0} currentTopic=${currentTopicFacts.length} scenarioResolved=${resolvedFacts.length} sourceChanges=${resolvedFacts.filter((fact) => fact.changedBySource).length} failClosed=${verifiedFacts === null}`,
+      `Fact contract: sources=${evidenceBundle.length} extracted=${verifiedFacts?.length ?? 0} grounded=${resolvedFacts.length} perSource=${evidenceBundle
+        .map((_, i) => resolvedFacts.filter((fact) => fact.sourceIndex === i).length)
+        .join("/")} sourceChanges=${resolvedFacts.filter((fact) => fact.changedBySource).length} failClosed=${verifiedFacts === null}`,
     );
     evidencePresentation =
       resolvedFacts.length > 0
-        ? { mode: "verified", facts: resolvedFacts }
+        ? { mode: "verified", facts: resolvedFacts, sources: evidenceBundle }
         : { mode: "thin-or-none", rawEvidenceText: undefined };
   } else if (sufficiency === "thin") {
     evidencePresentation = { mode: "thin-or-none", rawEvidenceText: primarySource?.evidenceText };
@@ -601,7 +648,12 @@ export async function POST(request: NextRequest) {
 
   const verifiedFacts = evidencePresentation.mode === "verified" ? evidencePresentation.facts : [];
   const verifiedClaims = verifiedFacts.map((f) => f.claim);
-  const trustedTokens = trustedSourceMetadataTokens(primarySource);
+  const trustedTokens = new Set<string>(trustedSourceMetadataTokens(primarySource));
+  if (evidencePresentation.mode === "verified") {
+    for (const bundleSource of evidencePresentation.sources) {
+      for (const token of trustedSourceMetadataTokens(bundleSource)) trustedTokens.add(token);
+    }
+  }
 
   // One assembly path for BOTH Job 2's package and the editorial
   // revision (below), so a revision can never skip a normalization step.
@@ -635,6 +687,18 @@ export async function POST(request: NextRequest) {
   const findSafetyViolation = (candidate: ContentPackage): string | null => {
     const validation = validateContentPackage(candidate);
     if (!validation.ok) return `validation: ${validation.reason}`;
+    // Source Intelligence: the bundle's internal source labels (K1, K2, ...)
+    // must never reach public copy — a real, live-observed leak ("K1'e
+    // göre ..."). Fails closed like every other check here.
+    if (evidencePresentation.mode === "verified" && evidencePresentation.sources.length > 1) {
+      const publicText = [
+        candidate.hook,
+        candidate.caption,
+        ...candidate.slides.flatMap((slide) => [slide.headline, slide.body, ...slide.facts]),
+      ].join("\n");
+      const leaked = publicText.match(INTERNAL_SOURCE_LABEL_PATTERN);
+      if (leaked) return `internal source label in copy: "${leaked[0]}"`;
+    }
     // Verified Token-to-Claim Binding Check (Gap 2, narrow slice): only
     // meaningful when there's a verified fact set to bind against — a
     // proven, live-observed defect where Job 2 combined a date verified
@@ -668,7 +732,26 @@ export async function POST(request: NextRequest) {
     }${outcome.reason ? ` reason=${outcome.reason}` : ""}`,
   );
 
-  return Response.json({ contentPackage: finalPackage, editorialRevision: outcome });
+  const provenance =
+    evidencePresentation.mode === "verified"
+      ? {
+          sources: evidencePresentation.sources.map(({ label, title, publisher, url, publishedAt, roleLabel }) => ({
+            label,
+            title,
+            publisher,
+            url,
+            publishedAt,
+            role: roleLabel,
+          })),
+          facts: evidencePresentation.facts.map((fact) => ({
+            claim: fact.claim,
+            source: fact.sourceIndex !== undefined ? evidencePresentation.sources[fact.sourceIndex].label : null,
+            changedBySource: Boolean(fact.changedBySource),
+          })),
+        }
+      : null;
+
+  return Response.json({ contentPackage: finalPackage, editorialRevision: outcome, provenance });
 
   async function runEditorialQualityRepair(
     original: ContentPackage,
