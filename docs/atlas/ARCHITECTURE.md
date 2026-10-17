@@ -116,3 +116,53 @@ Next.js 15 (App Router) · React 19 · TypeScript · Supabase (auth + DB +
 storage) · Anthropic Claude (content) · OpenAI image generation ·
 `@resvg/resvg-wasm` (rasterization) · Vercel (hosting) · Meta Graph API
 (Instagram/Facebook publishing).
+
+## H. Video / Reels (V1 — provider + Reels logic, no route/UI yet)
+
+Same planning brain as static content; no parallel planning/grounding:
+
+```
+ContentOpportunity → ContentPlan → CreativeBrief → /api/content-package
+(grounded ContentPackage) → src/lib/ai/video/reelPlan.ts buildReelDraft
+(hook ≤3s / stake / one-idea beats ≤4s / payoff / loop; on-screen ≤6 words)
+→ editorial gate → media generation → Atlas preview → SUAT APPROVAL → publish
+```
+
+- `reelPlan.ts` only re-times lines that already exist in a grounded
+  ContentPackage — it can never state anything the carousel couldn't.
+  Timing rules adapted from MonsterDylan/instagram-agent-skill `ig-reel`
+  (MIT), retuned for spoken Turkish (~2.3 words/s).
+- **In-app media path: fal.ai** — `media/router.ts` `generateVideo`
+  (Seedance 1.5 Pro image-to-video, 9:16, test/final tiers, $1.50
+  per-request cap, OFF unless `VIDEO_GENERATION_ENABLED=true`).
+- **Agent-side media path: Higgsfield** — the official `higgsfield` CLI +
+  `higgsfield-generate` Claude Code skill (user-level install), for
+  Claude-driven generation/benchmarking (e.g. Seedance 2.5, Virality
+  Predictor) during Reel production. Not called by the web app. Paid runs
+  need Suat's explicit go-ahead each time. fal.ai stays the in-app
+  fallback/default until a Higgsfield PoC clearly beats it.
+- Approval/publishing is unchanged: a generated clip is a draft asset;
+  `publishing/eligibility.ts`'s `status === "approved"` gate applies.
+
+## I. ChatPlace — future seam (NOT implemented; must not delay publishing)
+
+Instagram comments/DMs → qualification/audience intelligence → Atlas
+feedback/lead loop. Planned seam, in order:
+
+1. **Inbound:** ChatPlace handles comment-keyword → DM automation and
+   lead qualification on its side (Atlas does not rebuild this). The
+   Reel/caption CTA keyword ("comment X") is the only coupling at
+   publish time — chosen by the Content Strategist, stored in the
+   ContentPackage/caption Suat approves.
+2. **Signal back into Atlas:** a server-only webhook/export route
+   (e.g. `/api/integrations/chatplace`) writing to a new
+   `audience_signals` table keyed by `generated_posts.id` + platform —
+   questions asked, keyword hits, qualified-lead counts. No PII beyond
+   what ChatPlace already holds; no secrets in logs.
+3. **Feedback loop:** Current Content Radar ranking and the Content
+   Strategist read aggregated `audience_signals` (top recurring
+   questions → next topics/angles). Read-only influence; never
+   auto-generates or auto-publishes.
+
+Guardrails: ChatPlace never publishes Atlas content and never triggers
+generation; every outbound post still goes Draft → Approved → Publish.

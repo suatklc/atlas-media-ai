@@ -23,7 +23,12 @@ import {
   filterCurrentTopicFacts,
   findTokenBindingViolations,
   isEvidenceFactArray,
+  formatSegmentsForCitation,
+  markSourceChanges,
+  rescueCitedFacts,
   resolveScenarioBoundaryConflicts,
+  segmentEvidence,
+  SOURCE_CHANGE_LABEL,
   trustedSourceMetadataTokens,
   type EvidenceFact,
 } from "@/lib/ai/content/factContract";
@@ -130,6 +135,14 @@ const AVOIDED_CLICHE_PHRASES = [
   "bilinçli hareket etmek faydalı olacaktır",
   "güncel gelişmeler ışığında",
   "gayrimenkul piyasasında işlemlerin güvenliği açısından",
+  // Live-observed in real 29.09.2026 runs and failed by the Editorial
+  // Quality Gate (.claude/skills/atlas-editorial-quality-gate).
+  "süreç daha öngörülebilir hale gelir",
+  "sürecin kurgusu",
+  "işlem kurgusu",
+  "iki kritik nokta öne çıktı",
+  "yeniden netleştirildi",
+  "sadece X değil, Y de",
 ];
 
 function buildContentPackagePrompt(maxAgeContextDays: number): string {
@@ -148,6 +161,14 @@ Kural — TEKRARSIZLIK / BİLGİ İLERLEMESİ (kritik): Beş slayt aynı fikri f
 Kural — UZMAN YORUMU: Kaynaktaki doğrulanmış olgulardan açıkça türetilen profesyonel bir yorum/değerlendirme eklemek İYİDİR (özellikle Slayt 3 ve Slayt 5'te) — ancak bu yorum yeni bir OLGU İDDİASI gibi sunulmamalı; "Bu gelişme ... gösteriyor/gündeme getiriyor" gibi açık bir yorum çerçevesiyle ayrılmalı.
 
 Kural — UZMAN İÇGÖRÜSÜ (ZORUNLU): Paket, kaynağı yeniden ifade etmenin ötesine geçen EN AZ BİR gerçek profesyonel içgörü içermeli — örneğin: okuyucu ne yapmalı/erken hazırlanmalı, işlemi neyin geciktirebileceği/karmaşıklaştırabileceği, veya taahhütten önce neyin kontrol edilmesi gerektiği gibi somut bir karar-değeri. Bu içgörü kanıtla desteklenmeli, yeni bir olgu icat ETMEMELİ, ve konuyu zorla yerelleştirmemeli. Sahte deneyim/otorite iddiası (ör. "20 yıllık tecrübemle") EKLEME — sadece kanıta dayalı, somut bir profesyonel değerlendirme sun.
+
+Kural — EDİTORYAL KALİTE KAPISI (Suat bunu HİÇ DÜZENLEMEDEN yayımlamalı):
+- hook ve Slayt 1 headline: 5-12 kelime; DEĞİŞEN ŞEYİ söyleyerek başla, okuyucuya hitap et (ör. "... alıyorsanız"), en az bir somut ve doğrulanmış işaret (kurum, belge, süre, tutar) içersin. "netleşti", "öne çıktı", "güncellendi" gibi değişikliğin ne olduğunu söylemeyen fiillerle yetinme.
+- Kaynaktaki TANIM cümlelerini ("... dokümandır", "... ifade eder") kopyalama — sade, konuşma diliyle anlat.
+- Her kural/süre/rakam ana mesaj olarak YALNIZCA BİR slaytta yer alsın; aynı kuralı birden çok slaytta tekrarlama.
+- Slayt 4'teki her madde okuyucunun gerçekten atlayabileceği somut bir kontrol olsun — "işlemin X amaçlı olduğundan emin olun" gibi herkesin zaten bildiği boş maddeler YOK.
+- Slayt 5 ve caption'daki uzman görüşü BU değişikliğe özgü olsun (başka bir konuya da aynen uyabilecek genel bir cümle değil): imzadan önce sorulacak soru, sık yapılan hata veya zamanlama riski gibi.
+- caption, imzadan hemen önce ölçülü tek bir eylem çağrısıyla bitsin (ör. sorularınız için mesaj).
 
 Kural — OLGU / YORUM AYRIMI VE UYDURMA YASAĞI:
 - ContentSlide.facts ve ContentPackage.facts alanları SADECE kaynağın gerçekten belirttiği sayısal/olgusal bilgileri içersin.
@@ -253,7 +274,9 @@ Kurallar:
 - Bir sayı/süre/prosedür/yükümlülük geçmesi, onu otomatik olarak "current-topic" yapmaz — SADECE kaynağın o bilgiyi verilen konuya açıkça bağladığı durumda "current-topic" ver.
 - Kaynak metninde "[AYRI KOŞUL / SENARYO BLOĞU]" işareti yalnızca yapısal bir ipuçtur — otomatik bir "different-scenario" kararı DEĞİLDİR; işaretten sonraki metin GERÇEKTEN farklı bir senaryoyu tanımlıyorsa "different-scenario" ver, tanımlamıyorsa "current-topic" verebilirsin.
 - Kaynağın YAYIM TARİHİ, metin açıkça belirtmedikçe bir yürürlük/başlangıç tarihi değildir; bunu ayrı bir olgu olarak değerlendir.
-- evidenceFragment, kaynaktan kısa ve gerçek bir alıntı/yakın ifade olmalı — asla icat edilmiş bir alıntı verme.
+- Kaynak metni [S1], [S2], ... şeklinde numaralı bölümlere ayrılmıştır. sentenceIds, iddiayı destekleyen bölüm numaralarıdır (en fazla 3, ardışık; örn. [4] veya [4,5]).
+- evidenceFragment, kaynaktan kısa ve BİREBİR alıntı olmalı (numara etiketi hariç) — kelimeleri değiştirme, iki bölümü karıştırma, asla icat edilmiş bir alıntı verme.
+- "${SOURCE_CHANGE_LABEL}" etiketli bölümler, kaynağın kendisinin değişiklik olarak işaretlediği hükümlerdir — bu bölümlerdeki olguları mutlaka çıkar.
 - claim kısa ve düz bir olgu ifadesi olsun — yorum, tavsiye veya slogan değil.`;
 }
 
@@ -264,7 +287,10 @@ function buildFactExtractionUserMessage(
   return [
     `Konu/Fırsat: ${opportunity.topic}`,
     `Bağlam (yorum, olgu değil): ${opportunity.angle}`,
-    `Kaynak metni: "${evidenceText}"`,
+    // Numbered exact source spans (Sentence-Anchored Citation) — the text
+    // itself is unmodified; see factContract.ts's segmentEvidence.
+    "Kaynak metni (numaralı bölümler):",
+    formatSegmentsForCitation(segmentEvidence(evidenceText)),
     "Yukarıdaki kaynak metnindeki olguları çıkar ve sınıflandır.",
   ].join("\n");
 }
@@ -355,8 +381,25 @@ function buildUserMessage(
       lines.push(
         "DOĞRULANMIŞ OLGULAR — SADECE bunlar mevcut konu için kesin olgu kaynağıdır; bunların DIŞINDA kaynaktan başka bir kesin tarih/tutar/prosedür/yükümlülük EKLEME:",
       );
-      for (const fact of evidence.facts) {
-        lines.push(`- ${fact.claim} (kanıt: "${fact.evidenceFragment}")`);
+      // Source Change Markers: only when the source itself marks an
+      // amendment (deterministic — see factContract.ts's
+      // markSourceChanges); otherwise this block is byte-for-byte as before.
+      const changeFacts = evidence.facts.filter((fact) => fact.changedBySource);
+      const formatFact = (fact: EvidenceFact) => `- ${fact.claim} (kanıt: "${fact.evidenceFragment}")`;
+      if (changeFacts.length > 0) {
+        // Two separate sections — structure, not a softer inline hint: a
+        // live run showed inline labels alone still let Job 2 headline a
+        // background rule as the news.
+        lines.push(
+          `NE DEĞİŞTİ — kaynağın KENDİSİNİN değişiklik olarak işaretlediği hükümler [${SOURCE_CHANGE_LABEL}]. Haberin özü budur: hook, slide 1 ve slide 2 (what-happened) BU değişikliği anlatmalı:`,
+        );
+        for (const fact of changeFacts) lines.push(formatFact(fact));
+        lines.push(
+          `ARKA PLAN — zaten yürürlükte olan kurallar, bu duyurunun getirdiği değişiklik DEĞİL. Bağlam ve "ne yapmalı" için kullanılabilir; ama "artık", "yeni", "değişti", "kaldırıldı", "netleşti" gibi ifadelerle yeni bir gelişmeymiş gibi SUNULAMAZ:`,
+        );
+        for (const fact of evidence.facts.filter((fact) => !fact.changedBySource)) lines.push(formatFact(fact));
+      } else {
+        for (const fact of evidence.facts) lines.push(formatFact(fact));
       }
     } else {
       // Evidence Safety Gate: evidence PRESENT is not the same as
@@ -450,19 +493,32 @@ export async function POST(request: NextRequest) {
     // evidenceFragment isn't a genuine, verifiable quote from the real
     // evidenceText is dropped here, same as if Job 1 never reported it —
     // see factContract.ts's filterCurrentTopicFacts/isEvidenceFragmentGrounded.
-    const currentTopicFacts = verifiedFacts
-      ? filterCurrentTopicFacts(verifiedFacts, primarySource.evidenceText)
-      : [];
+    // Sentence-Anchored Citation: before Gap 1, a current-topic fact whose
+    // own fragment is NOT a genuine quote may have it replaced by the
+    // exact source span it cited (strict conditions — see factContract.ts's
+    // rescueCitedFacts). Gap 1 below is unchanged and still decides.
+    const evidenceSegments = segmentEvidence(primarySource.evidenceText);
+    const citedFacts = verifiedFacts
+      ? rescueCitedFacts(verifiedFacts, primarySource.evidenceText, evidenceSegments)
+      : null;
+    const currentTopicFacts = citedFacts ? filterCurrentTopicFacts(citedFacts, primarySource.evidenceText) : [];
     // Scenario Boundary Positional Rule: a code-level backstop on Job 1's
     // OWN classification — a fact drawn from after a scenario-boundary
     // connective ("bunlar dışındaki hâllerde", ...) is demoted when it
     // disagrees with the primary (pre-boundary) zone every other
     // current-topic fact anchors to. See factContract.ts's own header
     // comment for why this runs separately from Gap 1/Gap 2.
-    const resolvedFacts = resolveScenarioBoundaryConflicts(currentTopicFacts, primarySource.evidenceText);
+    // Source Change Markers: code (never the model) flags which of the
+    // surviving facts the source itself marks as amended — Job 2 is told
+    // which facts are THE change and which are background rules.
+    const resolvedFacts = markSourceChanges(
+      resolveScenarioBoundaryConflicts(currentTopicFacts, primarySource.evidenceText),
+      primarySource.evidenceText,
+      evidenceSegments,
+    );
     // Observability (Section 10): counts only, never evidence content.
     console.log(
-      `Fact contract: extracted=${verifiedFacts?.length ?? 0} currentTopic=${currentTopicFacts.length} scenarioResolved=${resolvedFacts.length} failClosed=${verifiedFacts === null}`,
+      `Fact contract: extracted=${verifiedFacts?.length ?? 0} currentTopic=${currentTopicFacts.length} scenarioResolved=${resolvedFacts.length} sourceChanges=${resolvedFacts.filter((fact) => fact.changedBySource).length} failClosed=${verifiedFacts === null}`,
     );
     evidencePresentation =
       resolvedFacts.length > 0

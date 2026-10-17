@@ -2308,3 +2308,197 @@ test("/api/content-package hands Job 2 the Turkey-local source date, never the r
   assert.match(routeSource, /formatTurkeyDateDMY\(source\.publishedAt\)/);
   assert.doesNotMatch(routeSource, /— \$\{source\.publishedAt\}`/);
 });
+
+// ============================================================
+// Sentence-Anchored Citation + Source Change Markers — root-cause fix for
+// the real TKGM 2024/4 + 2024/2 (29 Sep 2026) defect: the fact stating
+// what the source actually changed was extracted by Job 1 but dropped by
+// Gap 1 over a blended quote, and Job 2 had no signal for which facts
+// were the change. Real source text below (verbatim from the live PDFs).
+// ============================================================
+
+const REAL_2024_2_EVIDENCE =
+  "Konu:Yabancıların Taşınmaz Edinimlerinde ve Bazı İşlemlerde Kullanılacak Değerleme Raporlarına İlişkin Usul ve Esaslar GENELGE 2024/2 İlgi : a) 4 Sayılı Cumhurbaşkanlığı Kararnamesi. *(28/09/2026 tarihli ve E-90759875-020-22003020 sayılı Makam Oluru ile güncellenmiştir.) I. GİRİŞ Genel Müdürlüğümüzün tarafından Türk Vatandaşlığı Kanununun Uygulamasına İlişkin Yönetmelik uyarınca yapılacak tespitlerde ve diğer bazı tapu işlemlerinde kullanılmak üzere değerleme raporu talep edilmektedir. Bu kez ilgi (b) Makam Oluru ile Türk Vatandaşlığı Kanununun Uygulanmasına İlişkin Yönetmelik uyarınca yapılacak tespitlerde kullanılacak değerleme raporlarının Sermaye Piyasası Kurulu lisanslı herhangi bir Değerleme Kuruluşu tarafından düzenlenebileceğine karar verilmiştir. Değerleme mevzuatında meydana gelen değişikliklerle ilgili olarak birimlerimizce yapılacak işlemler bu genelgenin temel konularını oluşturmaktadır.";
+
+// The exact live-observed Job 1 output shape: right claim, blended quote
+// ("Uygulamasına" from one sentence spliced into another).
+const BLENDED_SPK_FACT = {
+  claim: "Değerleme raporları SPK lisanslı herhangi bir değerleme kuruluşu tarafından düzenlenebilir.",
+  evidenceFragment:
+    "Türk Vatandaşlığı Kanununun Uygulamasına İlişkin Yönetmelik uyarınca yapılacak tespitlerde kullanılacak değerleme raporlarının Sermaye Piyasası Kurulu lisanslı herhangi bir Değerleme Kuruluşu tarafından düzenlenebileceğine karar verilmiştir.",
+  status: "current-topic",
+};
+
+function segmentIdContaining(segments, needle) {
+  return segments.find((segment) => segment.text.includes(needle)).id;
+}
+
+test("segmentEvidence: every segment is an exact source substring, and the real amendment sentences are the marked ones", () => {
+  const segments = factContract.segmentEvidence(REAL_2024_2_EVIDENCE);
+  for (const segment of segments) {
+    assert.equal(REAL_2024_2_EVIDENCE.slice(segment.start, segment.end), segment.text);
+  }
+  const marked = segments.filter((segment) => segment.amendmentMarked).map((segment) => segment.text);
+  assert.ok(marked.some((text) => text.startsWith("Bu kez ilgi (b)")));
+  assert.ok(marked.some((text) => text.includes("ile güncellenmiştir")));
+  assert.ok(!marked.some((text) => text.startsWith("Değerleme mevzuatında")));
+});
+
+test("segmentEvidence: a trailing amendment parenthetical stays with the sentence it annotates", () => {
+  const text =
+    "Oniki ayı geçen TTB'lerde belgeye esas değerleme raporu yenilenecektir. (İlgi (ı) Makam Oluru ile değişik ifade). Diğer bir cümle burada.";
+  const segments = factContract.segmentEvidence(text);
+  assert.ok(segments[0].text.includes("yenilenecektir.") && segments[0].text.includes("değişik ifade"));
+  assert.equal(segments[0].amendmentMarked, true);
+  assert.equal(segments[1].amendmentMarked, false);
+});
+
+test("segmentEvidence: a long unpunctuated PDF run is chunked into citable exact spans", () => {
+  const text = "kelime ".repeat(200).trim();
+  const segments = factContract.segmentEvidence(text);
+  assert.ok(segments.length > 1);
+  for (const segment of segments) {
+    assert.ok(segment.text.length <= 360);
+    assert.equal(text.slice(segment.start, segment.end), segment.text);
+  }
+});
+
+test("hasAmendmentMarker: legislative amendment wording only — 'eklenmiştir' alone (= attached) is not a change", () => {
+  for (const text of [
+    "ile değişik ifade",
+    "fıkrası değiştirilmiştir",
+    "yürürlükten kaldırılmıştır",
+    "Makam Oluru ile güncellenmiştir",
+    "Bu kez karar verilmiştir",
+    "aşağıdaki fıkralar eklenmiştir",
+  ]) {
+    assert.equal(factContract.hasAmendmentMarker(text), true, text);
+  }
+  for (const text of ["Belge rapora eklenmiştir.", "Bu kezzap değil", "değerleme raporu aranmayacak"]) {
+    assert.equal(factContract.hasAmendmentMarker(text), false, text);
+  }
+});
+
+test("rescueCitedFacts: the real blended quote is rescued ONLY via its valid citation — and then passes the unchanged Gap 1", () => {
+  const segments = factContract.segmentEvidence(REAL_2024_2_EVIDENCE);
+  const id = segmentIdContaining(segments, "Bu kez ilgi (b)");
+  // Without citation: unchanged behavior — Gap 1 drops it.
+  assert.equal(factContract.filterCurrentTopicFacts([BLENDED_SPK_FACT], REAL_2024_2_EVIDENCE).length, 0);
+  const [rescued] = factContract.rescueCitedFacts(
+    [{ ...BLENDED_SPK_FACT, sentenceIds: [id] }],
+    REAL_2024_2_EVIDENCE,
+    segments,
+  );
+  assert.ok(REAL_2024_2_EVIDENCE.includes(rescued.evidenceFragment));
+  assert.match(rescued.evidenceFragment, /^Bu kez ilgi \(b\)/);
+  assert.equal(factContract.filterCurrentTopicFacts([rescued], REAL_2024_2_EVIDENCE).length, 1);
+});
+
+test("rescueCitedFacts: an already-grounded fragment is never replaced", () => {
+  const segments = factContract.segmentEvidence(REAL_2024_2_EVIDENCE);
+  const fact = {
+    claim: "c",
+    evidenceFragment: "değerleme raporu talep edilmektedir",
+    status: "current-topic",
+    sentenceIds: [1],
+  };
+  const [result] = factContract.rescueCitedFacts([fact], REAL_2024_2_EVIDENCE, segments);
+  assert.equal(result.evidenceFragment, "değerleme raporu talep edilmektedir");
+});
+
+test("rescueCitedFacts fails closed: invalid, non-contiguous, too many, duplicate ids, wrong status, or a claim token missing from the span", () => {
+  const segments = factContract.segmentEvidence(REAL_2024_2_EVIDENCE);
+  const id = segmentIdContaining(segments, "Bu kez ilgi (b)");
+  const cases = [
+    { ...BLENDED_SPK_FACT, sentenceIds: [] },
+    { ...BLENDED_SPK_FACT, sentenceIds: [999] },
+    { ...BLENDED_SPK_FACT, sentenceIds: [1, 3] },
+    { ...BLENDED_SPK_FACT, sentenceIds: [1, 2, 3, 4] },
+    { ...BLENDED_SPK_FACT, sentenceIds: [id, id] },
+    { ...BLENDED_SPK_FACT, sentenceIds: [id], status: "different-scenario" },
+    // A number the cited span never states — never rescued.
+    { ...BLENDED_SPK_FACT, claim: "Rapor 400.000 ABD Doları tutarını teyit eder.", sentenceIds: [id] },
+  ];
+  for (const fact of cases) {
+    const [result] = factContract.rescueCitedFacts([fact], REAL_2024_2_EVIDENCE, segments);
+    assert.equal(result.evidenceFragment, fact.evidenceFragment);
+    assert.equal(factContract.filterCurrentTopicFacts([result], REAL_2024_2_EVIDENCE).length, 0);
+  }
+});
+
+test("markSourceChanges: only a fact whose span the source marks as amended is flagged — background rules stay unflagged", () => {
+  const segments = factContract.segmentEvidence(REAL_2024_2_EVIDENCE);
+  const facts = [
+    {
+      claim: "SPK lisanslı herhangi bir kuruluş",
+      evidenceFragment: "Sermaye Piyasası Kurulu lisanslı herhangi bir Değerleme Kuruluşu tarafından düzenlenebileceğine",
+      status: "current-topic",
+    },
+    { claim: "Değerleme raporu talep edilir", evidenceFragment: "kullanılmak üzere değerleme raporu talep edilmektedir", status: "current-topic" },
+  ];
+  const [change, background] = factContract.markSourceChanges(facts, REAL_2024_2_EVIDENCE, segments);
+  assert.equal(change.changedBySource, true);
+  assert.equal(background.changedBySource, undefined);
+});
+
+test("markSourceChanges: a source with no amendment markers is returned unchanged", () => {
+  const text = "Duyuruya göre işlem 6 Eylül 2026 tarihinde başlayacak. Başvurular e-Devlet üzerinden yapılacak.";
+  const facts = [{ claim: "x", evidenceFragment: "e-Devlet üzerinden", status: "current-topic" }];
+  assert.equal(factContract.markSourceChanges(facts, text, factContract.segmentEvidence(text)), facts);
+});
+
+test("/api/content-package: Job 1 sees numbered segments; a cited change fact reaches Job 2 labeled as THE change, background facts unlabeled", async () => {
+  const segments = factContract.segmentEvidence(REAL_2024_2_EVIDENCE);
+  const changeId = segmentIdContaining(segments, "Bu kez ilgi (b)");
+  const backgroundId = segmentIdContaining(segments, "talep edilmektedir");
+  const { route, state } = loadContentPackageRoute({
+    factContractResponse: {
+      facts: [
+        { ...BLENDED_SPK_FACT, sentenceIds: [changeId] },
+        {
+          claim: "ARKA_PLAN: değerleme raporu talep edilir.",
+          evidenceFragment: "değerleme raporu talep edilmektedir",
+          sentenceIds: [backgroundId],
+          status: "current-topic",
+        },
+      ],
+    },
+  });
+  await route.POST({
+    json: async () => ({
+      contentOpportunity: {
+        topic: "2024/2 Sayılı Genelge Güncellemesi Hakkında Duyuru",
+        angle: "a",
+        whyNow: "w",
+        keyFacts: ["k"],
+        sources: [
+          {
+            title: "2024/2 Sayılı Genelge Güncellemesi Hakkında Duyuru",
+            publisher: "TKGM",
+            url: "https://example.com/x",
+            publishedAt: "2026-09-28T21:00:00.000Z",
+            evidenceText: REAL_2024_2_EVIDENCE,
+          },
+        ],
+      },
+      visualFormat: "carousel",
+    }),
+  });
+  const jobOneUser = state.lastFactExtractionMessages.find((m) => m.role === "user").content;
+  assert.match(jobOneUser, /\[S\d+ · DEĞİŞİKLİK İŞARETLİ\] Bu kez ilgi \(b\)/);
+  const jobTwoUser = state.lastMessages.find((m) => m.role === "user").content;
+  // Change facts and background facts reach Job 2 in two separate sections.
+  const changeSection = jobTwoUser.indexOf("NE DEĞİŞTİ —");
+  const backgroundSection = jobTwoUser.indexOf("ARKA PLAN —");
+  const changeFact = jobTwoUser.indexOf("- Değerleme raporları SPK lisanslı");
+  const backgroundFact = jobTwoUser.indexOf("- ARKA_PLAN: ");
+  assert.ok(changeSection >= 0 && backgroundSection > changeSection);
+  assert.ok(changeFact > changeSection && changeFact < backgroundSection);
+  assert.ok(backgroundFact > backgroundSection);
+});
+
+test("extractNotableTokens: a thousand-grouped amount equals its bare digits (real '1.000.000' vs '1000000' false positive)", () => {
+  assert.deepEqual([...factContract.extractNotableTokens("1.000.000 Amerikan Doları")], ["1000000"]);
+  assert.deepEqual([...factContract.extractNotableTokens("1000000 Amerikan Doları")], ["1000000"]);
+  assert.deepEqual([...factContract.extractNotableTokens("400.000 USD")], [...factContract.extractNotableTokens("400000 USD")]);
+});

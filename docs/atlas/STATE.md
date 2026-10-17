@@ -280,7 +280,23 @@ changes often — keep it short and current, not a historical changelog
   - `tests/output-mode.test.mjs` ×2 — `isContentOpportunity is not a
     function` (stale mock map, missing several real imports from an
     earlier refactor).
-- Full test suite: 415/419 passing (the 4 above).
+- Full test suite: 432/436 passing (the 4 above).
+- **"Actual change lost before writing" — ROOT CAUSE FIXED (2026-10-17,
+  second pass).** `factContract.ts`: Sentence-Anchored Citation (Job 1
+  cites `[S<n>]` segments; a current-topic fact whose own quote fails
+  Gap 1 may be rescued ONLY to the exact cited source span, ≤3
+  contiguous ids, every claim token present in the span — Gap 1 then
+  runs unchanged) + Source Change Markers (code-detected Turkish
+  legislative amendment wording → Job 2 gets separate `NE DEĞİŞTİ —` /
+  `ARKA PLAN —` sections). Verified live: Job 1 keeps 9–10 facts (was
+  6–7), both real changes reach every run, novelty framing correct per
+  the Editorial Quality Gate. Remaining gap is editorial craft only
+  (gate FAIL on run-level language/repetition, ready 4–5/10) — see the
+  open decision below.
+- **Open decision for Suat:** allow ONE extra editorial-revision call
+  (gate → revise, all deterministic checks re-run, fail-safe fallback to
+  the original) inside `/api/content-package`? This changes the frozen
+  "ONE OpenAI call" ContentPackage design, so it needs explicit approval.
 - **First real publish attempt (2026-10-17) — NOT yet Gold Standard.**
   Today's only strong live topic: TKGM's 28.09.2026 update to Genelge
   2024/4 + 2024/2 (citizenship-by-property valuation reports may now be

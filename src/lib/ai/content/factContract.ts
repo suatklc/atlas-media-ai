@@ -11,7 +11,8 @@
 // facts before the ContentPackage call ever runs. Deliberately as
 // small as contentPackage.ts's own contract: one flat type, one JSON
 // schema, one structural guard — not a generic framework, no
-// confidence score, no source IDs, no embeddings, no citation system.
+// confidence score, no embeddings. (Sentence-anchored citation ids were
+// added later as a deterministic grounding aid — see segmentEvidence.)
 
 import { SCENARIO_BOUNDARY_MARKER } from "../research/retrieval/evidenceExtraction";
 import { toTurkeyCalendarDate, TURKISH_MONTH_NAMES, turkishMonthNumber } from "../research/retrieval/turkishDate";
@@ -22,6 +23,14 @@ export type EvidenceFact = {
   claim: string;
   evidenceFragment: string;
   status: EvidenceFactStatus;
+  // Sentence-Anchored Citation (optional for backward compatibility):
+  // the [S<n>] segment ids (see segmentEvidence) Job 1 says support this
+  // claim. Only ever used by rescueCitedFacts below.
+  sentenceIds?: number[];
+  // Set by CODE only (markSourceChanges), never by the model: the
+  // fact's own source span carries an explicit amendment marker — this
+  // is what the source itself says it changed.
+  changedBySource?: boolean;
 };
 
 const VALID_STATUSES = new Set<EvidenceFactStatus>(["current-topic", "different-scenario", "unsupported"]);
@@ -33,7 +42,9 @@ export function isEvidenceFact(value: unknown): value is EvidenceFact {
     typeof v.claim === "string" &&
     typeof v.evidenceFragment === "string" &&
     typeof v.status === "string" &&
-    VALID_STATUSES.has(v.status as EvidenceFactStatus)
+    VALID_STATUSES.has(v.status as EvidenceFactStatus) &&
+    (v.sentenceIds === undefined ||
+      (Array.isArray(v.sentenceIds) && v.sentenceIds.every((id) => Number.isInteger(id))))
   );
 }
 
@@ -70,6 +81,153 @@ export function isEvidenceFragmentGrounded(fact: EvidenceFact, evidenceText: str
 // isEvidenceFragmentGrounded above.
 export function filterCurrentTopicFacts(facts: EvidenceFact[], evidenceText: string): EvidenceFact[] {
   return facts.filter((fact) => fact.status === "current-topic" && isEvidenceFragmentGrounded(fact, evidenceText));
+}
+
+// ============================================================
+// Sentence-Anchored Citation + Source Change Markers — root-cause fix
+// for a real, live-observed defect (TKGM Genelge 2024/4 + 2024/2, 29 Sep
+// 2026): the ONE fact that said what the source actually changed ("...SPK
+// lisanslı herhangi bir Değerleme Kuruluşu tarafından
+// düzenlenebileceğine...") was extracted by Job 1, but its free-typed
+// evidenceFragment blended two source sentences ("Uygulamasına" vs the
+// source's "Uygulanmasına"), so Gap 1 correctly dropped it — and nothing
+// told Job 2 which of the remaining (true) facts were the change versus
+// long-standing background rules, so old rules got framed as new
+// ("artık ..."). Two deterministic layers, neither weakening Gap 1/Gap 2/
+// the Scenario Boundary rule:
+//
+// 1. segmentEvidence numbers the evidence into exact source spans. Job 1
+//    cites the [S<n>] ids that support each claim. rescueCitedFacts only
+//    acts on a current-topic fact whose OWN fragment already failed Gap
+//    1: it substitutes the exact cited source span — and only when the
+//    ids are valid, contiguous and few, and every notable token (date/
+//    amount/duration/reference) in the claim is present in that span.
+//    The result is a genuine substring, so Gap 1 then runs unchanged on
+//    it. A fragment that was already grounded is never touched.
+// 2. markSourceChanges flags (in code, never by the model) facts whose
+//    span carries an explicit amendment marker the source itself uses —
+//    standard Turkish legislative drafting ("ile değişik", "değiştiril-
+//    miştir", "yürürlükten kaldırılmıştır", "bu kez", ...). Domain-
+//    generic, like SCENARIO_BRANCH_CONNECTIVES: no source/publisher/
+//    real-estate vocabulary.
+// ============================================================
+
+export type EvidenceSegment = { id: number; start: number; end: number; text: string; amendmentMarked: boolean };
+
+// Short and literal on purpose (prefer missing a marker over inventing a
+// change). Plain "eklenmiştir" is excluded — it also means "attached".
+const AMENDMENT_MARKERS: RegExp[] = [
+  /ile\s+değişik/iu,
+  /değiştirilmiştir/iu,
+  /yürürlükten\s+kaldırılmıştır/iu,
+  /güncellenmiştir/iu,
+  /yeniden\s+düzenlenmiştir/iu,
+  /(?:fıkra|bent|madde|cümle|ibare)\p{L}*\s+eklenmiştir/iu,
+  /(?<!\p{L})bu\s+kez(?!\p{L})/iu,
+];
+
+export function hasAmendmentMarker(text: string): boolean {
+  return AMENDMENT_MARKERS.some((pattern) => pattern.test(text));
+}
+
+// A sentence break: end punctuation, whitespace, then an uppercase letter
+// or digit. A parenthetical right after a sentence ("... yenilenecektir.
+// (İlgi ... ile değişik ifade)") therefore stays with the sentence it
+// annotates. Long unpunctuated runs (common in PDF text) are chunked at
+// whitespace so every segment stays citable.
+const SEGMENT_BREAK_PATTERN = /(?<=[.!?;])\s+(?=[\p{Lu}\d])/gu;
+const MAX_SEGMENT_CHARS = 360;
+const MAX_CITED_SEGMENTS = 3;
+
+export function segmentEvidence(evidenceText: string): EvidenceSegment[] {
+  const segments: EvidenceSegment[] = [];
+  const add = (rawStart: number, rawEnd: number) => {
+    let start = rawStart;
+    let end = rawEnd;
+    while (start < end && /\s/.test(evidenceText[start])) start += 1;
+    while (end > start && /\s/.test(evidenceText[end - 1])) end -= 1;
+    if (end <= start) return;
+    const text = evidenceText.slice(start, end);
+    segments.push({ id: segments.length + 1, start, end, text, amendmentMarked: hasAmendmentMarker(text) });
+  };
+  const addChunked = (start: number, end: number) => {
+    let cursor = start;
+    while (end - cursor > MAX_SEGMENT_CHARS) {
+      const space = evidenceText.lastIndexOf(" ", cursor + MAX_SEGMENT_CHARS);
+      const cut = space > cursor ? space : cursor + MAX_SEGMENT_CHARS;
+      add(cursor, cut);
+      cursor = cut;
+    }
+    add(cursor, end);
+  };
+
+  let sentenceStart = 0;
+  for (const match of evidenceText.matchAll(SEGMENT_BREAK_PATTERN)) {
+    const breakIndex = match.index ?? 0;
+    addChunked(sentenceStart, breakIndex);
+    sentenceStart = breakIndex + match[0].length;
+  }
+  addChunked(sentenceStart, evidenceText.length);
+  return segments;
+}
+
+export const SOURCE_CHANGE_LABEL = "DEĞİŞİKLİK İŞARETLİ";
+
+// What Job 1 sees instead of one undifferentiated string: every segment
+// with its id, amendment-marked ones labeled. Text is unmodified.
+export function formatSegmentsForCitation(segments: EvidenceSegment[]): string {
+  return segments
+    .map((segment) => `[S${segment.id}${segment.amendmentMarked ? ` · ${SOURCE_CHANGE_LABEL}` : ""}] ${segment.text}`)
+    .join("\n");
+}
+
+function citedSpan(sentenceIds: number[] | undefined, segments: EvidenceSegment[], evidenceText: string): string | undefined {
+  if (!sentenceIds || sentenceIds.length === 0 || sentenceIds.length > MAX_CITED_SEGMENTS) return undefined;
+  const ids = Array.from(new Set(sentenceIds)).sort((a, b) => a - b);
+  if (ids.length !== sentenceIds.length) return undefined;
+  if (ids[0] < 1 || ids[ids.length - 1] > segments.length) return undefined;
+  for (let i = 1; i < ids.length; i++) {
+    if (ids[i] !== ids[i - 1] + 1) return undefined; // contiguous only — one real span
+  }
+  return evidenceText.slice(segments[ids[0] - 1].start, segments[ids[ids.length - 1] - 1].end);
+}
+
+function tokensOf(text: string): Set<string> {
+  return new Set([...extractNotableTokens(text), ...extractNotableTokens(spellOutDurationsToDigits(text))]);
+}
+
+export function rescueCitedFacts(facts: EvidenceFact[], evidenceText: string, segments: EvidenceSegment[]): EvidenceFact[] {
+  return facts.map((fact) => {
+    if (fact.status !== "current-topic" || isEvidenceFragmentGrounded(fact, evidenceText)) return fact;
+    const span = citedSpan(fact.sentenceIds, segments, evidenceText);
+    if (!span) return fact; // stays ungrounded -> Gap 1 drops it, as before
+    const spanTokens = tokensOf(span);
+    const claimTokens = extractNotableTokens(fact.claim);
+    for (const token of claimTokens) {
+      if (!spanTokens.has(token)) return fact; // claim states something the span doesn't
+    }
+    return { ...fact, evidenceFragment: span };
+  });
+}
+
+export function markSourceChanges(facts: EvidenceFact[], evidenceText: string, segments: EvidenceSegment[]): EvidenceFact[] {
+  const marked = segments.filter((segment) => segment.amendmentMarked);
+  if (marked.length === 0) return facts;
+  return facts.map((fact) => {
+    const fragment = fact.evidenceFragment.trim();
+    const rawIndex = fragment ? evidenceText.indexOf(fragment) : -1;
+    let changed: boolean;
+    if (rawIndex >= 0) {
+      const fragmentEnd = rawIndex + fragment.length;
+      changed = marked.some((segment) => rawIndex < segment.end && fragmentEnd > segment.start);
+    } else {
+      const normalizedFragment = normalizeForEvidenceMatch(fragment);
+      changed =
+        normalizedFragment.length > 0 &&
+        marked.some((segment) => normalizeForEvidenceMatch(segment.text).includes(normalizedFragment));
+    }
+    return changed ? { ...fact, changedBySource: true } : fact;
+  });
 }
 
 // ============================================================
@@ -140,9 +298,10 @@ const EVIDENCE_FACT_SCHEMA = {
   properties: {
     claim: { type: "string" },
     evidenceFragment: { type: "string" },
+    sentenceIds: { type: "array" as const, items: { type: "integer" } },
     status: { type: "string", enum: ["current-topic", "different-scenario", "unsupported"] },
   },
-  required: ["claim", "evidenceFragment", "status"],
+  required: ["claim", "evidenceFragment", "sentenceIds", "status"],
   additionalProperties: false,
 };
 
@@ -283,6 +442,14 @@ function overlapsAny(span: TokenSpan, claimed: TokenSpan[]): boolean {
   return claimed.some((c) => span.start < c.end && span.end > c.start);
 }
 
+// A real, live-observed false positive: the source's "1.000.000
+// Amerikan Doları" echoed by Job 2 as "1000000" compared as two different
+// amounts. A purely thousand-grouped number ("1.000.000", "400,000") is
+// the same value as its bare digits — only the grouping is dropped.
+function canonicalizeLargeNumber(raw: string): string {
+  return /^\d{1,3}(?:[.,]\d{3})+$/.test(raw) ? raw.replace(/[.,]/g, "") : normalizeToken(raw);
+}
+
 export function extractNotableTokens(text: string): Set<string> {
   const tokens = new Set<string>();
   const claimedSpans: TokenSpan[] = [];
@@ -297,7 +464,7 @@ export function extractNotableTokens(text: string): Set<string> {
 
   for (const span of findSpans(LARGE_NUMBER_PATTERN, text)) {
     if (!overlapsAny(span, claimedSpans)) {
-      tokens.add(normalizeToken(text.slice(span.start, span.end)));
+      tokens.add(canonicalizeLargeNumber(text.slice(span.start, span.end)));
     }
   }
 

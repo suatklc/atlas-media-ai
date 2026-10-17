@@ -114,6 +114,24 @@ explicitly requested.
 Research/source freshness rules and the approval/publishing safety chain
 must not be casually changed.
 
+# Atlas Agent Stack (Claude Code)
+
+- `.claude/skills/real-estate-content-strategist` — the Atlas Content
+  Strategist: source → what actually changed → why it matters → audience
+  impact → Suat's interpretation → hook → carousel/caption/Reel. Works
+  through `/api/content-package`'s grounding, never around it.
+- `.claude/skills/atlas-editorial-quality-gate` (+ agent
+  `.claude/agents/atlas-editorial-quality-gate.md` for an independent
+  read) — run on every real generation before anything is called ready:
+  "Would Suat publish this unchanged?"
+- `.claude/skills/fact-source-grounding` — the fact boundary.
+- `.claude/skills/find-skills` (Vercel, via `npx skills`) — search the
+  open skills ecosystem for a missing capability before building it.
+  Review before installing; install nothing speculatively.
+- Higgsfield: official `higgsfield` CLI + `higgsfield-generate` skill
+  (user-level). Agent-side media generation only; fal.ai stays the in-app
+  provider. Never trigger a paid generation without Suat's approval.
+
 # Memory Imports
 
 Use @docs/atlas/PRODUCT.md
