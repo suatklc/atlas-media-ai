@@ -280,7 +280,27 @@ changes often — keep it short and current, not a historical changelog
   - `tests/output-mode.test.mjs` ×2 — `isContentOpportunity is not a
     function` (stale mock map, missing several real imports from an
     earlier refactor).
-- Full test suite: 396/400 passing (the 4 above).
+- Full test suite: 415/419 passing (the 4 above).
+- **First real publish attempt (2026-10-17) — NOT yet Gold Standard.**
+  Today's only strong live topic: TKGM's 28.09.2026 update to Genelge
+  2024/4 + 2024/2 (citizenship-by-property valuation reports may now be
+  issued by any SPK-licensed valuation firm; 12-month TTB renewal). Six
+  real runs through the production pipeline: all factually safe, none
+  publishable — the actual "what changed" fact is lost because Job 1's
+  evidenceFragment for it blends two source sentences (e.g.
+  "Uygulamasına" vs the source's "Uygulanmasına") and Gap 1 correctly
+  drops it, and the source's own amendment markers ("(İlgi (ı) Makam
+  Oluru ile değişik ifade)") are not carried to Job 2, so long-standing
+  rules get framed as new ("artık"). Root cause for the planned grounding
+  audit — not to be prompt-patched. Real defects found and fixed in the
+  same pass: TKGM card titles now arrive wrapped in raw HTML (stripped;
+  official "Konu:" subject line used as snippet); "taşınmaz" missing from
+  Radar vocabulary; every Turkey-midnight `publishedAt` rendered one day
+  early (whyNow, Job 2 prompt, trusted date token, carousel source label
+  on UTC servers); Job 1 `max_completion_tokens` 1200 truncated dense
+  evidence (now 2400); token-binding false rejections for long-form dates
+  ("29 Eylül 2026"), capitalized "Sayılı", spelled-out durations ("oniki
+  ay"), and the source title's own document number.
 
 ## Next work order (intentional — do not reorder without a genuine blocker)
 
@@ -307,15 +327,16 @@ changes often — keep it short and current, not a historical changelog
 11. Canva Gold Standard PoC — not started (next, per CLAUDE.md's
     Current Development Order).
 12. External publishing PoC (Buffer first candidate) — not started.
-13. Video / Reels generation — not started. Starting point when this
-    becomes active: `src/lib/ai/media/types.ts`'s provider contract is
-    *deliberately* image-only today ("Phase 1... excludes video job
-    types... later phases — not premature generalization here") — the
-    acknowledged seam is extending that contract with a video job type,
-    not a new abstraction. `fal.ai` is already configured as "server-
-    only image/video generation provider" (`.env.example`) — the
-    first real provider candidate, not a new vendor decision. Per
-    GUARDRAILS.md, video must reuse the existing `ContentOpportunity` →
-    `ContentPlan` → `CreativeBrief` pipeline as its planning brain, never
-    a parallel content-planning system — no new planning/grounding layer
-    for video.
+13. Video / Reels V1 — provider layer implemented, NOT yet live-tested
+    (no paid generation run). fal.ai chosen over Higgsfield (already
+    integrated; Higgsfield needs a new account/wallet/key/client for the
+    same model families). `media/types.ts` gained one image-to-video job
+    type; `media/config.ts` pins Seedance 1.5 Pro
+    (`fal-ai/bytedance/seedance/v1.5/pro/image-to-video`, input schema
+    verified against the installed client), two fixed tiers (test: 5s
+    480p, final: 8s 1080p, audio off), conservative per-second cost
+    estimates and a $1.50 per-request cap; `media/router.ts`'s
+    `generateVideo` fails closed unless `VIDEO_GENERATION_ENABLED=true`.
+    No API route/UI yet — next: one approved paid test clip, then wire a
+    route that reuses `ContentOpportunity` → `ContentPlan` →
+    `CreativeBrief` (per GUARDRAILS.md, no parallel planning layer).

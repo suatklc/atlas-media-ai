@@ -1,5 +1,12 @@
 import { fal } from "@fal-ai/client";
-import type { GeneratedImage, ImageAspectRatio, ImageGenerationRequest } from "../types";
+import type {
+  GeneratedImage,
+  GeneratedVideo,
+  ImageAspectRatio,
+  ImageGenerationRequest,
+  VideoGenerationRequest,
+} from "../types";
+import { VIDEO_TIERS } from "../config";
 
 // Configured once, lazily, on first use — mirrors the lazy-client pattern
 // already used by image/client.ts and media/providers/openai.ts. FAL_KEY is
@@ -115,4 +122,65 @@ export async function generateFalImage(request: ImageGenerationRequest): Promise
   }
 
   return fetchImageAsBuffer(url);
+}
+
+// ============================================================
+// Video/Reels V1 — image-to-video via the same lazily-configured fal
+// client. Only ever called through media/router.ts's generateVideo, which
+// enforces the enable flag + cost cap BEFORE this runs.
+// ============================================================
+
+export function buildFalVideoInput(request: VideoGenerationRequest): Record<string, unknown> {
+  const tier = VIDEO_TIERS[request.tier];
+  return {
+    prompt: request.prompt,
+    image_url: request.imageUrl,
+    aspect_ratio: request.aspectRatio,
+    duration: String(tier.durationSeconds),
+    resolution: tier.resolution,
+    generate_audio: tier.generateAudio,
+  };
+}
+
+type FalVideoOutput = { video?: { url?: unknown; content_type?: unknown } };
+
+function isFalVideoOutput(value: unknown): value is FalVideoOutput {
+  return typeof value === "object" && value !== null;
+}
+
+// Clips are a few MB; this cap only guards against a pathological response.
+const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+
+export async function generateFalVideo(
+  request: VideoGenerationRequest,
+  estimatedCostUsd: number,
+): Promise<GeneratedVideo> {
+  ensureFalConfigured();
+
+  const result = await fal.subscribe(request.model, {
+    input: buildFalVideoInput(request),
+    logs: false,
+  });
+
+  const output: unknown = result.data;
+  const url = isFalVideoOutput(output) && typeof output.video?.url === "string" ? output.video.url : undefined;
+  if (!url) {
+    throw new Error("fal video generation returned no video data.");
+  }
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`fal video fetch failed with status ${response.status}`);
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length === 0 || bytes.length > MAX_VIDEO_BYTES) {
+    throw new Error("fal video fetch returned an empty or oversized file.");
+  }
+
+  return {
+    bytes,
+    contentType: response.headers.get("content-type") || "video/mp4",
+    durationSeconds: VIDEO_TIERS[request.tier].durationSeconds,
+    estimatedCostUsd,
+  };
 }
