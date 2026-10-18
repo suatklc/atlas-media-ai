@@ -18,6 +18,35 @@ import { SAFETY_CLAUSE, PHOTOGRAPHY_QUALITY_CLAUSE, GEOGRAPHIC_CONTEXT_CLAUSE, N
 const TURKISH_CONTEXT_CLAUSE =
   "Görsel Türkiye/İstanbul bağlamında, Türk şehir/konut mimarisine uygun olsun (örn. tipik Amerikan banliyö evi/beyaz çit gibi Türkiye dışı bir estetik OLMASIN); modern Türk gayrimenkul/mimari dilini yansıtsın.";
 
+// EXPERT / portfolio content (owner-focused villa posts): a real production
+// review found the generic visualBrief + Turkish-context clause still
+// produced a suburban-looking house — not the property a premium villa
+// owner identifies with. Explicit, restrained art direction for an
+// illustrative (never a real listing) premium villa in the business
+// profile's own region. News content keeps buildGoldStandardImagePrompt
+// unchanged.
+function premiumVillaArtDirection(region: string): string {
+  return [
+    `Kuzey İstanbul / ${region} bölgesinin ormana yakın, yeşil ve sakin villa yerleşimi karakteri`,
+    "çağdaş, sade ve rafine mimariye sahip premium müstakil villa; doğal taş, ahşap ve geniş cam yüzeyler",
+    "olgun ağaçlar ve bakımlı peyzajla çevrili geniş, mahremiyeti yüksek özel bahçe; ev ile bahçe arasında güçlü ilişki",
+    "gösterişsiz lüks (understated luxury), gerçekçi mimari fotoğraf, doğal gün ışığı veya yumuşak akşamüstü ışığı, göz hizasına yakın doğal perspektif",
+    "KAÇIN: Amerikan banliyö evi görünümü, abartılı köşk/saray ölçeği, Boğaz veya deniz manzarası, fantastik/yapay zekâ mimarisi, aşırı sinematik/HDR veya sahte görünüm",
+  ].join("; ");
+}
+
+export function buildExpertVillaImagePrompt(visualBrief: string, region: string): string {
+  const clauses = [
+    premiumVillaArtDirection(region),
+    visualBrief.trim(),
+    PHOTOGRAPHY_QUALITY_CLAUSE,
+    GEOGRAPHIC_CONTEXT_CLAUSE,
+    NEGATIVE_SPACE_CLAUSE,
+    "format: 4:5 (1080x1350), Instagram gönderisi için",
+  ];
+  return `${clauses.join("; ")}. ${SAFETY_CLAUSE}`;
+}
+
 export function buildGoldStandardImagePrompt(visualBrief: string): string {
   const clauses = [
     visualBrief.trim(),

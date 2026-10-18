@@ -2962,6 +2962,33 @@ test("/api/content-package: news mode is unchanged — an opportunity never beco
   assert.notEqual(body.contentPackage.source.url, "atlas:expert-content");
 });
 
+const fiveSlides = () => [1, 2, 3, 4, 5].map((n) => ({ headline: `H${n}`, body: `B${n}`, facts: [], visualBrief: `v${n}` }));
+
+test("/api/content-package: expert mode joins multi-word hashtags (a space would end the Instagram tag) and names banned jargon/frequency words", async () => {
+  const { route, state } = loadContentPackageRoute({
+    completionResponse: { topic: "t", source: { name: "", url: "", publishedAt: "" }, hook: "Vilanız doğru anlatılmalı", caption: "Fark çoğu zaman bahçede saklıdır.", hashtags: ["#villa satışı", "#müstakil villa", "#Gayrimenkul"], facts: [], slides: fiveSlides() },
+  });
+  const body = await (await route.POST({ json: async () => ({ instruction: OWNER_INSTRUCTION, visualFormat: "carousel" }) })).json();
+  assert.equal(body.contentPackage.hashtags.join(" "), "#VillaSatışı #MüstakilVilla #Gayrimenkul");
+  // Repeated live writer defects: villa-possessive misspelling, unsupported frequency adverb.
+  assert.equal(body.contentPackage.hook, "Villanız doğru anlatılmalı");
+  assert.match(body.contentPackage.caption, /^Fark bence bahçede saklıdır./);
+  const system = state.lastMessages.find((m) => m.role === "system").content;
+  assert.match(system, /"rakip grup"/);
+  assert.match(system, /"genellikle"/);
+});
+
+test("/api/content-package: news hashtags and copy are never rewritten by the expert repairs", async () => {
+  const { route } = loadContentPackageRoute({
+    completionResponse: { topic: "t", source: { name: "TKGM", url: "https://example.com/duyuru", publishedAt: "2026-09-01T00:00:00.000Z" }, hook: "h", caption: "Kısa ve genellikle net.", hashtags: ["#tapu işlemleri", "#Gayrimenkul"], facts: [], slides: fiveSlides() },
+  });
+  const response = await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.contentPackage.hashtags.join(" "), "#tapu işlemleri #Gayrimenkul");
+  assert.match(body.contentPackage.caption, /^Kısa ve genellikle net./);
+});
+
 test("/api/content-package: a missing or too-short instruction (and no opportunity) is rejected with 400", async () => {
   for (const payload of [{ visualFormat: "carousel" }, { instruction: "kısa", visualFormat: "carousel" }]) {
     const { route, state } = loadContentPackageRoute();

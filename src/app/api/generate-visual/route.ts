@@ -22,7 +22,8 @@ import { resolveCarouselStructure } from "@/lib/ai/content/carousel-structure";
 import { buildSeedMessage, isContentOpportunity } from "@/lib/ai/research/opportunity";
 import { isVisualFormat, buildFormatSuffix } from "@/lib/ai/research/formatRecommendation";
 import { isContentPackage, validateContentPackage, type ContentPackage } from "@/lib/ai/content/contentPackage";
-import { buildGoldStandardImagePrompt } from "@/lib/ai/creative/goldStandardImagePrompt";
+import { buildExpertVillaImagePrompt, buildGoldStandardImagePrompt } from "@/lib/ai/creative/goldStandardImagePrompt";
+import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "@/lib/ai/context/businessProfile";
 import { formatTurkeyDateLong } from "@/lib/ai/research/retrieval/turkishDate";
 
 const MAX_MESSAGE_LENGTH = 4000;
@@ -81,16 +82,6 @@ function buildCarouselSourceLabel(source: { publisher: string; publishedAt: stri
 // Appending them here, before the existing sanitizeContent/length-cap
 // step, is the smallest fix: what the user approves is what actually
 // gets published, nothing more.
-// The section label is one uppercase, letter-spaced gold line with no
-// wrapping — a headline longer than this falls back to a short generic
-// expert label rather than risking overflow off the 1080px slide.
-const MAX_EXPERT_SECTION_LABEL_CHARS = 42;
-
-function expertSectionLabel(headline: string, fallback: string): string {
-  const trimmed = headline.trim();
-  return trimmed && trimmed.length <= MAX_EXPERT_SECTION_LABEL_CHARS ? trimmed : fallback;
-}
-
 function appendHashtagsToCaption(caption: string, hashtags: string[]): string {
   if (hashtags.length === 0) return caption;
   const normalized = hashtags.map((tag) => (tag.startsWith("#") ? tag : `#${tag}`)).join(" ");
@@ -322,7 +313,12 @@ export async function POST(request: NextRequest) {
       generated = await generateImage({
         provider,
         model,
-        prompt: buildGoldStandardImagePrompt(hookSlide.visualBrief),
+        // Expert/portfolio packages get the premium-villa art direction
+        // (region from the business profile); news keeps its prompt.
+        prompt:
+          rawContentPackage.contentMode === "expert"
+            ? buildExpertVillaImagePrompt(hookSlide.visualBrief, ATLAS_DEFAULT_BUSINESS_PROFILE.geography.primary)
+            : buildGoldStandardImagePrompt(hookSlide.visualBrief),
         aspectRatio: platformConfig.aspectRatio,
       });
     } catch (error) {
@@ -353,10 +349,15 @@ export async function POST(request: NextRequest) {
           whyItMatters: whyItMattersSlide.body,
           considerations: whatToDoSlide.facts.length > 0 ? whatToDoSlide.facts : [whatToDoSlide.body],
           closingLine: ctaSlide.body,
-          sectionLabels: {
-            whatHappened: expertSectionLabel(whatHappenedSlide.headline, "Teşhis"),
-            whyItMatters: expertSectionLabel(whyItMattersSlide.headline, "Asıl Mesele"),
-            considerations: expertSectionLabel(whatToDoSlide.headline, "Ne Değişir?"),
+          // Short role eyebrows + the slides' own headlines as large
+          // headings (wrapped, never cut off mid-word) — the editorial
+          // hierarchy the production review asked for.
+          sectionLabels: { whatHappened: "Teşhis", whyItMatters: "Asıl Mesele", considerations: "Ne Değişir?" },
+          headings: {
+            whatHappened: whatHappenedSlide.headline,
+            whyItMatters: whyItMattersSlide.headline,
+            considerations: whatToDoSlide.headline,
+            closing: ctaSlide.headline,
           },
         }
       : {

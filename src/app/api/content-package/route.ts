@@ -243,44 +243,67 @@ topic: fırsatın kısa özeti. hook: caption'ın da kullanacağı kısa, güçl
 // Suat's view, one audience, one CTA (slide 5 only).
 // ============================================================
 const EXPERT_SLIDE_ROLE_BRIEF: Record<string, string> = {
-  hook: "SLAYT 1 — KAPAK: Talimattaki hedef kitlenin yaşadığı sorunu tek, net bir cümleyle adlandır (soru olabilir). Abartı, korku, satış baskısı yok.",
+  hook: "SLAYT 1 — KAPAK (sahibin sorunu): headline kapakta fotoğrafın üzerinde büyük görünür — EN FAZLA 55 karakter, TAM ve kendi başına anlamlı bir cümle (yarım kalan bir koşul cümlesi değil — '... satıyorsanız' tek başına YETMEZ); okuyucuya doğrudan hitap eden, 2 saniyede anlaşılan, merak uyandıran ama clickbait olmayan, premium ve sakin bir cümle. Korku dili yok, doğrulanamayan olgusal iddia yok. body: tek kısa cümlelik bağlam.",
   "what-happened":
-    "SLAYT 2 — TEŞHİS: Sorunun olası nedenlerini okuyucunun kendi durumunda ayırt edebileceği şekilde anlat. Kesin hüküm değil, profesyonel değerlendirme dili ('bence', 'sahada gördüğüm'). headline en fazla 40 karakter — slaytta etiket olarak görünür.",
+    "SLAYT 2 — TEŞHİS: headline slaytta BÜYÜK BAŞLIK olarak görünür — en fazla 50 karakter, sade Türkçe, tek bir içgörü (etiket gibi değil, anlamlı bir cümle). body: sahibin kendi durumunu ayırt edebileceği bir teşhis (ör. ilgi mi yok, ilgi var ama teklif mi yok, teklifler beklentinin altında mı) — kesin hüküm değil, profesyonel değerlendirme dili. En fazla 3 kısa cümle.",
   "why-it-matters":
-    "SLAYT 3 — ASIL MESELE: Bu konuda sahada görülen bir hatayı ve neden işe yaramadığını Suat'ın gözlemi olarak açıkla. Slayt 2'yi tekrarlama. headline en fazla 40 karakter.",
+    "SLAYT 3 — VİLLADA KONUMLANDIRMA NEDEN BELİRLEYİCİ: headline en fazla 50 karakter, büyük başlık. body: villa alıcısının bir evi yalnızca metrekare ve oda sayısıyla değil, aşağıdaki villa değerlendirme boyutlarından birkaçıyla tarttığını Suat'ın uzman bakışıyla anlat; aynı alıcının aynı bütçeyle bakabildiği benzer villalara değin. En fazla 3 kısa cümle. Slayt 2'yi tekrarlama.",
   "what-to-do":
-    "SLAYT 4 — NE DEĞİŞİR: Profesyonel bir yaklaşımın neyi değiştirdiğini 3-4 somut maddeyle facts[] alanına yaz (her madde tek kısa cümle, rakam yok, okuyucunun anlayacağı dil); body yalnızca tek kısa giriş cümlesi. headline en fazla 40 karakter.",
-  cta: "SLAYT 5 — UZMAN GÖRÜŞÜ + TEK EYLEM ÇAĞRISI: Slayt 1-4'ü özetleme. Bu konuya özgü tek bir uzman çıkarımı yaz, ardından okuyucuyu kendi durumunu (değer, konumlandırma, strateji) Suat'la konuşmaya davet eden TEK, ölçülü bir cümle. Paketteki TEK eylem çağrısı budur.",
+    "SLAYT 4 — PROFESYONEL SATIŞ STRATEJİSİ NEYİ DEĞİŞTİRİR: headline en fazla 50 karakter, büyük başlık. facts[]: 3-4 somut madde, her biri en fazla 70 karakterlik tek cümle, rakam yok, villa satışına özgü (ör. değeri aynı alıcının bakabildiği benzer villalara göre belirlemek; bahçe, mahremiyet ve yaşam alanını öne çıkaran sunum; hedef alıcıyı netleştirmek; gösterim ve teklif geri bildirimine göre stratejiyi güncellemek). body: tek kısa giriş cümlesi.",
+  cta: "SLAYT 5 — SUAT'IN UZMAN GÖRÜŞÜ + TEK EYLEM ÇAĞRISI: headline en fazla 50 karakter, büyük başlık — bu konuya özgü tek uzman çıkarımını kendisi söyleyen bir cümle (slayt 1-4'ün özeti DEĞİL; 'asıl soru şu' gibi içeriği başka yere erteleyen başlık değil). body: o çıkarımı 1-2 cümleyle aç, ardından villa sahibini villasının değerini, konumlandırmasını ve satış stratejisini Suat'la konuşmaya davet eden TEK ölçülü cümle, birinci tekil şahısla ('benimle', 'bana yazabilirsiniz'; 'Suat Kılıç ile' gibi üçüncü şahıs değil). Bu paketteki TEK eylem çağrısıdır.",
 };
+
+// Professional evaluation dimensions — the vocabulary of villa-sales
+// expertise, NOT market data, so the region is more than a place name on
+// generic advice.
+const VILLA_EVALUATION_DIMENSIONS = [
+  "mikro konum (sokak, ulaşım, çevre dokusu)",
+  "müstakil villa ile site içi yaşam farkı",
+  "arsa ve bahçe ilişkisi",
+  "mahremiyet",
+  "mimari karakter ve fiziksel durum",
+  "gerçekten kullanılabilir yaşam alanı",
+  "sunum (fotoğraf, ilan metni, gösterim)",
+  "aynı alıcının aynı bütçeyle bakabildiği alternatifler",
+  "hedef alıcı profili",
+];
+
+// A production review flagged these as unsupported frequency claims and
+// consultant jargon in expert copy.
+const EXPERT_FREQUENCY_WORDS = ["çoğu zaman", "sık sık", "genellikle", "çoğu", "pek çok", "birçok", "her zaman", "en sık"];
+const EXPERT_JARGON = ["rakip grup", "değer önerisi", "segment", "algı yönetimi"];
 
 function buildExpertContentPackagePrompt(): string {
   const geography = ATLAS_DEFAULT_BUSINESS_PROFILE.geography;
 
-  return `Kimlik: ${SIGNATURE_NAME} (${SIGNATURE_TITLE}) için çalışan profesyonel bir gayrimenkul içerik stratejistisin. Bu bir HABER içeriği DEĞİL: kullanıcının talimatındaki konu için KALICI (evergreen) bir UZMAN İÇERİĞİ üretiyorsun. Okuyucu sonunda "bu danışman işini biliyor, durumumu onunla konuşmalıyım" demeli.
+  return `Kimlik: ${SIGNATURE_NAME} (${SIGNATURE_TITLE}) için çalışan profesyonel bir gayrimenkul içerik stratejistisin. Bu bir HABER içeriği DEĞİL: kullanıcının talimatındaki konu için KALICI (evergreen) bir UZMAN İÇERİĞİ üretiyorsun. Okuyucu sonunda "bu danışman bu bölgede böyle bir mülkün nasıl konumlandırılıp satılacağını biliyor; onunla konuşmalıyım" demeli.
 
-Ses: profesyonel, bilgili, sakin, güvenilir, sade ve insani Türkçe. ASLA: kurumsal PR dili, yapay zeka dolgu dili, abartı, korku/satış baskısı, danışman jargonu (sade karşılığı varsa), "hayatınızı bir üst seviyeye taşıyın" gibi kalıplar, "portföyünüzü bana verin" gibi doğrudan talep. Şu kalıplardan ve yakın varyasyonlarından kaçın: ${AVOIDED_CLICHE_PHRASES.map((p) => `"${p}"`).join(", ")}.
+Ses: profesyonel, bilgili, sakin, güvenilir, sade ve insani Türkçe; sahiple yüz yüze konuşan deneyimli bir danışman gibi. ASLA: kurumsal PR dili, yapay zeka dolgu dili, abartı, korku/satış baskısı, "hayatınızı bir üst seviyeye taşıyın" gibi kalıplar, "portföyünüzü bana verin" gibi doğrudan talep. Şu kalıplardan ve yakın varyasyonlarından kaçın: ${AVOIDED_CLICHE_PHRASES.map((p) => `"${p}"`).join(", ")}.
+Danışman jargonu kullanma, sade Türkçe karşılığını yaz: ${EXPERT_JARGON.map((p) => `"${p}"`).join(", ")} (ör. "rakip grup" yerine "aynı alıcının aynı bütçeyle bakabildiği benzer villalar").
 
 Görev: Talimata göre TEK bir yapılandırılmış içerik paketi üret. Yalnızca istenen JSON alanlarını doldur.
 
-Kural — KİTLE: Talimattaki hedef kitleye TEK kitle olarak yaz. Talimatta olmayan kitleleri (yatırımcı, kiracı, arsa sahibi, yabancı alıcı, genel alıcı vb.) EKLEME. Okuyucuya doğrudan hitap et.
+Kural — KİTLE: Talimattaki hedef kitleye TEK kitle olarak yaz. Talimatta olmayan kitleleri (alıcı, yatırımcı, kiracı, kiraya veren, arsa sahibi, yabancı alıcı, genel mülk sahibi vb.) EKLEME — caption dahil hiçbir yerde. Okuyucuya doğrudan hitap et.
 
-Kural — OLGU YOK, YORUM VAR (kritik): Doğrulanmış bir kaynak YOK. Hiçbir istatistik, fiyat, oran, süre (ör. ortalama satış süresi), talep/alıcı verisi, piyasa performansı, mevzuat bilgisi veya doğrulanamayan yerel bilgi YAZMA; rakam kullanma. ContentPackage.facts boş dizi olsun. Piyasa ve alıcı davranışına dair her gözlemi mutlak bir gerçek gibi değil, ${SIGNATURE_NAME}'ın profesyonel yorumu olarak çerçevele ("bence", "sahada gördüğüm"). "çoğu", "en sık", "her zaman" gibi sıklık/kesinlik iddiası kurma. Sahte deneyim/otorite iddiası ("20 yıllık tecrübemle" gibi) ekleme.
+Kural — TEK İLERLEYİŞ, TEKRARSIZLIK: sahibin sorunu (slayt 1) → teşhis (slayt 2) → bu mülk türünde konumlandırma neden belirleyici (slayt 3) → profesyonel satış stratejisi neyi değiştirir (slayt 4) → ${SIGNATURE_NAME}'ın görüşü + tek eylem çağrısı (slayt 5). Her slayt yalnızca kendi işini yapar; aynı fikri iki slaytta ya da slayt + caption'da ana mesaj olarak tekrarlama.
 
-Kural — TEKRARSIZLIK: Her slayt farklı bir iş yapar (aşağıdaki rollere bak); aynı fikri iki slaytta ya da slayt + caption'da ana mesaj olarak tekrarlama.
+Kural — UZMANLIK, VERİ DEĞİL: Bölge adını genel tavsiyenin başına eklemek yetmez. Uzmanlığı şu profesyonel değerlendirme boyutlarıyla göster (konuya uyanları seç, hepsini zorlama): ${VILLA_EVALUATION_DIMENSIONS.join("; ")}. Bunlar piyasa istatistiği değil, bir danışmanın mülke bakış açısıdır.
+
+Kural — OLGU YOK, YORUM VAR (kritik): Doğrulanmış bir kaynak YOK. Hiçbir istatistik, fiyat, oran, süre (ör. ortalama satış süresi), talep/alıcı sayısı, piyasa performansı, mevzuat bilgisi veya doğrulanamayan yerel bilgi YAZMA; rakam kullanma. ContentPackage.facts boş dizi olsun. Şu sıklık/kesinlik ifadelerini KULLANMA: ${EXPERT_FREQUENCY_WORDS.map((p) => `"${p}"`).join(", ")}. Bir gözlem paylaşacaksan açıkça ${SIGNATURE_NAME}'ın kişisel değerlendirmesi olarak ve sıklık iddiası kurmadan yaz ("bence ...", "bir villaya bakarken ilk sorduğum ..."). Sahte deneyim/otorite iddiası ("20 yıllık tecrübemle" gibi) ekleme.
 
 Yerel konumlandırma: ${SIGNATURE_NAME}'ın uzmanlık bölgesi ${geography.primary} ve çevresi (${geography.nearby.join(", ")}). Talimatta geçen bölgeyi doğal biçimde an; bölge hakkında uydurma bilgi verme.
 
-Slayt içerikleri (sıra ve rol sistem tarafından sabittir; yalnızca headline/body/facts/visualBrief doldur):
+Slayt içerikleri (sıra ve rol sistem tarafından sabittir; yalnızca headline/body/facts/visualBrief doldur). Slayt 2-5'in headline'ları slaytlarda BÜYÜK BAŞLIK olarak görünür; body'ler mobilde okunacak kadar kısa olsun:
 ${Object.values(EXPERT_SLIDE_ROLE_BRIEF).join("\n")}
-visualBrief: SADECE görsel konsept (ör. "ağaçlar arasında modern villa, akşam ışığı, editoryal mimari fotoğraf") — ekranda yazı, marka veya logo isteme.
+visualBrief: SADECE görsel konsept, sahne tarifi (ör. "olgun ağaçlarla çevrili, geniş bahçeli çağdaş müstakil villa, doğal taş ve ahşap, yumuşak gün ışığı") — ekranda yazı, marka veya logo isteme.
 
-hook: 5-12 kelime, okuyucuya hitap eden, sorunu söyleyen kısa açılış cümlesi; slayt 1 headline ile birebir aynı olmasın.
+hook: 5-12 kelime, villa sahibine hitap eden kısa açılış cümlesi; slayt 1 headline ile birebir aynı olmasın. Yazım hatası olmasın.
 
-Caption (slaytların tekrarı DEĞİL): kısa bağlam + slaytlarda olmayan bir uzman bakışı; EYLEM ÇAĞRISI İÇERMEZ (tek eylem çağrısı slayt 5'te); 2-3 kısa paragraf; şu imzayla biter:
+Caption (karuselin tekrarı DEĞİL; slayt cümlelerini yeniden yazma): 2-3 kısa paragraf — kısa bağlam + ${SIGNATURE_NAME}'ın slaytlarda olmayan kişisel bakışı + son paragrafta tek kısa, birinci tekil şahısla konuşma daveti (yeni/ikinci bir eylem önerme; slayt 5'teki davet cümlesini ve onun "değer, konumlandırma, satış stratejisi" sıralamasını tekrarlama — farklı, daha kişisel bir ifade kullan). Caption baştan sona birinci tekil şahıs; kendinden üçüncü şahısla söz etme. Şu imzayla biter:
 ${SIGNATURE_NAME}
 ${SIGNATURE_TITLE}
 
-Hashtag: 5-9 arası, konuya uygun; bölge etiketi yalnızca talimatta geçen bölge için; jenerik yığın yok.
+Hashtag: 5-9 arası, konuya uygun; her biri BOŞLUKSUZ tek kelime (ör. #VillaSatışı, "#villa satışı" değil); bölge etiketi yalnızca talimatta geçen bölge için; jenerik yığın yok; tutarlı yazım.
 
 topic: talimatın kısa özeti. source: {"name": "", "url": "", "publishedAt": ""} — sistem doldurur.`;
 }
@@ -349,6 +372,37 @@ function sanitizeLocalityHashtags(hashtags: string[], topic: string, verifiedCla
     if (!matchedLocality) return true; // not a locality hashtag — never touched
     return contextText.includes(matchedLocality.toLocaleLowerCase("tr-TR"));
   });
+}
+
+// Expert-mode hashtag repair: a real expert run returned "#villa satışı"
+// — a space ends an Instagram hashtag, so the published tag would be
+// "#villa". Joins the words in Turkish-aware PascalCase ("#VillaSatışı").
+// Expert-only so news packages stay byte-identical.
+function joinMultiWordHashtags(hashtags: string[]): string[] {
+  return hashtags.map((tag) => {
+    const words = tag.replace(/^#/, "").trim().split(/\s+/).filter(Boolean);
+    if (words.length < 2) return tag;
+    return `#${words.map((w) => w.charAt(0).toLocaleUpperCase("tr-TR") + w.slice(1)).join("")}`;
+  });
+}
+
+// Expert-mode copy repair for two writer defects that real runs repeated
+// despite explicit prompt rules (expert-only; news copy is untouched):
+//  - "villa" + possessive misspelled ("Vilanız", "Villianız" for
+//    "Villanız") — on the cover, twice in a row;
+//  - an adverbial frequency claim ("çoğu zaman", "genellikle", "sık sık",
+//    "çoğu kez") with no data behind it. It is reframed as Suat's own view
+//    ("bence") — the framing the brief allows — rather than deleted, which
+//    would turn it into an even stronger unqualified statement.
+const MISSPELLED_VILLA_POSSESSIVE = /\b([Vv])il(?:li)?(anız)/gu;
+const ADVERBIAL_FREQUENCY_CLAIM = /(^|[\s(“"'])(çoğu zaman|çoğu kez|genellikle|sık sık)(?=[\s,])/giu;
+
+function normalizeExpertCopy(text: string): string {
+  return text
+    .replace(MISSPELLED_VILLA_POSSESSIVE, "$1ill$2")
+    .replace(ADVERBIAL_FREQUENCY_CLAIM, (_match, lead: string, phrase: string) =>
+      `${lead}${/^[ÇGS]/u.test(phrase) ? "Bence" : "bence"}`,
+    );
 }
 
 // Verified Fact Contract — Job 1's prompt. Deliberately short and
@@ -750,24 +804,27 @@ export async function POST(request: NextRequest) {
 
   // One assembly path for BOTH Job 2's package and the editorial
   // revision (below), so a revision can never skip a normalization step.
+  const copy = contentMode === "expert" ? normalizeExpertCopy : (text: string) => text;
   const assemblePackage = (model: ModelPackage): ContentPackage => ({
     topic: model.topic,
     // Expert content has no external source — deterministic, honest
     // attribution, never the model's own text.
     source: contentMode === "expert" ? expertSource() : model.source,
     ...(contentMode === "expert" ? { contentMode } : {}),
-    hook: model.hook,
-    caption: ensureSignature(model.caption),
-    hashtags: sanitizeLocalityHashtags(model.hashtags, contentOpportunity.topic, verifiedClaims),
+    hook: copy(model.hook),
+    caption: ensureSignature(copy(model.caption)),
+    hashtags: (contentMode === "expert" ? joinMultiWordHashtags : (tags: string[]) => tags)(
+      sanitizeLocalityHashtags(model.hashtags, contentOpportunity.topic, verifiedClaims),
+    ),
     // Stamp the deterministic index/role sequence and the caller's own
     // format choice — never read from the model's own output.
     format,
     slides: model.slides.map((slide, i) => ({
       index: i + 1,
       role: roleSequence[i],
-      headline: slide.headline,
-      body: slide.body,
-      facts: slide.facts,
+      headline: copy(slide.headline),
+      body: copy(slide.body),
+      facts: slide.facts.map(copy),
       visualBrief: slide.visualBrief,
     })),
     // Deterministic Calendar-Date Fact Sanitizer: strips the exact
