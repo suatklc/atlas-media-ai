@@ -2923,3 +2923,59 @@ test("/api/content-package: an internal source label (K1/K2) leaking into public
   const jobTwo = state.lastMessages.find((m) => m.role === "user").content;
   assert.match(jobTwo, /K1\/K2\/K3 yalnızca SİSTEM İÇİ etiketlerdir/);
 });
+
+// ============================================================
+// Dashboard "Instagram paylaşımı hazırla" → expert content mode. The
+// user's own instruction goes through the real ContentPackage pipeline
+// (previously it went to the legacy /api/assistant chat with a hardcoded
+// listing prompt — the live-observed generic caption).
+// ============================================================
+
+const OWNER_INSTRUCTION =
+  "Zekeriyaköy'de villasını satmayı düşünen veya satışta sonuç alamayan mülk sahiplerine yönelik, doğru fiyatlandırma, konumlandırma ve satış stratejisinin önemini anlatan bir Instagram paylaşımı hazırla.";
+
+test("/api/content-package: an instruction (no opportunity) runs in EXPERT mode — no Job 1, expert brief, honest fixed source, contentMode 'expert'", async () => {
+  const { route, state } = loadContentPackageRoute();
+  const response = await route.POST({ json: async () => ({ instruction: OWNER_INSTRUCTION, visualFormat: "carousel" }) });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(state.factExtractionCalls, 0); // no sources → no evidence → no Job 1
+  assert.equal(state.contentPackageCalls, 1);
+  const system = state.lastMessages.find((m) => m.role === "system").content;
+  assert.match(system, /KALICI \(evergreen\) bir UZMAN İÇERİĞİ/);
+  assert.match(system, /OLGU YOK, YORUM VAR/);
+  assert.doesNotMatch(system, /NE DEĞİŞTİ/);
+  const user = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(user, /KULLANICI TALİMATI: Zekeriyaköy'de villasını/);
+  assert.equal(body.contentPackage.contentMode, "expert");
+  assert.equal(body.contentPackage.source.url, "atlas:expert-content");
+  assert.match(body.contentPackage.source.name, /uzman değerlendirmesi$/);
+  assert.equal(body.contentPackage.slides.length, 5);
+  assert.equal(body.provenance, null);
+});
+
+test("/api/content-package: news mode is unchanged — an opportunity never becomes expert, no contentMode field", async () => {
+  const { route } = loadContentPackageRoute();
+  const response = await route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  const body = await response.json();
+  assert.equal(body.contentPackage.contentMode, undefined);
+  assert.notEqual(body.contentPackage.source.url, "atlas:expert-content");
+});
+
+test("/api/content-package: a missing or too-short instruction (and no opportunity) is rejected with 400", async () => {
+  for (const payload of [{ visualFormat: "carousel" }, { instruction: "kısa", visualFormat: "carousel" }]) {
+    const { route, state } = loadContentPackageRoute();
+    const response = await route.POST({ json: async () => payload });
+    assert.equal(response.status, 400);
+    assert.equal(state.completionCalls, 0);
+  }
+});
+
+test("dashboard: 'Instagram paylaşımı hazırla' no longer sends the legacy listing prompt to /api/assistant — it uses the instruction → content-package flow", () => {
+  const mock = fs.readFileSync(path.join(projectRoot, "src/lib/mock-data.ts"), "utf8");
+  assert.doesNotMatch(mock, /instagram-post|Bir gayrimenkul ilanını tanıtmak için/);
+  const card = fs.readFileSync(path.join(projectRoot, "src/components/dashboard/CurrentOpportunities.tsx"), "utf8");
+  assert.match(card, /Instagram paylaşımı hazırla/);
+  assert.match(card, /JSON\.stringify\(\{ instruction: text, visualFormat: "carousel" \}\)/);
+  assert.doesNotMatch(card, /fetch\("\/api\/assistant"/);
+});

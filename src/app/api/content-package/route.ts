@@ -30,7 +30,7 @@ import {
   type EvidenceFact,
 } from "@/lib/ai/content/factContract";
 import { mayProvideFactEvidence, orderSourcesByAuthority, sourceRoleFor, type SourceRole } from "@/lib/ai/research/sourceRegistry";
-import type { SourceTier } from "@/lib/ai/research/types";
+import type { ContentOpportunity, SourceTier } from "@/lib/ai/research/types";
 import {
   buildEditorialGatePrompt,
   buildEditorialGateUserMessage,
@@ -231,6 +231,69 @@ Hashtag stratejisi: Jenerik hashtag yığını üretme. 5-9 arası, yüksek ilgi
 
 topic: fırsatın kısa özeti. hook: caption'ın da kullanacağı kısa, güçlü açılış cümlesi. source: verilen fırsatın kaynak adı/URL/yayım tarihi, DEĞİŞTİRMEDEN.`;
 }
+
+// ============================================================
+// EXPERT content mode (first real production use, 2026-10-18): the
+// dashboard's "Instagram paylaşımı hazırla" now sends the user's own
+// instruction here instead of the legacy /api/assistant chat. Evergreen
+// expert content has NO source and NO verified facts, so the news-
+// oriented "what changed" brief above would contradict itself — same
+// writer (Job 2), same voice/cliché/signature/hashtag rules, a different
+// brief: no factual market claims at all, interpretation framed as
+// Suat's view, one audience, one CTA (slide 5 only).
+// ============================================================
+const EXPERT_SLIDE_ROLE_BRIEF: Record<string, string> = {
+  hook: "SLAYT 1 — KAPAK: Talimattaki hedef kitlenin yaşadığı sorunu tek, net bir cümleyle adlandır (soru olabilir). Abartı, korku, satış baskısı yok.",
+  "what-happened":
+    "SLAYT 2 — TEŞHİS: Sorunun olası nedenlerini okuyucunun kendi durumunda ayırt edebileceği şekilde anlat. Kesin hüküm değil, profesyonel değerlendirme dili ('bence', 'sahada gördüğüm'). headline en fazla 40 karakter — slaytta etiket olarak görünür.",
+  "why-it-matters":
+    "SLAYT 3 — ASIL MESELE: Bu konuda sahada görülen bir hatayı ve neden işe yaramadığını Suat'ın gözlemi olarak açıkla. Slayt 2'yi tekrarlama. headline en fazla 40 karakter.",
+  "what-to-do":
+    "SLAYT 4 — NE DEĞİŞİR: Profesyonel bir yaklaşımın neyi değiştirdiğini 3-4 somut maddeyle facts[] alanına yaz (her madde tek kısa cümle, rakam yok, okuyucunun anlayacağı dil); body yalnızca tek kısa giriş cümlesi. headline en fazla 40 karakter.",
+  cta: "SLAYT 5 — UZMAN GÖRÜŞÜ + TEK EYLEM ÇAĞRISI: Slayt 1-4'ü özetleme. Bu konuya özgü tek bir uzman çıkarımı yaz, ardından okuyucuyu kendi durumunu (değer, konumlandırma, strateji) Suat'la konuşmaya davet eden TEK, ölçülü bir cümle. Paketteki TEK eylem çağrısı budur.",
+};
+
+function buildExpertContentPackagePrompt(): string {
+  const geography = ATLAS_DEFAULT_BUSINESS_PROFILE.geography;
+
+  return `Kimlik: ${SIGNATURE_NAME} (${SIGNATURE_TITLE}) için çalışan profesyonel bir gayrimenkul içerik stratejistisin. Bu bir HABER içeriği DEĞİL: kullanıcının talimatındaki konu için KALICI (evergreen) bir UZMAN İÇERİĞİ üretiyorsun. Okuyucu sonunda "bu danışman işini biliyor, durumumu onunla konuşmalıyım" demeli.
+
+Ses: profesyonel, bilgili, sakin, güvenilir, sade ve insani Türkçe. ASLA: kurumsal PR dili, yapay zeka dolgu dili, abartı, korku/satış baskısı, danışman jargonu (sade karşılığı varsa), "hayatınızı bir üst seviyeye taşıyın" gibi kalıplar, "portföyünüzü bana verin" gibi doğrudan talep. Şu kalıplardan ve yakın varyasyonlarından kaçın: ${AVOIDED_CLICHE_PHRASES.map((p) => `"${p}"`).join(", ")}.
+
+Görev: Talimata göre TEK bir yapılandırılmış içerik paketi üret. Yalnızca istenen JSON alanlarını doldur.
+
+Kural — KİTLE: Talimattaki hedef kitleye TEK kitle olarak yaz. Talimatta olmayan kitleleri (yatırımcı, kiracı, arsa sahibi, yabancı alıcı, genel alıcı vb.) EKLEME. Okuyucuya doğrudan hitap et.
+
+Kural — OLGU YOK, YORUM VAR (kritik): Doğrulanmış bir kaynak YOK. Hiçbir istatistik, fiyat, oran, süre (ör. ortalama satış süresi), talep/alıcı verisi, piyasa performansı, mevzuat bilgisi veya doğrulanamayan yerel bilgi YAZMA; rakam kullanma. ContentPackage.facts boş dizi olsun. Piyasa ve alıcı davranışına dair her gözlemi mutlak bir gerçek gibi değil, ${SIGNATURE_NAME}'ın profesyonel yorumu olarak çerçevele ("bence", "sahada gördüğüm"). "çoğu", "en sık", "her zaman" gibi sıklık/kesinlik iddiası kurma. Sahte deneyim/otorite iddiası ("20 yıllık tecrübemle" gibi) ekleme.
+
+Kural — TEKRARSIZLIK: Her slayt farklı bir iş yapar (aşağıdaki rollere bak); aynı fikri iki slaytta ya da slayt + caption'da ana mesaj olarak tekrarlama.
+
+Yerel konumlandırma: ${SIGNATURE_NAME}'ın uzmanlık bölgesi ${geography.primary} ve çevresi (${geography.nearby.join(", ")}). Talimatta geçen bölgeyi doğal biçimde an; bölge hakkında uydurma bilgi verme.
+
+Slayt içerikleri (sıra ve rol sistem tarafından sabittir; yalnızca headline/body/facts/visualBrief doldur):
+${Object.values(EXPERT_SLIDE_ROLE_BRIEF).join("\n")}
+visualBrief: SADECE görsel konsept (ör. "ağaçlar arasında modern villa, akşam ışığı, editoryal mimari fotoğraf") — ekranda yazı, marka veya logo isteme.
+
+hook: 5-12 kelime, okuyucuya hitap eden, sorunu söyleyen kısa açılış cümlesi; slayt 1 headline ile birebir aynı olmasın.
+
+Caption (slaytların tekrarı DEĞİL): kısa bağlam + slaytlarda olmayan bir uzman bakışı; EYLEM ÇAĞRISI İÇERMEZ (tek eylem çağrısı slayt 5'te); 2-3 kısa paragraf; şu imzayla biter:
+${SIGNATURE_NAME}
+${SIGNATURE_TITLE}
+
+Hashtag: 5-9 arası, konuya uygun; bölge etiketi yalnızca talimatta geçen bölge için; jenerik yığın yok.
+
+topic: talimatın kısa özeti. source: {"name": "", "url": "", "publishedAt": ""} — sistem doldurur.`;
+}
+
+// Expert packages have no external source: an honest, deterministic
+// attribution (never a fabricated citation). Shown in the dashboard
+// preview; the carousel does not render a source line for expert content.
+function expertSource(): ContentPackage["source"] {
+  return { name: `${SIGNATURE_NAME} — uzman değerlendirmesi`, url: "atlas:expert-content", publishedAt: "" };
+}
+
+const MIN_INSTRUCTION_LENGTH = 15;
+const MAX_INSTRUCTION_LENGTH = 1000;
 
 // Content Quality Final Polish: the caption's closing signature is a
 // fixed product requirement, not a subjective writing choice — do not
@@ -530,15 +593,40 @@ export async function POST(request: NextRequest) {
     return jsonError("Geçersiz istek gövdesi.", 400);
   }
 
-  const { contentOpportunity: rawContentOpportunity, visualFormat: rawVisualFormat } = body as {
+  const {
+    contentOpportunity: rawContentOpportunity,
+    visualFormat: rawVisualFormat,
+    instruction: rawInstruction,
+  } = body as {
     contentOpportunity?: unknown;
     visualFormat?: unknown;
+    instruction?: unknown;
   };
 
-  if (!isContentOpportunity(rawContentOpportunity)) {
-    return jsonError("Geçerli bir içerik fırsatı gerekli.", 400);
+  // A Radar opportunity (news mode) or, for the dashboard's "Instagram
+  // paylaşımı hazırla", the user's own instruction (expert mode — see
+  // buildExpertContentPackagePrompt). An instruction becomes an honest,
+  // source-less opportunity: no sources means no Job 1 and no evidence,
+  // so nothing can be presented as verified.
+  const instruction = typeof rawInstruction === "string" ? rawInstruction.trim() : "";
+  let contentOpportunity: ContentOpportunity;
+  let contentMode: "news" | "expert";
+  if (isContentOpportunity(rawContentOpportunity)) {
+    contentOpportunity = rawContentOpportunity;
+    contentMode = "news";
+  } else if (instruction.length >= MIN_INSTRUCTION_LENGTH && instruction.length <= MAX_INSTRUCTION_LENGTH) {
+    contentOpportunity = {
+      topic: instruction,
+      angle: "Kullanıcı talimatına göre kalıcı uzman içeriği",
+      whyNow: "Kalıcı uzman içeriği — güncel bir kaynağa dayanmıyor",
+      keyFacts: [],
+      sources: [],
+      freshness: "evergreen-adjacent",
+    };
+    contentMode = "expert";
+  } else {
+    return jsonError("Geçerli bir içerik fırsatı veya en az 15 karakterlik bir talimat gerekli.", 400);
   }
-  const contentOpportunity = rawContentOpportunity;
 
   // Authoritative, never re-decided by the model — see Section 7 of the
   // Gold Standard brief and contentPackage.ts's own validator, which
@@ -603,9 +691,14 @@ export async function POST(request: NextRequest) {
     evidencePresentation = { mode: "thin-or-none", rawEvidenceText: undefined };
   }
 
-  const researchDirective = buildResearchDirective(contentOpportunity);
-  const systemMessage = [SYSTEM_PROMPT, researchDirective, buildContentPackagePrompt(30)].join("\n\n");
-  const userMessage = buildUserMessage(contentOpportunity, evidencePresentation);
+  const systemMessage =
+    contentMode === "expert"
+      ? [SYSTEM_PROMPT, buildExpertContentPackagePrompt()].join("\n\n")
+      : [SYSTEM_PROMPT, buildResearchDirective(contentOpportunity), buildContentPackagePrompt(30)].join("\n\n");
+  const userMessage =
+    contentMode === "expert"
+      ? `KULLANICI TALİMATI: ${instruction}\nİÇERİK TÜRÜ: kalıcı uzman içeriği — doğrulanmış kaynak ve olgu YOK.`
+      : buildUserMessage(contentOpportunity, evidencePresentation);
   // Only the roles actually needed for this request's format — a single
   // post gets one "hook" slide (its whole content anchor), a carousel
   // gets the full fixed 5-role sequence. Told to the model as plain
@@ -659,7 +752,10 @@ export async function POST(request: NextRequest) {
   // revision (below), so a revision can never skip a normalization step.
   const assemblePackage = (model: ModelPackage): ContentPackage => ({
     topic: model.topic,
-    source: model.source,
+    // Expert content has no external source — deterministic, honest
+    // attribution, never the model's own text.
+    source: contentMode === "expert" ? expertSource() : model.source,
+    ...(contentMode === "expert" ? { contentMode } : {}),
     hook: model.hook,
     caption: ensureSignature(model.caption),
     hashtags: sanitizeLocalityHashtags(model.hashtags, contentOpportunity.topic, verifiedClaims),

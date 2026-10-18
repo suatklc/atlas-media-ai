@@ -81,6 +81,16 @@ function buildCarouselSourceLabel(source: { publisher: string; publishedAt: stri
 // Appending them here, before the existing sanitizeContent/length-cap
 // step, is the smallest fix: what the user approves is what actually
 // gets published, nothing more.
+// The section label is one uppercase, letter-spaced gold line with no
+// wrapping — a headline longer than this falls back to a short generic
+// expert label rather than risking overflow off the 1080px slide.
+const MAX_EXPERT_SECTION_LABEL_CHARS = 42;
+
+function expertSectionLabel(headline: string, fallback: string): string {
+  const trimmed = headline.trim();
+  return trimmed && trimmed.length <= MAX_EXPERT_SECTION_LABEL_CHARS ? trimmed : fallback;
+}
+
 function appendHashtagsToCaption(caption: string, hashtags: string[]): string {
   if (hashtags.length === 0) return caption;
   const normalized = hashtags.map((tag) => (tag.startsWith("#") ? tag : `#${tag}`)).join(" ");
@@ -330,19 +340,38 @@ export async function POST(request: NextRequest) {
       return jsonError("Görsel kaydedilemedi. Lütfen tekrar deneyin.", 502);
     }
 
-    const slideText: CarouselSlideText = {
-      cover: hookSlide.headline,
-      whatHappened: whatHappenedSlide.body,
-      keyFact: whatHappenedSlide.facts[0],
-      whyItMatters: whyItMattersSlide.body,
-      considerations: whatToDoSlide.facts.length > 0 ? whatToDoSlide.facts : [whatToDoSlide.body],
-      closingLine: ctaSlide.body,
-      fixedCta: CAROUSEL_FIXED_CTA,
-      sourceLabel: buildCarouselSourceLabel({
-        publisher: contentPackage.source.name,
-        publishedAt: contentPackage.source.publishedAt,
-      }),
-    };
+    // Expert/portfolio content (no source, user instruction — see
+    // /api/content-package's expert mode): the slides' own headlines are
+    // the section labels instead of the news template's "Ne Oldu?" etc.,
+    // slide 5 carries the package's ONE CTA (no fixed second CTA), and
+    // there is no source line. News packages render exactly as before.
+    const isExpert = contentPackage.contentMode === "expert";
+    const slideText: CarouselSlideText = isExpert
+      ? {
+          cover: hookSlide.headline,
+          whatHappened: whatHappenedSlide.body,
+          whyItMatters: whyItMattersSlide.body,
+          considerations: whatToDoSlide.facts.length > 0 ? whatToDoSlide.facts : [whatToDoSlide.body],
+          closingLine: ctaSlide.body,
+          sectionLabels: {
+            whatHappened: expertSectionLabel(whatHappenedSlide.headline, "Teşhis"),
+            whyItMatters: expertSectionLabel(whyItMattersSlide.headline, "Asıl Mesele"),
+            considerations: expertSectionLabel(whatToDoSlide.headline, "Ne Değişir?"),
+          },
+        }
+      : {
+          cover: hookSlide.headline,
+          whatHappened: whatHappenedSlide.body,
+          keyFact: whatHappenedSlide.facts[0],
+          whyItMatters: whyItMattersSlide.body,
+          considerations: whatToDoSlide.facts.length > 0 ? whatToDoSlide.facts : [whatToDoSlide.body],
+          closingLine: ctaSlide.body,
+          fixedCta: CAROUSEL_FIXED_CTA,
+          sourceLabel: buildCarouselSourceLabel({
+            publisher: contentPackage.source.name,
+            publishedAt: contentPackage.source.publishedAt,
+          }),
+        };
 
     let slideBuffers: Buffer[];
     try {

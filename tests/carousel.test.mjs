@@ -603,8 +603,9 @@ function loadGenerateVisualRouteForContentPackage() {
     "@/lib/ai/image/compose": { composeInstagramPost: async () => Buffer.from("composed") },
     "@/lib/ai/image/templates/select": { selectVisualTemplateId: () => "educational" },
     "@/lib/ai/image/templates/carousel": {
-      renderCarousel: async () => {
+      renderCarousel: async (_baseImage, _dims, slideText) => {
         state.carouselCalls += 1;
+        state.lastSlideText = slideText;
         return [1, 2, 3, 4, 5].map((n) => Buffer.from(`slide-${n}`));
       },
     },
@@ -688,4 +689,62 @@ test("generate-visual route: carousel outputMode with no resolvable CAROUSEL_STR
   // that would follow a successful renderCarousel call are skipped.
   assert.equal(state.uploadCalls, 1, "only the base-image upload happens; no slide uploads");
   assert.equal(state.capturedInsert, null, "no history row is ever written for a rejected request");
+});
+
+// ============================================================
+// Expert / portfolio content mode (dashboard "Instagram paylaşımı
+// hazırla"): headlines become the section labels, ONE CTA (no fixed
+// second CTA), no source line — news packages render exactly as before.
+// ============================================================
+
+test("generate-visual: an EXPERT package renders headline section labels, no fixed CTA and no source line", async () => {
+  const { route, state, sampleContentPackage } = loadGenerateVisualRouteForContentPackage();
+  const expertPackage = {
+    ...sampleContentPackage,
+    contentMode: "expert",
+    source: { name: "Suat Kılıç — uzman değerlendirmesi", url: "atlas:expert-content", publishedAt: "" },
+    slides: sampleContentPackage.slides.map((slide) =>
+      slide.index === 3 ? { ...slide, headline: "Bu başlık bölüm etiketi olarak gösterilemeyecek kadar uzun bir başlıktır" } : slide,
+    ),
+  };
+  const response = await route.POST({
+    json: async () => ({ message: "Zekeriyaköy villa sahipleri için paylaşım", contentPackage: expertPackage, visualFormat: "carousel" }),
+  });
+  assert.equal(response.status, 200);
+  const text = state.lastSlideText;
+  assert.equal(text.fixedCta, undefined);
+  assert.equal(text.sourceLabel, undefined);
+  assert.equal(text.keyFact, undefined);
+  assert.equal(text.sectionLabels.whatHappened, "H2");
+  assert.equal(text.sectionLabels.whyItMatters, "Asıl Mesele"); // >42 chars falls back
+  assert.equal(text.sectionLabels.considerations, "H4");
+  assert.equal(text.closingLine, "B5");
+  // Still a draft-only insert: status is never set by generation.
+  assert.equal(state.capturedInsert.status, undefined);
+});
+
+test("generate-visual: a NEWS package (no contentMode) still gets the fixed CTA, source line and default labels", async () => {
+  const { route, state, sampleContentPackage } = loadGenerateVisualRouteForContentPackage();
+  await route.POST({ json: async () => ({ message: "mesaj", contentPackage: sampleContentPackage, visualFormat: "carousel" }) });
+  const text = state.lastSlideText;
+  assert.equal(text.fixedCta, "Detaylar İçin Mesaj Bırakın");
+  assert.match(text.sourceLabel, /^TKGM/);
+  assert.equal(text.sectionLabels, undefined);
+  assert.equal(text.keyFact, "f1");
+});
+
+test("renderCarousel renders custom expert section labels and no fixed CTA as 5 real 1080x1350 PNGs", async () => {
+  const buffers = await carousel.renderCarousel(TINY_BASE_IMAGE, "1080x1350", {
+    cover: "Zekeriyaköy'de villanız neden satılmıyor?",
+    whatHappened: "Önce teşhis: ilgi mi yok, teklif mi yok?",
+    whyItMatters: "Bence fiyat, mülkün kendi rakip grubuna göre kurulmalı.",
+    considerations: ["Gerçekçi değer aralığını belirlemek", "Doğru alıcıyı tanımlamak", "Sunumu buna göre kurmak"],
+    closingLine: "Villanızın değerini konuşmak isterseniz DM'den yazabilirsiniz.",
+    sectionLabels: { whatHappened: "Önce teşhis", whyItMatters: "Asıl mesele: fiyat", considerations: "Ne değişir?" },
+  });
+  assert.equal(buffers.length, 5);
+  for (const buffer of buffers) {
+    assert.equal(buffer.readUInt32BE(16), 1080);
+    assert.equal(buffer.readUInt32BE(20), 1350);
+  }
 });

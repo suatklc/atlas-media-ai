@@ -44,6 +44,11 @@ export type ContentPackage = {
   format: "single" | "carousel";
   slides: ContentSlide[];
   facts: ContentFact[];
+  // Absent = "news" (Radar/current-development content, the original
+  // behavior). "expert" = evergreen expert content from a user instruction
+  // (no source, no facts) — the carousel renders slide headlines as section
+  // labels and a single CTA instead of the news template's fixed ones.
+  contentMode?: "news" | "expert";
 };
 
 export type ContentPackageValidationResult = { ok: true } | { ok: false; reason: string };

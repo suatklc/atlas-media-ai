@@ -48,6 +48,16 @@ export type CarouselSlideText = {
   // fact/number" requirement — e.g. "150.000 TL". Undefined renders slide
   // 2 exactly as before (label + body only), never a fabricated number.
   keyFact?: string;
+  // Optional (expert/portfolio content mode): content-specific section
+  // labels replacing the news template's fixed "Ne Oldu?" / "Neden
+  // Önemli?" / "Nelere Dikkat Etmeli?". Absent = exactly the news labels.
+  sectionLabels?: { whatHappened?: string; whyItMatters?: string; considerations?: string };
+};
+
+const DEFAULT_SECTION_LABELS = {
+  whatHappened: "Ne Oldu?",
+  whyItMatters: "Neden Önemli?",
+  considerations: "Nelere Dikkat Etmeli?",
 };
 
 function logoMarkup(width: number, height: number, logo: MattedLogoAsset, size: "large" | "small", clipId: string) {
@@ -198,6 +208,7 @@ function buildWhatHappenedSlideSvg(
   keyFact: string | undefined,
   sourceLabel: string | undefined,
   logo: MattedLogoAsset,
+  label: string = DEFAULT_SECTION_LABELS.whatHappened,
 ): string {
   const availableWidth = width - SAFE_PADDING_X * 2;
   const labelY = SAFE_PADDING_TOP + 140;
@@ -232,7 +243,7 @@ function buildWhatHappenedSlideSvg(
   return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     ${infoCardBackgroundMarkup(width, height, ACCENT_VARIANTS["what-happened"])}
     ${progressMarkup(width, 2)}
-    ${labelMarkup(SAFE_PADDING_X, labelY, "Ne Oldu?")}
+    ${labelMarkup(SAFE_PADDING_X, labelY, label)}
     ${keyFactMarkup}
     <text font-family="${FONT_STACK}" font-size="${bodyLayout.fontSize}" font-weight="600" fill="#f4f4f5">${tspans(bodyLayout.lines, SAFE_PADDING_X, bodyFirstY, bodyLayout.lineHeight)}</text>
     ${sourceMarkup}
@@ -244,7 +255,13 @@ function buildWhatHappenedSlideSvg(
 // Same information-design principle as slide 2, without the key-fact
 // callout (this slide is interpretation/significance, not a number) — a
 // different accent position keeps it visually distinct from slide 2.
-function buildWhyItMattersSlideSvg(width: number, height: number, body: string, logo: MattedLogoAsset): string {
+function buildWhyItMattersSlideSvg(
+  width: number,
+  height: number,
+  body: string,
+  logo: MattedLogoAsset,
+  label: string = DEFAULT_SECTION_LABELS.whyItMatters,
+): string {
   const availableWidth = width - SAFE_PADDING_X * 2;
   const labelY = SAFE_PADDING_TOP + 140;
   const brandIconTopY = height - SAFE_PADDING_BOTTOM - LOGO_HEIGHT_SMALL;
@@ -257,7 +274,7 @@ function buildWhyItMattersSlideSvg(width: number, height: number, body: string, 
   return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     ${infoCardBackgroundMarkup(width, height, ACCENT_VARIANTS["why-it-matters"])}
     ${progressMarkup(width, 3)}
-    ${labelMarkup(SAFE_PADDING_X, labelY, "Neden Önemli?")}
+    ${labelMarkup(SAFE_PADDING_X, labelY, label)}
     <text font-family="${FONT_STACK}" font-size="${bodyLayout.fontSize}" font-weight="600" fill="#f4f4f5">${tspans(bodyLayout.lines, SAFE_PADDING_X, bodyFirstY, bodyLayout.lineHeight)}</text>
     ${logoMarkup(width, height, logo, "small", "logoClipWhyItMatters")}
   </svg>`;
@@ -283,7 +300,13 @@ const BADGE_TO_TITLE_GAP = 18;
 const TITLE_LINE_HEIGHT = 40;
 const CONSIDERATION_ROW_GAP = 40;
 
-function buildConsiderationsSlideSvg(width: number, height: number, considerations: string[], logo: MattedLogoAsset): string {
+function buildConsiderationsSlideSvg(
+  width: number,
+  height: number,
+  considerations: string[],
+  logo: MattedLogoAsset,
+  label: string = DEFAULT_SECTION_LABELS.considerations,
+): string {
   const availableWidth = width - SAFE_PADDING_X * 2;
   const labelY = SAFE_PADDING_TOP + 140;
   const items = considerations.slice(0, MAX_CONSIDERATIONS);
@@ -345,7 +368,7 @@ function buildConsiderationsSlideSvg(width: number, height: number, consideratio
       </linearGradient>
     </defs>
     ${progressMarkup(width, 4)}
-    ${labelMarkup(SAFE_PADDING_X, labelY, "Nelere Dikkat Etmeli?")}
+    ${labelMarkup(SAFE_PADDING_X, labelY, label)}
     ${itemsMarkup}
     ${logoMarkup(width, height, logo, "small", "logoClipConsiderations")}
   </svg>`;
@@ -422,9 +445,29 @@ export async function renderCarousel(
 
   const svgs = [
     buildCoverSlideSvg(width, height, baseImage, slideText.cover, logo),
-    buildWhatHappenedSlideSvg(width, height, slideText.whatHappened, slideText.keyFact, slideText.sourceLabel, logo),
-    buildWhyItMattersSlideSvg(width, height, slideText.whyItMatters, logo),
-    buildConsiderationsSlideSvg(width, height, slideText.considerations, logo),
+    buildWhatHappenedSlideSvg(
+      width,
+      height,
+      slideText.whatHappened,
+      slideText.keyFact,
+      slideText.sourceLabel,
+      logo,
+      slideText.sectionLabels?.whatHappened ?? DEFAULT_SECTION_LABELS.whatHappened,
+    ),
+    buildWhyItMattersSlideSvg(
+      width,
+      height,
+      slideText.whyItMatters,
+      logo,
+      slideText.sectionLabels?.whyItMatters ?? DEFAULT_SECTION_LABELS.whyItMatters,
+    ),
+    buildConsiderationsSlideSvg(
+      width,
+      height,
+      slideText.considerations,
+      logo,
+      slideText.sectionLabels?.considerations ?? DEFAULT_SECTION_LABELS.considerations,
+    ),
     buildClosingSlideSvg(width, height, slideText.closingLine, slideText.fixedCta, logo),
   ];
 

@@ -157,12 +157,6 @@ export const quickActions: QuickAction[] = [
     prompt: "Örnek bir gayrimenkul ilanı için ikna edici ve profesyonel bir açıklama metni yaz.",
   },
   {
-    id: "instagram-post",
-    label: "Instagram paylaşımı hazırla",
-    prompt:
-      "Bir gayrimenkul ilanını tanıtmak için kısa, dikkat çekici bir Instagram gönderi metni hazırla.",
-  },
-  {
     id: "whatsapp-message",
     label: "WhatsApp mesajı yaz",
     prompt: "Bir müşteriye gönderebileceğim kısa, samimi ve profesyonel bir WhatsApp mesajı yaz.",
