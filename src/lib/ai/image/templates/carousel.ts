@@ -48,22 +48,6 @@ export type CarouselSlideText = {
   // fact/number" requirement — e.g. "150.000 TL". Undefined renders slide
   // 2 exactly as before (label + body only), never a fabricated number.
   keyFact?: string;
-  // Optional (expert/portfolio content mode): content-specific section
-  // labels replacing the news template's fixed "Ne Oldu?" / "Neden
-  // Önemli?" / "Nelere Dikkat Etmeli?". Absent = exactly the news labels.
-  sectionLabels?: { whatHappened?: string; whyItMatters?: string; considerations?: string };
-  // Optional (expert/portfolio content mode only): each slide's own headline
-  // rendered as a large heading between the gold section label and the
-  // body — the editorial hierarchy (label → heading → body) a production
-  // review found missing (a lone body block floating in an empty slide).
-  // Absent = the news layout, byte-for-byte unchanged.
-  headings?: { whatHappened?: string; whyItMatters?: string; considerations?: string; closing?: string };
-};
-
-const DEFAULT_SECTION_LABELS = {
-  whatHappened: "Ne Oldu?",
-  whyItMatters: "Neden Önemli?",
-  considerations: "Nelere Dikkat Etmeli?",
 };
 
 function logoMarkup(width: number, height: number, logo: MattedLogoAsset, size: "large" | "small", clipId: string) {
@@ -214,7 +198,6 @@ function buildWhatHappenedSlideSvg(
   keyFact: string | undefined,
   sourceLabel: string | undefined,
   logo: MattedLogoAsset,
-  label: string = DEFAULT_SECTION_LABELS.whatHappened,
 ): string {
   const availableWidth = width - SAFE_PADDING_X * 2;
   const labelY = SAFE_PADDING_TOP + 140;
@@ -249,7 +232,7 @@ function buildWhatHappenedSlideSvg(
   return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     ${infoCardBackgroundMarkup(width, height, ACCENT_VARIANTS["what-happened"])}
     ${progressMarkup(width, 2)}
-    ${labelMarkup(SAFE_PADDING_X, labelY, label)}
+    ${labelMarkup(SAFE_PADDING_X, labelY, "Ne Oldu?")}
     ${keyFactMarkup}
     <text font-family="${FONT_STACK}" font-size="${bodyLayout.fontSize}" font-weight="600" fill="#f4f4f5">${tspans(bodyLayout.lines, SAFE_PADDING_X, bodyFirstY, bodyLayout.lineHeight)}</text>
     ${sourceMarkup}
@@ -261,13 +244,7 @@ function buildWhatHappenedSlideSvg(
 // Same information-design principle as slide 2, without the key-fact
 // callout (this slide is interpretation/significance, not a number) — a
 // different accent position keeps it visually distinct from slide 2.
-function buildWhyItMattersSlideSvg(
-  width: number,
-  height: number,
-  body: string,
-  logo: MattedLogoAsset,
-  label: string = DEFAULT_SECTION_LABELS.whyItMatters,
-): string {
+function buildWhyItMattersSlideSvg(width: number, height: number, body: string, logo: MattedLogoAsset): string {
   const availableWidth = width - SAFE_PADDING_X * 2;
   const labelY = SAFE_PADDING_TOP + 140;
   const brandIconTopY = height - SAFE_PADDING_BOTTOM - LOGO_HEIGHT_SMALL;
@@ -280,7 +257,7 @@ function buildWhyItMattersSlideSvg(
   return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     ${infoCardBackgroundMarkup(width, height, ACCENT_VARIANTS["why-it-matters"])}
     ${progressMarkup(width, 3)}
-    ${labelMarkup(SAFE_PADDING_X, labelY, label)}
+    ${labelMarkup(SAFE_PADDING_X, labelY, "Neden Önemli?")}
     <text font-family="${FONT_STACK}" font-size="${bodyLayout.fontSize}" font-weight="600" fill="#f4f4f5">${tspans(bodyLayout.lines, SAFE_PADDING_X, bodyFirstY, bodyLayout.lineHeight)}</text>
     ${logoMarkup(width, height, logo, "small", "logoClipWhyItMatters")}
   </svg>`;
@@ -306,13 +283,7 @@ const BADGE_TO_TITLE_GAP = 18;
 const TITLE_LINE_HEIGHT = 40;
 const CONSIDERATION_ROW_GAP = 40;
 
-function buildConsiderationsSlideSvg(
-  width: number,
-  height: number,
-  considerations: string[],
-  logo: MattedLogoAsset,
-  label: string = DEFAULT_SECTION_LABELS.considerations,
-): string {
+function buildConsiderationsSlideSvg(width: number, height: number, considerations: string[], logo: MattedLogoAsset): string {
   const availableWidth = width - SAFE_PADDING_X * 2;
   const labelY = SAFE_PADDING_TOP + 140;
   const items = considerations.slice(0, MAX_CONSIDERATIONS);
@@ -374,196 +345,9 @@ function buildConsiderationsSlideSvg(
       </linearGradient>
     </defs>
     ${progressMarkup(width, 4)}
-    ${labelMarkup(SAFE_PADDING_X, labelY, label)}
+    ${labelMarkup(SAFE_PADDING_X, labelY, "Nelere Dikkat Etmeli?")}
     ${itemsMarkup}
     ${logoMarkup(width, height, logo, "small", "logoClipConsiderations")}
-  </svg>`;
-}
-
-// ============================================================
-// EXPERT / portfolio editorial layout (slides 2-5, only when the caller
-// passes `headings` — news content never does). Same navy/gold system,
-// same safe paddings, logo, progress indicator and ellipsis-based no-
-// clipping layout as the news slides; only the hierarchy changes:
-//   gold eyebrow label → large white heading → short gold rule → body
-// laid out as ONE composed block (the eyebrow travels with the heading,
-// the whole group centered in the slide) instead of a small body
-// paragraph floating in a mostly empty slide.
-// ============================================================
-const EDITORIAL_HEADING_TIER = { large: 60, largeLines: 3, small: 48, smallLines: 4 } as const;
-const EDITORIAL_BODY_TIER = { large: 36, largeLines: 8, small: 30, smallLines: 11 } as const;
-const EDITORIAL_HEADING_TO_RULE = 34;
-const EDITORIAL_RULE_TO_BODY = 64;
-const EDITORIAL_BODY_COLOR = "#d4d4d8";
-// Eyebrow baseline sits this far above the heading's first-line top.
-const EDITORIAL_LABEL_TO_HEADING_TOP = 44;
-const EDITORIAL_GROUP_BIAS = 0.5;
-
-type EditorialBlock = { markup: string; bottomY: number };
-
-// (Optional) eyebrow label + heading + gold rule + (optional) body as one
-// block, positioned in the zone
-// [zoneTop, zoneBottom]. Returns the markup and the last baseline used, so a
-// checklist can be laid out directly underneath.
-function editorialBlock(
-  heading: string,
-  body: string | undefined,
-  availableWidth: number,
-  zoneTop: number,
-  zoneBottom: number,
-  extraBelowHeight = 0,
-  label?: string,
-): EditorialBlock {
-  const headingLayout = wrapTwoTier(
-    heading,
-    availableWidth,
-    EDITORIAL_HEADING_TIER.large,
-    EDITORIAL_HEADING_TIER.largeLines,
-    EDITORIAL_HEADING_TIER.small,
-    EDITORIAL_HEADING_TIER.smallLines,
-  );
-  const bodyLayout = body
-    ? wrapTwoTier(
-        body,
-        availableWidth,
-        EDITORIAL_BODY_TIER.large,
-        EDITORIAL_BODY_TIER.largeLines,
-        EDITORIAL_BODY_TIER.small,
-        EDITORIAL_BODY_TIER.smallLines,
-      )
-    : null;
-
-  const headingSpan = (headingLayout.lines.length - 1) * headingLayout.lineHeight;
-  const ruleOffset = headingSpan + EDITORIAL_HEADING_TO_RULE;
-  const bodyOffset = ruleOffset + EDITORIAL_RULE_TO_BODY;
-  const bodySpan = bodyLayout ? (bodyLayout.lines.length - 1) * bodyLayout.lineHeight : 0;
-  const labelOffset = label ? headingLayout.fontSize + EDITORIAL_LABEL_TO_HEADING_TOP : 0;
-  const totalSpan = labelOffset + (bodyLayout ? bodyOffset + bodySpan : ruleOffset) + extraBelowHeight;
-
-  const groupFirstY = centeredFirstBaselineY(zoneTop, zoneBottom, totalSpan, zoneTop + (label ? 22 : headingLayout.fontSize), EDITORIAL_GROUP_BIAS);
-  const headingFirstY = groupFirstY + labelOffset;
-  const ruleY = headingFirstY + ruleOffset;
-  const bodyFirstY = headingFirstY + bodyOffset;
-
-  const markup = `${label ? labelMarkup(SAFE_PADDING_X, groupFirstY, label) : ""}
-    <text font-family="${FONT_STACK}" font-size="${headingLayout.fontSize}" font-weight="800" fill="#f4f4f5" letter-spacing="-0.5">${tspans(headingLayout.lines, SAFE_PADDING_X, headingFirstY, headingLayout.lineHeight)}</text>
-    <rect x="${SAFE_PADDING_X}" y="${ruleY}" width="72" height="4" rx="2" fill="${GOLD}" />
-    ${
-      bodyLayout
-        ? `<text font-family="${FONT_STACK}" font-size="${bodyLayout.fontSize}" font-weight="500" fill="${EDITORIAL_BODY_COLOR}">${tspans(bodyLayout.lines, SAFE_PADDING_X, bodyFirstY, bodyLayout.lineHeight)}</text>`
-        : ""
-    }`;
-  return { markup, bottomY: bodyLayout ? bodyFirstY + bodySpan : ruleY };
-}
-
-function buildEditorialTextSlideSvg(
-  width: number,
-  height: number,
-  slideNumber: number,
-  accent: AccentVariant,
-  label: string,
-  heading: string,
-  body: string,
-  logo: MattedLogoAsset,
-  clipId: string,
-): string {
-  const availableWidth = width - SAFE_PADDING_X * 2;
-  const brandIconTopY = height - SAFE_PADDING_BOTTOM - LOGO_HEIGHT_SMALL;
-  const block = editorialBlock(heading, body, availableWidth, SAFE_PADDING_TOP + 80, brandIconTopY - 50, 0, label);
-
-  return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-    ${infoCardBackgroundMarkup(width, height, accent)}
-    ${progressMarkup(width, slideNumber)}
-    ${block.markup}
-    ${logoMarkup(width, height, logo, "small", clipId)}
-  </svg>`;
-}
-
-const EDITORIAL_ITEM_FONT = 34;
-const EDITORIAL_ITEM_LINE_HEIGHT = 42;
-const EDITORIAL_ITEM_GAP = 34;
-
-function buildEditorialChecklistSlideSvg(
-  width: number,
-  height: number,
-  label: string,
-  heading: string,
-  considerations: string[],
-  logo: MattedLogoAsset,
-): string {
-  const availableWidth = width - SAFE_PADDING_X * 2;
-  const brandIconTopY = height - SAFE_PADDING_BOTTOM - LOGO_HEIGHT_SMALL;
-  const items = considerations.slice(0, MAX_CONSIDERATIONS);
-  const titleAvailableWidth = availableWidth - BADGE_SIZE - BADGE_TO_TITLE_GAP;
-  const badgeCx = SAFE_PADDING_X + BADGE_SIZE / 2;
-  const titleX = SAFE_PADDING_X + BADGE_SIZE + BADGE_TO_TITLE_GAP;
-
-  const itemLayouts = items.map((title) => layoutAtSize(title, titleAvailableWidth, EDITORIAL_ITEM_FONT, 3));
-  const rowHeights = itemLayouts.map((layout) => Math.max(BADGE_SIZE, layout.lines.length * EDITORIAL_ITEM_LINE_HEIGHT));
-  const listHeight = rowHeights.reduce((sum, h) => sum + h, 0) + EDITORIAL_ITEM_GAP * Math.max(items.length - 1, 0);
-  const listTopGap = 56;
-
-  const block = editorialBlock(heading, undefined, availableWidth, SAFE_PADDING_TOP + 80, brandIconTopY - 50, listTopGap + listHeight, label);
-
-  let cursor = block.bottomY + listTopGap;
-  const itemsMarkup = items
-    .map((_, index) => {
-      const rowHeight = rowHeights[index];
-      const rowCenterY = cursor + rowHeight / 2;
-      cursor += rowHeight + EDITORIAL_ITEM_GAP;
-      const layout = itemLayouts[index];
-      const titleTspans = layout.lines
-        .map((line, lineIndex) => {
-          const y = rowCenterY + (lineIndex - (layout.lines.length - 1) / 2) * EDITORIAL_ITEM_LINE_HEIGHT + 11;
-          return `<tspan x="${titleX}" y="${y}">${escapeXml(line)}</tspan>`;
-        })
-        .join("");
-      return `<circle cx="${badgeCx}" cy="${rowCenterY}" r="${BADGE_SIZE / 2}" fill="url(#editorialBadgeGold)" />
-      <text x="${badgeCx}" y="${rowCenterY + 7}" font-family="${FONT_STACK}" font-size="22" font-weight="700" fill="#ffffff" text-anchor="middle">${String(index + 1).padStart(2, "0")}</text>
-      <text font-family="${FONT_STACK}" font-size="${EDITORIAL_ITEM_FONT}" font-weight="600" fill="#f4f4f5">${titleTspans}</text>`;
-    })
-    .join("");
-
-  return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-    ${infoCardBackgroundMarkup(width, height, ACCENT_VARIANTS["what-to-do"])}
-    <defs>
-      <linearGradient id="editorialBadgeGold" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="${GOLD_LIGHT}" />
-        <stop offset="100%" stop-color="${GOLD_DEEP}" />
-      </linearGradient>
-    </defs>
-    ${progressMarkup(width, 4)}
-    ${block.markup}
-    ${itemsMarkup}
-    ${logoMarkup(width, height, logo, "small", "logoClipEditorialChecklist")}
-  </svg>`;
-}
-
-// Expert closing card: heading + the closing paragraph (which carries the
-// package's ONE CTA). Never a fixed second CTA.
-function buildEditorialClosingSlideSvg(
-  width: number,
-  height: number,
-  heading: string,
-  closingLine: string,
-  logo: MattedLogoAsset,
-): string {
-  const availableWidth = width - SAFE_PADDING_X * 2;
-  const brandIconTopY = height - SAFE_PADDING_BOTTOM - LOGO_HEIGHT_LARGE;
-  const block = editorialBlock(heading, closingLine, availableWidth, SAFE_PADDING_TOP + 80, brandIconTopY - 60);
-
-  return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <radialGradient id="editorialClosingAccent" cx="0.5" cy="0.32" r="0.75">
-        <stop offset="0%" stop-color="${GOLD_DEEP}" stop-opacity="0.22" />
-        <stop offset="100%" stop-color="${BRAND_NAVY}" stop-opacity="0" />
-      </radialGradient>
-    </defs>
-    <rect x="0" y="0" width="${width}" height="${height}" fill="${BRAND_NAVY}" />
-    <rect x="0" y="0" width="${width}" height="${height}" fill="url(#editorialClosingAccent)" />
-    ${progressMarkup(width, 5)}
-    ${block.markup}
-    ${logoMarkup(width, height, logo, "large", "logoClipEditorialClosing")}
   </svg>`;
 }
 
@@ -636,64 +420,12 @@ export async function renderCarousel(
   const { width, height } = parseCanvasDimensions(dimensionsPx);
   const logo = await loadMattedLogoAsset();
 
-  const labels = {
-    whatHappened: slideText.sectionLabels?.whatHappened ?? DEFAULT_SECTION_LABELS.whatHappened,
-    whyItMatters: slideText.sectionLabels?.whyItMatters ?? DEFAULT_SECTION_LABELS.whyItMatters,
-    considerations: slideText.sectionLabels?.considerations ?? DEFAULT_SECTION_LABELS.considerations,
-  };
-  // Expert/portfolio editorial layout only where a heading was supplied;
-  // news content passes no headings and renders exactly as before.
-  const headings = slideText.headings ?? {};
-
   const svgs = [
     buildCoverSlideSvg(width, height, baseImage, slideText.cover, logo),
-    headings.whatHappened
-      ? buildEditorialTextSlideSvg(
-          width,
-          height,
-          2,
-          ACCENT_VARIANTS["what-happened"],
-          labels.whatHappened,
-          headings.whatHappened,
-          slideText.whatHappened,
-          logo,
-          "logoClipEditorialWhatHappened",
-        )
-      : buildWhatHappenedSlideSvg(
-          width,
-          height,
-          slideText.whatHappened,
-          slideText.keyFact,
-          slideText.sourceLabel,
-          logo,
-          labels.whatHappened,
-        ),
-    headings.whyItMatters
-      ? buildEditorialTextSlideSvg(
-          width,
-          height,
-          3,
-          ACCENT_VARIANTS["why-it-matters"],
-          labels.whyItMatters,
-          headings.whyItMatters,
-          slideText.whyItMatters,
-          logo,
-          "logoClipEditorialWhyItMatters",
-        )
-      : buildWhyItMattersSlideSvg(width, height, slideText.whyItMatters, logo, labels.whyItMatters),
-    headings.considerations
-      ? buildEditorialChecklistSlideSvg(
-          width,
-          height,
-          labels.considerations,
-          headings.considerations,
-          slideText.considerations,
-          logo,
-        )
-      : buildConsiderationsSlideSvg(width, height, slideText.considerations, logo, labels.considerations),
-    headings.closing
-      ? buildEditorialClosingSlideSvg(width, height, headings.closing, slideText.closingLine, logo)
-      : buildClosingSlideSvg(width, height, slideText.closingLine, slideText.fixedCta, logo),
+    buildWhatHappenedSlideSvg(width, height, slideText.whatHappened, slideText.keyFact, slideText.sourceLabel, logo),
+    buildWhyItMattersSlideSvg(width, height, slideText.whyItMatters, logo),
+    buildConsiderationsSlideSvg(width, height, slideText.considerations, logo),
+    buildClosingSlideSvg(width, height, slideText.closingLine, slideText.fixedCta, logo),
   ];
 
   const buffers: Buffer[] = [];

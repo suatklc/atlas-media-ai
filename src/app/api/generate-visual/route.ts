@@ -24,7 +24,14 @@ import { isVisualFormat, buildFormatSuffix } from "@/lib/ai/research/formatRecom
 import { isContentPackage, validateContentPackage, type ContentPackage } from "@/lib/ai/content/contentPackage";
 import { buildExpertVillaImagePrompt, buildGoldStandardImagePrompt } from "@/lib/ai/creative/goldStandardImagePrompt";
 import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "@/lib/ai/context/businessProfile";
-import { formatTurkeyDateLong } from "@/lib/ai/research/retrieval/turkishDate";
+import {
+  appendHashtagsToCaption,
+  buildCarouselSourceLabel,
+  buildNewsCarouselSlideText,
+  buildPremiumCarouselText,
+  CAROUSEL_FIXED_CTA,
+} from "@/lib/ai/content/carouselSlides";
+import { renderPremiumCarousel } from "@/lib/ai/image/templates/premiumCarousel";
 
 const MAX_MESSAGE_LENGTH = 4000;
 // Kept aligned with AIAssistantPanel.tsx's own extractor bound — a full
@@ -45,48 +52,7 @@ const LISTING_SAFETY_PROMPT_SUFFIX =
 
 const LISTING_DISCLAIMER = "Temsili görseldir; gerçek mülkü göstermez.";
 
-// Real Multi-Slide Carousel: slide 5's fixed micro-CTA — deterministic
-// rather than model-generated, so the closing slide's final line is never
-// at risk of an invented legal/procedural claim (see the grounding rules
-// in research/opportunity.ts). Shown on every carousel regardless of
-// intent; unrelated to ctaForIntent below, which only ever gates the
-// SINGLE-image hero/educational on-image CTA badge and is unchanged.
-const CAROUSEL_FIXED_CTA = "Detaylar İçin Mesaj Bırakın";
 const MAX_CAROUSEL_CONSIDERATIONS = 4;
-
-// Presentational-only: "publisher · 12 Ağustos 2026" subtle attribution
-// shown on the carousel's "what happened" slide (Part 2's own "publisher/
-// date subtly shown" requirement). Falls back to omitting the date rather
-// than showing an invalid one; returns undefined (no line at all) if the
-// opportunity carried no source.
-function buildCarouselSourceLabel(source: { publisher: string; publishedAt: string } | undefined): string | undefined {
-  if (!source) return undefined;
-  // Turkey-local, never the server timezone: on Vercel (UTC) a Turkey-
-  // midnight publishedAt formatted with toLocaleDateString printed the
-  // previous day (see turkishDate.ts's toTurkeyCalendarDate).
-  const formatted = formatTurkeyDateLong(source.publishedAt);
-  if (!formatted) {
-    return source.publisher;
-  }
-  return `${source.publisher} · ${formatted}`;
-}
-
-// Static Content V1 Freeze — genuine blocker fix: ContentPackage.hashtags
-// is its own structured field (unlike the old marker pipeline, where
-// hashtags already lived inline inside the single raw caption string via
-// buildPublishableCaption's "Etiketler:" handling). Persisting only
-// contentPackage.caption as `content` — the exact field later sent
-// verbatim as the real Instagram caption when an approved post is
-// published — meant an approved post's hashtags, though shown in the
-// dashboard preview, were silently dropped at actual publish time.
-// Appending them here, before the existing sanitizeContent/length-cap
-// step, is the smallest fix: what the user approves is what actually
-// gets published, nothing more.
-function appendHashtagsToCaption(caption: string, hashtags: string[]): string {
-  if (hashtags.length === 0) return caption;
-  const normalized = hashtags.map((tag) => (tag.startsWith("#") ? tag : `#${tag}`)).join(" ");
-  return `${caption}\n\n${normalized}`;
-}
 
 // Server-side-only benchmark override: an env var naming a key in the
 // allowlisted IMAGE_MODEL_CONFIGS (media/config.ts) — never an arbitrary
@@ -305,7 +271,7 @@ export async function POST(request: NextRequest) {
       return jsonError("İçerik paketi doğrulamadan geçemedi. Lütfen içeriği tekrar oluşturun.", 422);
     }
 
-    const [hookSlide, whatHappenedSlide, whyItMattersSlide, whatToDoSlide, ctaSlide] = contentPackage.slides;
+    const [hookSlide] = contentPackage.slides;
     const { provider, model } = resolveImageModelConfig();
 
     let generated;
@@ -337,46 +303,20 @@ export async function POST(request: NextRequest) {
     }
 
     // Expert/portfolio content (no source, user instruction — see
-    // /api/content-package's expert mode): the slides' own headlines are
-    // the section labels instead of the news template's "Ne Oldu?" etc.,
-    // slide 5 carries the package's ONE CTA (no fixed second CTA), and
-    // there is no source line. News packages render exactly as before.
-    const isExpert = contentPackage.contentMode === "expert";
-    const slideText: CarouselSlideText = isExpert
-      ? {
-          cover: hookSlide.headline,
-          whatHappened: whatHappenedSlide.body,
-          whyItMatters: whyItMattersSlide.body,
-          considerations: whatToDoSlide.facts.length > 0 ? whatToDoSlide.facts : [whatToDoSlide.body],
-          closingLine: ctaSlide.body,
-          // Short role eyebrows + the slides' own headlines as large
-          // headings (wrapped, never cut off mid-word) — the editorial
-          // hierarchy the production review asked for.
-          sectionLabels: { whatHappened: "Teşhis", whyItMatters: "Asıl Mesele", considerations: "Ne Değişir?" },
-          headings: {
-            whatHappened: whatHappenedSlide.headline,
-            whyItMatters: whyItMattersSlide.headline,
-            considerations: whatToDoSlide.headline,
-            closing: ctaSlide.headline,
-          },
-        }
-      : {
-          cover: hookSlide.headline,
-          whatHappened: whatHappenedSlide.body,
-          keyFact: whatHappenedSlide.facts[0],
-          whyItMatters: whyItMattersSlide.body,
-          considerations: whatToDoSlide.facts.length > 0 ? whatToDoSlide.facts : [whatToDoSlide.body],
-          closingLine: ctaSlide.body,
-          fixedCta: CAROUSEL_FIXED_CTA,
-          sourceLabel: buildCarouselSourceLabel({
-            publisher: contentPackage.source.name,
-            publishedAt: contentPackage.source.publishedAt,
-          }),
-        };
-
+    // /api/content-package's expert mode) renders with the Atlas Premium
+    // design system: one CTA (slide 5), no fixed second CTA, no source
+    // line. News packages render through the frozen Carousel V1 renderer
+    // exactly as before (same text mapping, now in carouselSlides.ts).
     let slideBuffers: Buffer[];
     try {
-      slideBuffers = await renderCarousel(generated.bytes, platformConfig.dimensions, slideText);
+      slideBuffers =
+        contentPackage.contentMode === "expert"
+          ? await renderPremiumCarousel(
+              generated.bytes,
+              platformConfig.dimensions,
+              buildPremiumCarouselText(contentPackage, ATLAS_DEFAULT_BUSINESS_PROFILE.geography.primary),
+            )
+          : await renderCarousel(generated.bytes, platformConfig.dimensions, buildNewsCarouselSlideText(contentPackage));
     } catch (error) {
       console.error("Carousel composition error:", error);
       logVisualGenerationDiagnostic("carousel composition (resvg)", error);

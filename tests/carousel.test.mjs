@@ -79,6 +79,7 @@ function loadRealTsModule(absPath) {
   return moduleObj.exports;
 }
 
+const premiumCarousel = loadRealTsModule(path.join(projectRoot, "src/lib/ai/image/templates/premiumCarousel.ts"));
 const carousel = loadRealTsModule(
   path.join(projectRoot, "src/lib/ai/image/templates/carousel.ts"),
 );
@@ -93,6 +94,11 @@ const format = loadTypeScriptModule("src/lib/ai/content/format.ts");
 // Real module: generate-visual/route.ts formats the carousel source label
 // in Turkey-local time through it.
 const turkishDate = loadTypeScriptModule("src/lib/ai/research/retrieval/turkishDate.ts");
+// Real module: the ContentPackage → slide text mapping shared by
+// generate-visual and /api/drafts/edit.
+const carouselSlides = loadTypeScriptModule("src/lib/ai/content/carouselSlides.ts", (name) =>
+  name === "@/lib/ai/research/retrieval/turkishDate" ? turkishDate : {},
+);
 
 // A real, minimal, valid 1x1 transparent PNG — a genuine base image the
 // resvg <image> embedding actually decodes, not a synthetic/malformed
@@ -463,6 +469,14 @@ function loadGenerateVisualRoute(overrides = {}) {
     },
     "@/lib/ai/context/businessProfile": { ATLAS_DEFAULT_BUSINESS_PROFILE: { geography: { primary: "Zekeriyaköy", nearby: [] } } },
     "@/lib/ai/research/retrieval/turkishDate": turkishDate,
+    "@/lib/ai/content/carouselSlides": carouselSlides,
+    "@/lib/ai/image/templates/premiumCarousel": {
+      renderPremiumCarousel: async (_baseImage, _dims, text) => {
+        state.premiumCalls = (state.premiumCalls ?? 0) + 1;
+        state.lastPremiumText = text;
+        return [1, 2, 3, 4, 5].map((n) => Buffer.from(`premium-slide-${n}`));
+      },
+    },
   };
 
   const route = loadTypeScriptModule(
@@ -632,6 +646,14 @@ function loadGenerateVisualRouteForContentPackage() {
     "@/lib/ai/creative/goldStandardImagePrompt": { buildGoldStandardImagePrompt: () => "prompt", buildExpertVillaImagePrompt: () => "expert-villa-prompt" },
     "@/lib/ai/context/businessProfile": { ATLAS_DEFAULT_BUSINESS_PROFILE: { geography: { primary: "Zekeriyaköy", nearby: [] } } },
     "@/lib/ai/research/retrieval/turkishDate": turkishDate,
+    "@/lib/ai/content/carouselSlides": carouselSlides,
+    "@/lib/ai/image/templates/premiumCarousel": {
+      renderPremiumCarousel: async (_baseImage, _dims, text) => {
+        state.premiumCalls = (state.premiumCalls ?? 0) + 1;
+        state.lastPremiumText = text;
+        return [1, 2, 3, 4, 5].map((n) => Buffer.from(`premium-slide-${n}`));
+      },
+    },
   };
 
   const route = loadTypeScriptModule(
@@ -696,40 +718,38 @@ test("generate-visual route: carousel outputMode with no resolvable CAROUSEL_STR
 
 // ============================================================
 // Expert / portfolio content mode (dashboard "Instagram paylaşımı
-// hazırla"): slide headlines become visible headings under generic
-// eyebrow labels, ONE CTA (no fixed
-// second CTA), no source line — news packages render exactly as before.
+// hazırla"): rendered by the Atlas Premium design system — ONE CTA (no
+// fixed second CTA), no source line. News packages keep the frozen
+// Carousel V1 renderer exactly as before.
 // ============================================================
 
-test("generate-visual: an EXPERT package renders slide headlines as headings, no fixed CTA and no source line", async () => {
+test("generate-visual: an EXPERT package renders through the premium renderer — no fixed CTA, no source line", async () => {
   const { route, state, sampleContentPackage } = loadGenerateVisualRouteForContentPackage();
   const expertPackage = {
     ...sampleContentPackage,
     contentMode: "expert",
     source: { name: "Suat Kılıç — uzman değerlendirmesi", url: "atlas:expert-content", publishedAt: "" },
-    slides: sampleContentPackage.slides.map((slide) =>
-      slide.index === 3 ? { ...slide, headline: "Bu başlık bölüm etiketi olarak gösterilemeyecek kadar uzun bir başlıktır" } : slide,
-    ),
   };
   const response = await route.POST({
     json: async () => ({ message: "Zekeriyaköy villa sahipleri için paylaşım", contentPackage: expertPackage, visualFormat: "carousel" }),
   });
   assert.equal(response.status, 200);
-  const text = state.lastSlideText;
-  assert.equal(text.fixedCta, undefined);
-  assert.equal(text.sourceLabel, undefined);
-  assert.equal(text.keyFact, undefined);
-  assert.equal(text.sectionLabels.whatHappened, "Teşhis");
-  assert.equal(text.sectionLabels.whyItMatters, "Asıl Mesele");
-  assert.equal(text.sectionLabels.considerations, "Ne Değişir?");
-  assert.equal(text.headings.whatHappened, "H2");
-  // A long headline is a heading now (wrapped by the renderer), not dropped.
-  assert.match(text.headings.whyItMatters, /^Bu başlık/);
-  assert.equal(text.headings.considerations, "H4");
-  assert.equal(text.headings.closing, "H5");
-  assert.equal(text.closingLine, "B5");
+  assert.equal(state.premiumCalls, 1);
+  assert.equal(state.carouselCalls, 0, "news renderer not used for expert content");
+  const text = state.lastPremiumText;
+  assert.equal(text.kicker, "Zekeriyaköy · Uzman Görüşü");
+  assert.equal(text.cover.headline, "H1");
+  assert.equal(text.cover.support, "B1");
+  assert.equal(text.diagnosis.headline, "H2");
+  assert.equal(text.insight.body, "B3");
+  assert.equal(text.strategy.items.join(","), "c1,c2");
+  assert.equal(text.closing.headline, "H5");
+  assert.equal(text.closing.body, "B5");
+  assert.equal(JSON.stringify(text).includes("Detaylar İçin Mesaj Bırakın"), false);
+  assert.equal(JSON.stringify(text).includes("TKGM"), false);
   // Still a draft-only insert: status is never set by generation.
   assert.equal(state.capturedInsert.status, undefined);
+  assert.equal(state.capturedInsert.metadata.carouselImages.length, 5);
 });
 
 test("generate-visual: a NEWS package (no contentMode) still gets the fixed CTA, source line and default labels", async () => {
@@ -738,45 +758,36 @@ test("generate-visual: a NEWS package (no contentMode) still gets the fixed CTA,
   const text = state.lastSlideText;
   assert.equal(text.fixedCta, "Detaylar İçin Mesaj Bırakın");
   assert.match(text.sourceLabel, /^TKGM/);
-  assert.equal(text.sectionLabels, undefined);
-  assert.equal(text.headings, undefined);
   assert.equal(text.keyFact, "f1");
+  assert.equal(state.premiumCalls ?? 0, 0, "news never uses the premium renderer");
 });
 
-test("renderCarousel renders custom expert section labels and no fixed CTA as 5 real 1080x1350 PNGs", async () => {
-  const buffers = await carousel.renderCarousel(TINY_BASE_IMAGE, "1080x1350", {
-    cover: "Zekeriyaköy'de villanız neden satılmıyor?",
-    whatHappened: "Önce teşhis: ilgi mi yok, teklif mi yok?",
-    whyItMatters: "Bence fiyat, mülkün kendi rakip grubuna göre kurulmalı.",
-    considerations: ["Gerçekçi değer aralığını belirlemek", "Doğru alıcıyı tanımlamak", "Sunumu buna göre kurmak"],
-    closingLine: "Villanızın değerini konuşmak isterseniz DM'den yazabilirsiniz.",
-    sectionLabels: { whatHappened: "Önce teşhis", whyItMatters: "Asıl mesele: fiyat", considerations: "Ne değişir?" },
+test("renderPremiumCarousel renders long Turkish expert copy (incl. CTA + emphasis) as exactly 5 real 1080x1350 PNGs", async () => {
+  const long = "Villanızın değerini, konumlandırmasını ve satış stratejisini doğru kurmadan piyasaya çıkmak, iyi bir mülkü bile sıradan gösterebilir ve süreci gereksiz yere uzatabilir.";
+  const buffers = await premiumCarousel.renderPremiumCarousel(TINY_BASE_IMAGE, "1080x1350", {
+    kicker: "Zekeriyaköy · Uzman Görüşü",
+    cover: { headline: "Zekeriyaköy’de villanızı satarken alıcının ilk gördüğü şey fiyat değil, evin hikâyesidir", emphasis: "evin hikâyesidir", support: long },
+    diagnosis: { label: "Teşhis", headline: "Teklif gelmiyorsa sorun her zaman fiyatta olmayabilir", body: `${long} ${long}` },
+    insight: { label: "Asıl Mesele", headline: "Villa alıcısı yaşam biçimini satın alır", body: `${long} ${long}` },
+    strategy: { label: "Ne Değişir?", headline: "Profesyonel satış stratejisi neyi değiştirir?", items: [long, long, "Hedef alıcıyı netleştirmek", long] },
+    closing: { label: "Benim Görüşüm", headline: "Doğru konumlandırma doğru teklifi getirir", body: long, cta: "Villanızı konuşmak için bana DM üzerinden yazabilirsiniz." },
   });
   assert.equal(buffers.length, 5);
   for (const buffer of buffers) {
+    assert.equal(buffer.subarray(1, 4).toString("ascii"), "PNG");
     assert.equal(buffer.readUInt32BE(16), 1080);
     assert.equal(buffer.readUInt32BE(20), 1350);
   }
 });
 
-test("renderCarousel renders expert editorial headings (incl. long Turkish copy) as 5 real 1080x1350 PNGs", async () => {
-  const buffers = await carousel.renderCarousel(TINY_BASE_IMAGE, "1080x1350", {
-    cover: "Zekeriyaköy'de villanızı satıyorsanız önce şuna bakın",
-    whatHappened: "İlgi mi yok, ilgi var ama teklif mi yok, yoksa teklifler beklentinizin altında mı? Her birinin çözümü farklıdır.",
-    whyItMatters: "Villa alıcısı yalnızca metrekareye bakmaz; bahçe ilişkisi, mahremiyet, mikro konum ve aynı bütçeyle bakabildiği benzer villalarla karşılaştırır.",
-    considerations: ["Değeri benzer villalara göre belirlemek", "Bahçe ve mahremiyeti öne çıkaran sunum", "Hedef alıcıyı netleştirmek", "Gösterim geri bildirimine göre stratejiyi güncellemek"],
-    closingLine: "Bence doğru strateji fiyattan önce konumlandırmayla başlar. Villanızın değerini ve satış stratejisini konuşmak isterseniz bana yazabilirsiniz.",
-    sectionLabels: { whatHappened: "Teşhis", whyItMatters: "Asıl Mesele", considerations: "Ne Değişir?" },
-    headings: {
-      whatHappened: "Önce sorunun adını doğru koymak gerekir",
-      whyItMatters: "Villa alıcısı evi bütün olarak tartar",
-      considerations: "Profesyonel strateji neyi değiştirir?",
-      closing: "Fiyattan önce konumlandırma",
-    },
-  });
-  assert.equal(buffers.length, 5);
-  for (const buffer of buffers) {
-    assert.equal(buffer.readUInt32BE(16), 1080);
-    assert.equal(buffer.readUInt32BE(20), 1350);
-  }
+test("premium emphasis: an explicit phrase is gold; otherwise the last line of a multi-line headline; never on a mismatch", () => {
+  const headline = "Villanız doğru anlatılmadan değerini göstermez.";
+  const lines = ["Villanız doğru", "anlatılmadan değerini", "göstermez."];
+  const explicit = premiumCarousel.emphasisSegments(headline, lines, "değerini göstermez");
+  assert.deepEqual(plain(explicit), [[["Villanız doğru", false]], [["anlatılmadan", false], [" değerini", true]], [["göstermez.", true]]]);
+  const auto = premiumCarousel.emphasisSegments(headline, lines, "bulunmayan ifade");
+  assert.deepEqual(plain(auto), [[["Villanız doğru", false]], [["anlatılmadan değerini", false]], [["göstermez.", true]]]);
+  const truncated = premiumCarousel.emphasisSegments(headline, ["Villanız doğru", "anlatılmadan…"], "doğru");
+  assert.deepEqual(plain(truncated), [[["Villanız doğru", false]], [["anlatılmadan…", false]]]);
+  assert.deepEqual(plain(premiumCarousel.emphasisSegments("Kısa başlık", ["Kısa başlık"])), [[["Kısa başlık", false]]]);
 });

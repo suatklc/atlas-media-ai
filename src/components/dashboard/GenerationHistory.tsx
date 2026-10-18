@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import StatusAction from "./StatusAction";
 import ExportActions from "./ExportActions";
+import DraftEditor from "./DraftEditor";
+import { isContentPackage, type ContentPackage } from "@/lib/ai/content/contentPackage";
 import { PLATFORM_CONFIGS, resolvePlatformFromMetadata } from "@/lib/ai/platform/config";
 
 type GeneratedPost = {
@@ -16,6 +18,22 @@ type GeneratedPost = {
   // resolvePlatformFromMetadata) rather than assumed.
   metadata: unknown;
 };
+
+// Draft Edit applies to carousel drafts that carry their structured
+// ContentPackage (every package-pipeline carousel since Gold Standard V1);
+// older/legacy rows simply show no "Düzenle" button.
+function editableDraft(post: GeneratedPost): { contentPackage: ContentPackage; images: { slide: number; imageUrl: string }[] } | null {
+  if (post.status !== "draft" || !post.metadata || typeof post.metadata !== "object") return null;
+  const { contentPackage, carouselImages } = post.metadata as { contentPackage?: unknown; carouselImages?: unknown };
+  if (!isContentPackage(contentPackage) || contentPackage.format !== "carousel") return null;
+  const images = Array.isArray(carouselImages)
+    ? carouselImages.filter(
+        (image): image is { slide: number; imageUrl: string } =>
+          Boolean(image) && typeof image.imageUrl === "string" && typeof image.slide === "number",
+      )
+    : [];
+  return { contentPackage, images };
+}
 
 // Server Component, self-contained: fetches its own user + rows rather than
 // receiving props from dashboard/page.tsx, so page.tsx's change stays to a
@@ -64,7 +82,9 @@ export default async function GenerationHistory() {
         </p>
       ) : (
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {posts.map((post) => (
+          {posts.map((post) => {
+            const draft = editableDraft(post);
+            return (
             // A <form>/<button> (in StatusAction) can't legally nest inside
             // an <a> — the previous version wrapped the whole card in one
             // anchor. Minimal structural change: the anchor now wraps only
@@ -95,10 +115,12 @@ export default async function GenerationHistory() {
                   })}
                 </p>
                 <StatusAction postId={post.id} status={post.status} />
+                {draft && <DraftEditor postId={post.id} contentPackage={draft.contentPackage} images={draft.images} />}
                 <ExportActions postId={post.id} content={post.content} finalImageUrl={post.final_image_url} />
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>

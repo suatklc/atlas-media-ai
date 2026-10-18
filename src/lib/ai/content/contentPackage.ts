@@ -33,6 +33,11 @@ export type ContentSlide = {
   body: string;
   facts: string[]; // plain-language facts shown on this slide (display strings)
   visualBrief: string; // short visual CONCEPT only — never rendered text
+  // Optional, set only by Suat's Draft Edit (never by the writer), and only
+  // rendered by the expert premium carousel: a short phrase of the headline
+  // shown in gold (cover/closing), and a separate CTA line (closing slide).
+  emphasis?: string;
+  cta?: string;
 };
 
 export type ContentPackage = {

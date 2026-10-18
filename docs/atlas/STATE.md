@@ -351,6 +351,18 @@ changes often — keep it short and current, not a historical changelog
   (Strategist skill + independent Quality Gate loop) as a PoC on the same
   grounded evidence bundle — see the final report of this task.
 
+- **REAL USE V1 (2026-10-18):** Draft Edit — "Düzenle" on carousel drafts
+  with a stored ContentPackage → `/api/drafts/edit` re-renders the 5
+  slides from the draft's own base photo and updates the SAME row; never
+  writes `status`, update filtered on `status='draft'`. Expert content now
+  renders through `templates/premiumCarousel.ts` (Atlas Premium design
+  system: Playfair headings, gold emphasis, larger logo); news keeps the
+  frozen `carousel.ts` (byte-identical output verified). Canva premium
+  layer NOT implemented — official Connect API path (OAuth+PKCE, Brand
+  Template autofill, export) needs one-time setup Suat must do first:
+  Canva Pro+ plan, a Developer Portal integration + client secret, and a
+  5-page Brand Template with named data fields.
+
 ## Next work order (intentional — do not reorder without a genuine blocker)
 
 1. Claude Code persistent project memory — COMPLETE.
