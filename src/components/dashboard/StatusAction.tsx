@@ -1,12 +1,14 @@
 "use client";
 
 import { useActionState } from "react";
-import { updatePostStatus, publishApprovedPost, type StatusActionState } from "@/app/dashboard/actions";
+import { updatePostStatus, type StatusActionState } from "@/app/dashboard/actions";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Taslak",
   approved: "Onaylandı",
-  posted: "Paylaşıldı",
+  // generated_posts.status "posted" = published to Instagram (the original
+  // lifecycle); Facebook has its own per-platform result in PublishPanel.
+  posted: "Onaylandı · Instagram'da paylaşıldı",
 };
 
 const initialState: StatusActionState = { error: null };
@@ -16,44 +18,31 @@ const initialState: StatusActionState = { error: null };
 // smallest standard mechanism for reflecting a mutation's result without a
 // manual page reload or a client-side data-fetching layer.
 //
-// The "approved" state's button now triggers a REAL Instagram publish
-// (publishApprovedPost), not a status label flip — status only reaches
-// "posted" once Meta has actually confirmed the post. draft→approved is
-// still the simple, reversible-in-effect status update.
+// Only the explicit approval lives here (draft -> approved). Publishing is
+// a separate, explicit step: PublishPanel's "Seçili Platformlarda Yayınla",
+// where Suat ticks Instagram and/or Facebook — approving never publishes.
 export default function StatusAction({ postId, status }: { postId: string; status: string }) {
-  const nextStatus = status === "draft" ? "approved" : status === "approved" ? "posted" : null;
-  const boundAction =
-    status === "draft"
-      ? updatePostStatus.bind(null, postId, "approved")
-      : status === "approved"
-        ? publishApprovedPost.bind(null, postId)
-        : null;
-
   const [state, formAction, isPending] = useActionState(
-    boundAction ?? (async (prev: StatusActionState) => prev),
+    status === "draft" ? updatePostStatus.bind(null, postId, "approved") : async (prev: StatusActionState) => prev,
     initialState,
   );
-
-  const label = STATUS_LABELS[status] ?? status;
-  const buttonLabel = status === "draft" ? "Onayla" : "Instagram'da Paylaş";
 
   return (
     <div className="mt-2 space-y-1.5">
       <span className="inline-block rounded-full border border-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-300">
-        {label}
+        {STATUS_LABELS[status] ?? status}
       </span>
 
-      {nextStatus && boundAction && (
+      {status === "draft" && (
         <form action={formAction}>
-          {/* Comfortable tap target (previously ~22px tall, too small for
-              the approve/publish action) — block + generous padding,
-              still fits the existing compact history-card width. */}
+          {/* Comfortable tap target — block + generous padding, still fits
+              the existing compact history-card width. */}
           <button
             type="submit"
             disabled={isPending}
             className="block w-full rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-indigo-300 transition-colors hover:border-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isPending ? "..." : buttonLabel}
+            {isPending ? "..." : "Onayla"}
           </button>
         </form>
       )}

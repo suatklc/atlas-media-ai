@@ -3,10 +3,13 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { publishGeneratedPost } from "@/lib/publishing/publishGeneratedPost";
-import { publishGeneratedPostToFacebook } from "@/lib/publishing/publishFacebookPost";
 import { runFacebookMultiPhotoCheck } from "@/lib/publishing/facebookCapability";
 import { selectFacebookPage } from "@/lib/publishing/connections/query";
+import {
+  parseSelectedPlatforms,
+  publishToSelectedPlatforms,
+  type PlatformOutcome,
+} from "@/lib/publishing/publishSelectedPlatforms";
 
 export async function signOutAction() {
   const supabase = await createClient();
@@ -17,8 +20,8 @@ export async function signOutAction() {
 export type StatusActionState = { error: string | null };
 
 // "posted" is deliberately NOT settable here — it is reachable only through
-// publishApprovedPost below, which sets it exclusively after a real Meta
-// publish succeeds. Directly flipping status to "posted" (as this action
+// publishSelectedPlatformsAction below (Instagram ticked), which sets it
+// exclusively after a real Meta publish succeeds. Directly flipping status to "posted" (as this action
 // used to allow) would let a post appear published in the UI without ever
 // having actually been sent to Instagram.
 type AllowedStatus = "approved";
@@ -81,44 +84,9 @@ export async function updatePostStatus(
   return { error: null };
 }
 
-// Called via Server Action form binding: publishApprovedPost.bind(null,
-// postId) — same pattern as updatePostStatus above. Thin wrapper only: auth
-// extraction and revalidatePath live here; every eligibility/credential/
-// publish decision is made by publishGeneratedPost (a plain, Supabase-
-// client-driven function, testable without any Next.js Server Action
-// machinery). The authenticated user's own id — never a client-supplied
-// value — is the only identity passed through.
-export async function publishApprovedPost(
-  postId: string,
-  _prevState: StatusActionState,
-  _formData: FormData,
-): Promise<StatusActionState> {
-  if (typeof postId !== "string" || !postId) {
-    return { error: "Geçersiz gönderi." };
-  }
-
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { error: "Bu işlem için giriş yapmanız gerekiyor." };
-  }
-
-  const result = await publishGeneratedPost(supabase, user.id, postId);
-  if (!result.success) {
-    return { error: result.error };
-  }
-
-  revalidatePath("/dashboard");
-  return { error: null };
-}
-
 // ===== Facebook Page (Facebook Login for Business) =====
-// Same thin-wrapper pattern as publishApprovedPost: session user id only,
-// every decision inside the lib functions. Facebook publishing is its own
-// explicit action — approving a post never publishes it to Facebook.
+// Thin wrappers: session user id only (never client-supplied), every
+// decision inside the lib functions. Approving a post never publishes it.
 
 async function sessionUserId(): Promise<{ supabase: Awaited<ReturnType<typeof createClient>>; userId: string | null }> {
   const supabase = await createClient();
@@ -126,15 +94,6 @@ async function sessionUserId(): Promise<{ supabase: Awaited<ReturnType<typeof cr
     data: { user },
   } = await supabase.auth.getUser();
   return { supabase, userId: user?.id ?? null };
-}
-
-export async function publishToFacebookAction(postId: string, _prevState: StatusActionState, _formData: FormData): Promise<StatusActionState> {
-  if (typeof postId !== "string" || !postId) return { error: "Geçersiz gönderi." };
-  const { supabase, userId } = await sessionUserId();
-  if (!userId) return { error: "Bu işlem için giriş yapmanız gerekiyor." };
-  const result = await publishGeneratedPostToFacebook(supabase, userId, postId);
-  revalidatePath("/dashboard");
-  return { error: result.success ? null : result.error };
 }
 
 export async function runFacebookCheckAction(_prevState: StatusActionState, _formData: FormData): Promise<StatusActionState> {
@@ -152,4 +111,21 @@ export async function selectFacebookPageAction(accountId: string, _prevState: St
   const ok = await selectFacebookPage(supabase, userId, accountId);
   revalidatePath("/dashboard");
   return { error: ok ? null : "Sayfa seçilemedi. Lütfen tekrar deneyin." };
+}
+
+export type PublishPanelState = { error: string | null; results: PlatformOutcome[] };
+
+// "Seçili Platformlarda Yayınla": publishes ONLY the platforms ticked in
+// the form (no defaults, no connected-account inference). Validation,
+// approval gate and per-platform independence live in
+// publishToSelectedPlatforms.
+export async function publishSelectedPlatformsAction(postId: string, _prevState: PublishPanelState, formData: FormData): Promise<PublishPanelState> {
+  if (typeof postId !== "string" || !postId) return { error: "Geçersiz gönderi.", results: [] };
+  const platforms = parseSelectedPlatforms(formData.getAll("platform"));
+  if (!platforms) return { error: "En az bir geçerli platform seçin.", results: [] };
+  const { supabase, userId } = await sessionUserId();
+  if (!userId) return { error: "Bu işlem için giriş yapmanız gerekiyor.", results: [] };
+  const result = await publishToSelectedPlatforms(supabase, userId, postId, platforms);
+  revalidatePath("/dashboard");
+  return result;
 }

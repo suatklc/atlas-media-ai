@@ -69,7 +69,9 @@ export default async function SocialAccounts({ connectionStatus, facebookStatus 
         <p className="mt-4 text-sm text-zinc-400">Bağlı hesap yok.</p>
       ) : (
         <ul className="mt-4 space-y-2">
-          {accounts.map((account) => (
+          {/* Facebook Pages are shown once, in FacebookPageBlock below —
+              listing them here too rendered the same Page twice. */}
+          {accounts.filter((account) => account.platform !== "facebook").map((account) => (
             <li
               key={account.id}
               className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-3"
@@ -160,7 +162,11 @@ function FacebookPageBlock({ accounts, status }: { accounts: ConnectedAccountSum
           {pages.map((page) => (
             <li key={page.id} className="flex items-center justify-between gap-2 text-sm text-zinc-300">
               <span>{page.externalAccountName ?? page.externalAccountId}</span>
-              <FacebookSelectPageButton accountId={page.id} />
+              {page.hasCredential ? (
+                <FacebookSelectPageButton accountId={page.id} />
+              ) : (
+                <span className="text-xs text-amber-400">Kimlik bilgisi eksik — yeniden bağlayın</span>
+              )}
             </li>
           ))}
         </ul>

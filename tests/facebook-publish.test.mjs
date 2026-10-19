@@ -542,11 +542,15 @@ test("Facebook connect: separate route + state cookie scoped to /api/facebook (n
   assert.equal(state.oauthStateCookieOptions("/api/facebook").path, "/api/facebook");
 });
 
-test("dashboard: Facebook publishing is its own explicit button; approval (StatusAction) never calls it", () => {
+test("dashboard: publishing is one explicit, selection-driven step; approval (StatusAction) never publishes", () => {
   const status = fs.readFileSync(path.join(projectRoot, "src/components/dashboard/StatusAction.tsx"), "utf8");
-  assert.doesNotMatch(status, /Facebook/);
-  const actions = fs.readFileSync(path.join(projectRoot, "src/components/dashboard/FacebookActions.tsx"), "utf8");
-  assert.match(actions, /Facebook'ta Paylaş/);
-  const history = fs.readFileSync(path.join(projectRoot, "src/components/dashboard/GenerationHistory.tsx"), "utf8");
-  assert.match(history, /post\.status !== "approved" && post\.status !== "posted"/);
+  assert.doesNotMatch(status, /publishSelectedPlatformsAction|publishApprovedPost|Facebook'ta Paylaş/);
+  assert.ok(status.includes('status === "draft" && ('), "only drafts get a button (Onayla)");
+  const panel = fs.readFileSync(path.join(projectRoot, "src/components/dashboard/PublishPanel.tsx"), "utf8");
+  assert.ok(panel.includes("useState<Platform[]>([])"), "nothing pre-selected");
+  assert.match(panel, /Seçili Platformlarda Yayınla/);
+  assert.ok(panel.includes("disabled={isPending || selected.length === 0}"), "cannot submit with no platform ticked");
+  const actions = fs.readFileSync(path.join(projectRoot, "src/app/dashboard/actions.ts"), "utf8");
+  assert.ok(actions.includes('parseSelectedPlatforms(formData.getAll("platform"))'), "platforms come only from the ticked boxes");
+  assert.doesNotMatch(actions, /export async function publishApprovedPost|export async function publishToFacebookAction/, "no second publish path");
 });

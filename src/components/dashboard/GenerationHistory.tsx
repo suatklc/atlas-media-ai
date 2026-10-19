@@ -6,11 +6,10 @@ import { isContentPackage, type ContentPackage } from "@/lib/ai/content/contentP
 import { PLATFORM_CONFIGS, resolvePlatformFromMetadata } from "@/lib/ai/platform/config";
 import { listConnectedMetaAccounts } from "@/lib/publishing/connections/query";
 import type { ConnectedAccountSummary } from "@/lib/publishing/connections/types";
-import { readFacebookPublishState, selectedFacebookPage } from "@/lib/publishing/publishFacebookPost";
-import { resolveCarouselImageUrls } from "@/lib/publishing/publishGeneratedPost";
+import { readFacebookPublishState, requireFacebookSlides, selectedFacebookPage } from "@/lib/publishing/publishFacebookPost";
 import { resolveFacebookText } from "@/lib/ai/content/facebookText";
 import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "@/lib/ai/context/businessProfile";
-import { FacebookPublishButton } from "./FacebookActions";
+import PublishPanel, { type PlatformPanelInfo } from "./PublishPanel";
 
 type GeneratedPost = {
   id: string;
@@ -50,6 +49,7 @@ function editableDraft(post: GeneratedPost): { contentPackage: ContentPackage; i
 export default async function GenerationHistory() {
   let posts: GeneratedPost[] | null = null;
   let facebookPage: ConnectedAccountSummary | undefined;
+  let instagramAccount: ConnectedAccountSummary | undefined;
   let loadError = false;
 
   try {
@@ -72,7 +72,9 @@ export default async function GenerationHistory() {
       } else {
         posts = data;
       }
-      facebookPage = selectedFacebookPage(await listConnectedMetaAccounts(supabase, user.id));
+      const accounts = await listConnectedMetaAccounts(supabase, user.id);
+      facebookPage = selectedFacebookPage(accounts);
+      instagramAccount = accounts.find((account) => account.platform === "instagram" && account.hasCredential);
     }
   } catch (error) {
     console.error("Generation history exception:", error);
@@ -132,7 +134,7 @@ export default async function GenerationHistory() {
                     facebookText={resolveFacebookText(post.metadata, post.content, ATLAS_DEFAULT_BUSINESS_PROFILE.geography.primary)}
                   />
                 )}
-                <FacebookSection post={post} page={facebookPage} />
+                <PostPublishPanel post={post} instagram={instagramAccount} facebook={facebookPage} />
                 <ExportActions postId={post.id} content={post.content} finalImageUrl={post.final_image_url} />
               </div>
             </div>
@@ -144,37 +146,47 @@ export default async function GenerationHistory() {
   );
 }
 
-// Facebook Page publishing for an approved post — shown only once a Page
-// is connected and selected. Approval alone never publishes: Suat sees the
-// exact Facebook text and presses "Facebook'ta Paylaş" explicitly. The
-// result is tracked separately from the Instagram status above.
-function FacebookSection({ post, page }: { post: GeneratedPost; page: ConnectedAccountSummary | undefined }) {
-  if (!page || (post.status !== "approved" && post.status !== "posted")) return null;
-  const state = readFacebookPublishState(post.metadata);
-  if (state?.state === "published") {
-    return <p className="mt-2 text-xs font-medium text-emerald-400">Facebook&apos;ta paylaşıldı</p>;
-  }
-  const carousel = resolveCarouselImageUrls(post.metadata);
-  const imageCount = Array.isArray(carousel) ? carousel.length : 1;
-  const check = page.multiPhotoCheck;
-  const disabledReason =
-    imageCount > 1 && !(check?.ok && check.count >= imageCount)
-      ? "Önce Bağlı Hesaplar'dan Facebook çoklu görsel testini çalıştırın."
-      : undefined;
-  return (
-    <details className="mt-2 rounded-lg border border-zinc-800 p-2">
-      <summary className="cursor-pointer text-xs font-medium text-zinc-300">
-        Facebook · {page.externalAccountName ?? page.externalAccountId}
-        {state?.state === "failed" ? " · son deneme başarısız" : ""}
-      </summary>
-      <p className="mt-2 whitespace-pre-line text-[11px] text-zinc-400">
-        {resolveFacebookText(post.metadata, post.content, ATLAS_DEFAULT_BUSINESS_PROFILE.geography.primary)}
-      </p>
-      <p className="mt-1 text-[11px] text-zinc-500">{imageCount} görsel, sırasıyla</p>
-      {state?.state === "failed" && state.error && <p className="mt-1 text-[11px] text-red-400">{state.error}</p>}
-      <div className="mt-2">
-        <FacebookPublishButton postId={post.id} disabledReason={disabledReason} />
-      </div>
-    </details>
-  );
+// The explicit publish step for an approved post: per-platform state from
+// the row (Instagram = generated_posts.status "posted"; Facebook =
+// metadata.publishResults.facebook), what each platform will publish, and
+// which platforms can be ticked right now. Approving alone never publishes.
+function PostPublishPanel({
+  post,
+  instagram,
+  facebook,
+}: {
+  post: GeneratedPost;
+  instagram: ConnectedAccountSummary | undefined;
+  facebook: ConnectedAccountSummary | undefined;
+}) {
+  if (post.status !== "approved" && post.status !== "posted") return null;
+
+  const instagramPublished = post.status === "posted";
+  const instagramInfo: PlatformPanelInfo = {
+    status: instagramPublished ? "published" : "pending",
+    unavailable: instagramPublished ? "Instagram'da paylaşıldı." : !instagram ? "Instagram hesabı bağlı değil." : null,
+    preview: post.content,
+    account: instagram?.externalAccountName ?? undefined,
+  };
+
+  const facebookState = readFacebookPublishState(post.metadata);
+  const facebookPublished = facebookState?.state === "published";
+  const check = facebook?.multiPhotoCheck;
+  const facebookInfo: PlatformPanelInfo = {
+    status: facebookPublished ? "published" : facebookState?.state === "failed" ? "failed" : "pending",
+    failureMessage: facebookState?.state === "failed" ? facebookState.error : undefined,
+    unavailable: facebookPublished
+      ? "Facebook'ta paylaşıldı."
+      : !facebook
+        ? "Facebook Sayfası bağlı değil."
+        : !requireFacebookSlides(post.metadata)
+          ? "Facebook için 5 carousel görselinin tamamı gerekli."
+          : !(check?.ok && check.count >= 5)
+            ? "Önce Bağlı Hesaplar'dan Facebook çoklu görsel testini çalıştırın."
+            : null,
+    preview: resolveFacebookText(post.metadata, post.content, ATLAS_DEFAULT_BUSINESS_PROFILE.geography.primary),
+    account: facebook ? (facebook.externalAccountName ?? facebook.externalAccountId) : undefined,
+  };
+
+  return <PublishPanel postId={post.id} platforms={{ instagram: instagramInfo, facebook: facebookInfo }} />;
 }

@@ -2,7 +2,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { publishPost } from "./router";
 import { listConnectedMetaAccounts } from "./connections/query";
 import { getConnectedAccountCredential } from "./connections/credentials";
-import { resolveCarouselImageUrls } from "./publishGeneratedPost";
 import { resolveFacebookText } from "../ai/content/facebookText";
 import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "../ai/context/businessProfile";
 import type { ConnectedAccountSummary } from "./connections/types";
@@ -22,6 +21,30 @@ import type { ConnectedAccountSummary } from "./connections/types";
 //   never silently reduced to fewer images.
 
 export const PUBLISHING_LOCK_MS = 5 * 60 * 1000;
+export const FACEBOOK_REQUIRED_SLIDES = 5;
+
+// Facebook V1 publishes exactly the approved 5-slide carousel: slides 1..5,
+// each a public https URL, returned in slide order. Anything else (a
+// missing/duplicate slide, a single-image post) is refused BEFORE any Meta
+// call — never a cover-only or reduced post.
+export function requireFacebookSlides(metadata: unknown): string[] | null {
+  const meta = metadataObject(metadata);
+  if (meta.outputMode !== "carousel" || !Array.isArray(meta.carouselImages)) return null;
+  const bySlide = new Map<number, string>();
+  for (const item of meta.carouselImages as Array<{ slide?: unknown; imageUrl?: unknown }>) {
+    if (!item || typeof item.slide !== "number" || typeof item.imageUrl !== "string" || !item.imageUrl.startsWith("https://")) return null;
+    if (bySlide.has(item.slide)) return null;
+    bySlide.set(item.slide, item.imageUrl);
+  }
+  if (bySlide.size !== FACEBOOK_REQUIRED_SLIDES) return null;
+  const ordered: string[] = [];
+  for (let slide = 1; slide <= FACEBOOK_REQUIRED_SLIDES; slide += 1) {
+    const url = bySlide.get(slide);
+    if (!url) return null;
+    ordered.push(url);
+  }
+  return ordered;
+}
 
 export type FacebookPublishState = { state: "publishing" | "published" | "failed"; at: string; postId?: string; error?: string };
 
@@ -83,17 +106,17 @@ export async function publishGeneratedPostToFacebook(
     return { success: false, error: "Facebook paylaşımı zaten sürüyor. Lütfen birkaç dakika sonra tekrar kontrol edin." };
   }
 
-  const carousel = resolveCarouselImageUrls(post.metadata);
-  if (carousel === "invalid") return { success: false, error: "Carousel görselleri eksik veya geçersiz; gönderi paylaşılmadı." };
-  const imageCount = carousel ? carousel.length : 1;
-  if (!post.final_image_url) return { success: false, error: "Görsel URL'si bulunamadı." };
+  const slides = requireFacebookSlides(post.metadata);
+  if (!slides) {
+    return { success: false, error: "Facebook için 5 carousel görselinin tamamı (1→5) gerekli; gönderi paylaşılmadı." };
+  }
 
   const page = selectedFacebookPage(await listConnectedMetaAccounts(supabase, userId));
   if (!page) return { success: false, error: "Bağlı ve seçili bir Facebook Sayfası bulunamadı." };
-  if (imageCount > 1 && !(page.multiPhotoCheck?.ok && page.multiPhotoCheck.count >= imageCount)) {
+  if (!(page.multiPhotoCheck?.ok && page.multiPhotoCheck.count >= slides.length)) {
     return {
       success: false,
-      error: `Facebook ${imageCount} görselli gönderi testi henüz doğrulanmadı. Bağlı Hesaplar'dan testi çalıştırın.`,
+      error: `Facebook ${slides.length} görselli gönderi testi henüz doğrulanmadı. Bağlı Hesaplar'dan testi çalıştırın.`,
     };
   }
 
@@ -108,8 +131,8 @@ export async function publishGeneratedPostToFacebook(
   const result = await publishPost({
     platform: "facebook",
     caption: message,
-    imageUrl: post.final_image_url,
-    ...(carousel ? { carouselImageUrls: carousel } : {}),
+    imageUrl: slides[0],
+    carouselImageUrls: slides,
     externalAccountId: page.externalAccountId,
     accessToken: pageToken,
   });
