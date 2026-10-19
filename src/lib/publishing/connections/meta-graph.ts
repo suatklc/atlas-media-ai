@@ -17,9 +17,38 @@ import { META_GRAPH_API_VERSION } from "./meta-oauth";
 // error message; only Meta's own structured error-response fields
 // (type/code/message) are logged.
 
-export class MetaGraphApiError extends Error {}
+// Carries Meta's own structured error fields (never a token or request
+// body) so the publishing provider can log exactly which stage failed and
+// how — a real production publish failure was undiagnosable because only a
+// generic message survived.
+export type MetaGraphErrorDetails = {
+  stage: string;
+  httpStatus?: number;
+  code?: string;
+  subcode?: string;
+  type?: string;
+  message?: string;
+  fbtraceId?: string;
+};
 
-type GraphErrorBody = { error?: { message?: unknown; type?: unknown; code?: unknown } };
+export class MetaGraphApiError extends Error {
+  details?: MetaGraphErrorDetails;
+  constructor(message: string, details?: MetaGraphErrorDetails) {
+    super(message);
+    this.details = details;
+  }
+}
+
+type GraphErrorBody = {
+  error?: {
+    message?: unknown;
+    type?: unknown;
+    code?: unknown;
+    error_subcode?: unknown;
+    error_user_msg?: unknown;
+    fbtrace_id?: unknown;
+  };
+};
 
 function isGraphErrorBody(value: unknown): value is GraphErrorBody {
   return typeof value === "object" && value !== null;
@@ -47,15 +76,30 @@ function sanitizeErrorField(value: unknown): string {
 // file is now one plain string, containing only the exchange stage, HTTP
 // status, and Meta's own type/code/message fields — never a token, code,
 // secret, or raw response body.
-function logGraphError(context: string, status: number, body: unknown): void {
-  if (isGraphErrorBody(body) && body.error) {
-    const { message, type, code } = body.error;
-    console.error(
-      `Meta Graph API error — stage=${context} status=${status} type=${sanitizeErrorField(type)} code=${sanitizeErrorField(code)} message=${sanitizeErrorField(message)}`,
-    );
-  } else {
-    console.error(`Meta Graph API error — stage=${context} status=${status}: no structured error body.`);
+function graphErrorDetails(context: string, status: number, body: unknown): MetaGraphErrorDetails {
+  if (!isGraphErrorBody(body) || !body.error) return { stage: context, httpStatus: status };
+  const { message, type, code, error_subcode, error_user_msg, fbtrace_id } = body.error;
+  return {
+    stage: context,
+    httpStatus: status,
+    code: sanitizeErrorField(code),
+    subcode: sanitizeErrorField(error_subcode),
+    type: sanitizeErrorField(type),
+    // Meta's user-facing message is often the more specific one
+    // (e.g. "The media is not ready for publishing").
+    message: `${sanitizeErrorField(message)}${error_user_msg !== undefined ? ` | ${sanitizeErrorField(error_user_msg)}` : ""}`,
+    fbtraceId: sanitizeErrorField(fbtrace_id),
+  };
+}
+
+function logGraphError(details: MetaGraphErrorDetails): void {
+  if (details.code === undefined) {
+    console.error(`Meta Graph API error — stage=${details.stage} status=${details.httpStatus}: no structured error body.`);
+    return;
   }
+  console.error(
+    `Meta Graph API error — stage=${details.stage} status=${details.httpStatus} type=${details.type} code=${details.code} subcode=${details.subcode} fbtrace_id=${details.fbtraceId} message=${details.message}`,
+  );
 }
 
 async function handleGraphResponse<T>(response: Response, context: string): Promise<T> {
@@ -71,12 +115,16 @@ async function handleGraphResponse<T>(response: Response, context: string): Prom
     // invisible to log search. The body's actual content is never logged
     // (it may not even be safe/parseable text) — only that parsing failed.
     console.error(`Meta Graph API error — stage=${context} status=${response.status}: non-JSON error response.`);
-    throw new MetaGraphApiError(`${context}: Meta API yanıtı ayrıştırılamadı.`);
+    throw new MetaGraphApiError(`${context}: Meta API yanıtı ayrıştırılamadı.`, {
+      stage: context,
+      httpStatus: response.status,
+    });
   }
 
   if (!response.ok) {
-    logGraphError(context, response.status, body);
-    throw new MetaGraphApiError(`${context}: Meta API isteği başarısız oldu.`);
+    const details = graphErrorDetails(context, response.status, body);
+    logGraphError(details);
+    throw new MetaGraphApiError(`${context}: Meta API isteği başarısız oldu.`, details);
   }
 
   return body as T;
@@ -88,7 +136,7 @@ async function graphGet<T>(url: URL, context: string): Promise<T> {
     response = await fetch(url, { method: "GET" });
   } catch {
     console.error(`Meta Graph API network error (${context}).`);
-    throw new MetaGraphApiError(`${context}: Meta API isteğine ulaşılamadı.`);
+    throw new MetaGraphApiError(`${context}: Meta API isteğine ulaşılamadı.`, { stage: context });
   }
   return handleGraphResponse<T>(response, context);
 }
@@ -99,7 +147,7 @@ async function graphPostForm<T>(url: string, form: FormData, context: string): P
     response = await fetch(url, { method: "POST", body: form });
   } catch {
     console.error(`Meta Graph API network error (${context}).`);
-    throw new MetaGraphApiError(`${context}: Meta API isteğine ulaşılamadı.`);
+    throw new MetaGraphApiError(`${context}: Meta API isteğine ulaşılamadı.`, { stage: context });
   }
   return handleGraphResponse<T>(response, context);
 }
@@ -114,7 +162,7 @@ async function graphPostForm<T>(url: string, form: FormData, context: string): P
 // documented — never logged, never part of any thrown error message.
 async function graphPostJson<T>(
   url: string,
-  jsonBody: Record<string, string>,
+  jsonBody: Record<string, string | boolean>,
   accessToken: string,
   context: string,
 ): Promise<T> {
@@ -130,7 +178,19 @@ async function graphPostJson<T>(
     });
   } catch {
     console.error(`Meta Graph API network error (${context}).`);
-    throw new MetaGraphApiError(`${context}: Meta API isteğine ulaşılamadı.`);
+    throw new MetaGraphApiError(`${context}: Meta API isteğine ulaşılamadı.`, { stage: context });
+  }
+  return handleGraphResponse<T>(response, context);
+}
+
+// Bearer-header GET (container status) — the token never goes in the URL.
+async function graphGetBearer<T>(url: string, accessToken: string, context: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, { method: "GET", headers: { Authorization: `Bearer ${accessToken}` } });
+  } catch {
+    console.error(`Meta Graph API network error (${context}).`);
+    throw new MetaGraphApiError(`${context}: Meta API isteğine ulaşılamadı.`, { stage: context });
   }
   return handleGraphResponse<T>(response, context);
 }
@@ -315,7 +375,10 @@ export type CreateInstagramMediaContainerInput = {
   igUserId: string;
   accessToken: string;
   imageUrl: string;
-  caption: string;
+  // Omitted for a carousel child — the caption belongs on the carousel
+  // container, per Meta's documented carousel flow.
+  caption?: string;
+  isCarouselItem?: boolean;
 };
 
 type MediaContainerResponse = { id?: unknown };
@@ -332,17 +395,85 @@ export async function createInstagramMediaContainer(
   input: CreateInstagramMediaContainerInput,
 ): Promise<string> {
   const url = `https://graph.instagram.com/${META_GRAPH_API_VERSION}/${encodeURIComponent(input.igUserId)}/media`;
-  const body = await graphPostJson<MediaContainerResponse>(
-    url,
-    { image_url: input.imageUrl, caption: input.caption },
-    input.accessToken,
-    "medya konteyneri oluşturma",
-  );
+  const stage = input.isCarouselItem ? "carousel alt konteyneri oluşturma" : "medya konteyneri oluşturma";
+  const jsonBody: Record<string, string | boolean> = { image_url: input.imageUrl };
+  if (input.caption !== undefined) jsonBody.caption = input.caption;
+  if (input.isCarouselItem) jsonBody.is_carousel_item = true;
+  const body = await graphPostJson<MediaContainerResponse>(url, jsonBody, input.accessToken, stage);
 
   if (typeof body.id !== "string" || body.id.length === 0) {
-    throw new MetaGraphApiError("medya konteyneri oluşturma: Meta API beklenen konteyner kimliğini döndürmedi.");
+    throw new MetaGraphApiError(`${stage}: Meta API beklenen konteyner kimliğini döndürmedi.`, { stage });
   }
   return body.id;
+}
+
+export type CreateInstagramCarouselContainerInput = {
+  igUserId: string;
+  accessToken: string;
+  childContainerIds: string[];
+  caption: string;
+};
+
+// POST https://graph.instagram.com/{version}/{ig-user-id}/media with
+// media_type=CAROUSEL, children = comma-separated child container ids (in
+// slide order, max 10) and the post caption — Meta's documented carousel
+// step 2 (step 1 = one is_carousel_item container per image).
+export async function createInstagramCarouselContainer(input: CreateInstagramCarouselContainerInput): Promise<string> {
+  const stage = "carousel konteyneri oluşturma";
+  const url = `https://graph.instagram.com/${META_GRAPH_API_VERSION}/${encodeURIComponent(input.igUserId)}/media`;
+  const body = await graphPostJson<MediaContainerResponse>(
+    url,
+    { media_type: "CAROUSEL", children: input.childContainerIds.join(","), caption: input.caption },
+    input.accessToken,
+    stage,
+  );
+  if (typeof body.id !== "string" || body.id.length === 0) {
+    throw new MetaGraphApiError(`${stage}: Meta API beklenen konteyner kimliğini döndürmedi.`, { stage });
+  }
+  return body.id;
+}
+
+export type WaitForContainerInput = {
+  containerId: string;
+  accessToken: string;
+  // Bounded: a serverless request can't wait Meta's recommended 5 minutes.
+  timeoutMs?: number;
+  intervalMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+type ContainerStatusResponse = { status_code?: unknown; status?: unknown };
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// GET https://graph.instagram.com/{version}/{container-id}?fields=status_code,status
+// Meta processes a container asynchronously after creation; it is only
+// publishable once status_code is FINISHED. Measured live (2026-10-19): a
+// PNG container is IN_PROGRESS right after creation and FINISHED ~2.5 s
+// later — the old flow called media_publish without ever checking.
+// ERROR / EXPIRED fail immediately; still IN_PROGRESS at the deadline fails
+// too — an unready container is never published.
+export async function waitForInstagramContainerReady(input: WaitForContainerInput): Promise<void> {
+  const stage = "konteyner hazır olma kontrolü";
+  const timeoutMs = input.timeoutMs ?? 20_000;
+  const intervalMs = input.intervalMs ?? 2_000;
+  const sleep = input.sleep ?? defaultSleep;
+  const url = `https://graph.instagram.com/${META_GRAPH_API_VERSION}/${encodeURIComponent(input.containerId)}?fields=status_code,status`;
+
+  for (let waited = 0; ; waited += intervalMs) {
+    const body = await graphGetBearer<ContainerStatusResponse>(url, input.accessToken, stage);
+    const statusCode = sanitizeErrorField(body.status_code);
+    if (statusCode === "FINISHED") return;
+    if (statusCode !== "IN_PROGRESS" || waited >= timeoutMs) {
+      const details: MetaGraphErrorDetails = {
+        stage,
+        message: `status_code=${statusCode} status=${sanitizeErrorField(body.status)}${statusCode === "IN_PROGRESS" ? ` (still processing after ${timeoutMs} ms)` : ""}`,
+      };
+      console.error(`Meta Graph API container not ready — stage=${stage} ${details.message}`);
+      throw new MetaGraphApiError(`${stage}: medya konteyneri yayınlamaya hazır değil.`, details);
+    }
+    await sleep(intervalMs);
+  }
 }
 
 export type PublishInstagramMediaContainerInput = {
@@ -367,7 +498,7 @@ export async function publishInstagramMediaContainer(
   );
 
   if (typeof body.id !== "string" || body.id.length === 0) {
-    throw new MetaGraphApiError("medya yayınlama: Meta API beklenen medya kimliğini döndürmedi.");
+    throw new MetaGraphApiError("medya yayınlama: Meta API beklenen medya kimliğini döndürmedi.", { stage: "medya yayınlama" });
   }
   return body.id;
 }

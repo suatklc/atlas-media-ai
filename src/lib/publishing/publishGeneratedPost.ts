@@ -7,6 +7,37 @@ import { resolvePlatformFromMetadata } from "../ai/platform/config";
 
 export type PublishGeneratedPostResult = { success: true } | { success: false; error: string };
 
+const MIN_CAROUSEL_ITEMS = 2;
+const MAX_CAROUSEL_ITEMS = 10;
+
+// A carousel row (metadata.outputMode === "carousel") stores every slide in
+// metadata.carouselImages ([{ slide, imageUrl }], see generate-visual and
+// /api/drafts/edit). Publishing must send ALL of them in slide order — the
+// previous flow sent only final_image_url (the cover) as a single image,
+// so an approved 5-slide carousel could never be published as approved.
+// null = not a carousel (single image); "invalid" = a carousel whose slides
+// can't all be published, which must fail rather than post the cover alone.
+function resolveCarouselImageUrls(metadata: unknown): string[] | null | "invalid" {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const { outputMode, carouselImages } = metadata as { outputMode?: unknown; carouselImages?: unknown };
+  if (outputMode !== "carousel") return null;
+  if (!Array.isArray(carouselImages)) return "invalid";
+  const slides = carouselImages
+    .filter(
+      (item): item is { slide: number; imageUrl: string } =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        typeof (item as { slide?: unknown }).slide === "number" &&
+        typeof (item as { imageUrl?: unknown }).imageUrl === "string" &&
+        (item as { imageUrl: string }).imageUrl.startsWith("https://"),
+    )
+    .sort((a, b) => a.slide - b.slide);
+  if (slides.length !== carouselImages.length || slides.length < MIN_CAROUSEL_ITEMS || slides.length > MAX_CAROUSEL_ITEMS) {
+    return "invalid";
+  }
+  return slides.map((item) => item.imageUrl);
+}
+
 // The single sanctioned entry point for turning an "approved" generated_posts
 // row into a real, published Instagram post. Server-only. Pulled out of the
 // "use server" action in dashboard/actions.ts (which only handles auth +
@@ -68,10 +99,16 @@ export async function publishGeneratedPost(
     return { success: false, error: "Kimlik bilgisi alınamadı." };
   }
 
+  const carousel = resolveCarouselImageUrls(post.metadata);
+  if (carousel === "invalid") {
+    return { success: false, error: "Carousel görselleri eksik veya geçersiz; gönderi paylaşılmadı." };
+  }
+
   const result = await publishPost({
     platform: eligibility.platform,
     caption: post.content,
     imageUrl: post.final_image_url,
+    ...(carousel ? { carouselImageUrls: carousel } : {}),
     externalAccountId: account.externalAccountId,
     accessToken,
   });

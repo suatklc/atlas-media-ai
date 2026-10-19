@@ -21,6 +21,12 @@ import SocialAccounts from "@/components/dashboard/SocialAccounts";
 // to this one known production account, only reached if neither of the
 // above resolved anything), (4) the previous generic email-prefix
 // fallback, unchanged as the final safety net for any other account.
+// The "Instagram'da Paylaş" server action runs in this route: a carousel
+// publish creates 5 child containers + 1 carousel container and waits for
+// Meta to finish processing each before media_publish (~10-30 s live).
+// 60 s is within every Vercel plan's limit.
+export const maxDuration = 60;
+
 const KNOWN_ACCOUNT_DISPLAY_NAMES: Record<string, string> = {
   "suatklc3625@gmail.com": "Suat Kılıç",
 };

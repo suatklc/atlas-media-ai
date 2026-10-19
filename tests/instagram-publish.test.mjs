@@ -156,6 +156,8 @@ test("providers/meta: publishToMeta succeeds for instagram only after BOTH conta
   const calls = [];
   const metaGraphMock = {
     MetaGraphApiError: class extends Error {},
+    waitForInstagramContainerReady: async () => {},
+    createInstagramCarouselContainer: async () => "carousel-container",
     createInstagramMediaContainer: async (input) => {
       calls.push(["create", input]);
       return "container-abc";
@@ -187,6 +189,8 @@ test("providers/meta: a container-creation failure returns success:false and NEV
   let publishCalled = false;
   const metaGraphMock = {
     MetaGraphApiError: class extends Error {},
+    waitForInstagramContainerReady: async () => {},
+    createInstagramCarouselContainer: async () => "carousel-container",
     createInstagramMediaContainer: async () => {
       throw new metaGraphMock.MetaGraphApiError("boom");
     },
@@ -212,6 +216,8 @@ test("providers/meta: a container-creation failure returns success:false and NEV
 test("providers/meta: a publish-step failure (container created, publish fails) still returns success:false", async () => {
   const metaGraphMock = {
     MetaGraphApiError: class extends Error {},
+    waitForInstagramContainerReady: async () => {},
+    createInstagramCarouselContainer: async () => "carousel-container",
     createInstagramMediaContainer: async () => "container-abc",
     publishInstagramMediaContainer: async () => {
       throw new metaGraphMock.MetaGraphApiError("boom");
@@ -458,4 +464,234 @@ test("publishGeneratedPost: the access token never appears in the returned error
       assert.ok(!containsSecret(result.error), "error message must never contain the access token");
     }
   }
+});
+
+// ===== Real production publish failure (2026-10-19): readiness + carousel =====
+// Live-verified: a freshly created image container is IN_PROGRESS and only
+// becomes FINISHED seconds later; the old flow called media_publish
+// immediately and sent only the cover as a single image.
+
+test("meta-graph: a carousel CHILD container sends is_carousel_item and no caption", async () => {
+  const cc = makeCapturingConsole();
+  const { fetch: mockFetch, calls } = makeSequencedFetch([{ ok: true, body: { id: "child-1" } }]);
+  const metaGraph = loadMetaGraph(mockFetch, cc);
+  const id = await metaGraph.createInstagramMediaContainer({
+    igUserId: "17841400000000000",
+    accessToken: SECRET_ACCESS_TOKEN,
+    imageUrl: SECRET_IMAGE_URL,
+    isCarouselItem: true,
+  });
+  assert.equal(id, "child-1");
+  const body = JSON.parse(calls[0].options.body);
+  assert.equal(body.is_carousel_item, true);
+  assert.equal("caption" in body, false);
+  assert.equal(body.image_url, SECRET_IMAGE_URL);
+});
+
+test("meta-graph: the CAROUSEL container sends media_type, ordered children and the caption", async () => {
+  const cc = makeCapturingConsole();
+  const { fetch: mockFetch, calls } = makeSequencedFetch([{ ok: true, body: { id: "carousel-1" } }]);
+  const metaGraph = loadMetaGraph(mockFetch, cc);
+  const id = await metaGraph.createInstagramCarouselContainer({
+    igUserId: "17841400000000000",
+    accessToken: SECRET_ACCESS_TOKEN,
+    childContainerIds: ["c1", "c2", "c3", "c4", "c5"],
+    caption: "Atlas caption #Zekeriyaköy",
+  });
+  assert.equal(id, "carousel-1");
+  assert.equal(calls[0].url, "https://graph.instagram.com/v25.0/17841400000000000/media");
+  const body = JSON.parse(calls[0].options.body);
+  assert.equal(body.media_type, "CAROUSEL");
+  assert.equal(body.children, "c1,c2,c3,c4,c5");
+  assert.equal(body.caption, "Atlas caption #Zekeriyaköy");
+  assert.equal(calls[0].options.headers.Authorization, `Bearer ${SECRET_ACCESS_TOKEN}`);
+});
+
+test("meta-graph: waitForInstagramContainerReady polls IN_PROGRESS until FINISHED, token only in the header", async () => {
+  const cc = makeCapturingConsole();
+  const { fetch: mockFetch, calls } = makeSequencedFetch([
+    { ok: true, body: { status_code: "IN_PROGRESS" } },
+    { ok: true, body: { status_code: "IN_PROGRESS" } },
+    { ok: true, body: { status_code: "FINISHED" } },
+  ]);
+  const metaGraph = loadMetaGraph(mockFetch, cc);
+  const sleeps = [];
+  await metaGraph.waitForInstagramContainerReady({
+    containerId: "container-123",
+    accessToken: SECRET_ACCESS_TOKEN,
+    sleep: async (ms) => sleeps.push(ms),
+  });
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].url, "https://graph.instagram.com/v25.0/container-123?fields=status_code,status");
+  assert.equal(calls[0].options.headers.Authorization, `Bearer ${SECRET_ACCESS_TOKEN}`);
+  assert.ok(!calls[0].url.includes(SECRET_ACCESS_TOKEN));
+  assert.equal(sleeps.length, 2);
+  assert.equal(cc.calls.length, 0);
+});
+
+test("meta-graph: waitForInstagramContainerReady fails on ERROR/EXPIRED and on a bounded timeout — never treats an unready container as ready", async () => {
+  for (const statusCode of ["ERROR", "EXPIRED"]) {
+    const cc = makeCapturingConsole();
+    const { fetch: mockFetch } = makeSequencedFetch([{ ok: true, body: { status_code: statusCode, status: "Error: 2207052" } }]);
+    const metaGraph = loadMetaGraph(mockFetch, cc);
+    await assert.rejects(
+      () => metaGraph.waitForInstagramContainerReady({ containerId: "c", accessToken: SECRET_ACCESS_TOKEN, sleep: async () => {} }),
+      (error) => error instanceof metaGraph.MetaGraphApiError && error.details.message.includes(statusCode),
+    );
+    assert.match(cc.calls[0][0], new RegExp(`status_code=${statusCode}`));
+  }
+  const cc = makeCapturingConsole();
+  const { fetch: mockFetch, calls } = makeSequencedFetch(Array.from({ length: 10 }, () => ({ ok: true, body: { status_code: "IN_PROGRESS" } })));
+  const metaGraph = loadMetaGraph(mockFetch, cc);
+  await assert.rejects(() =>
+    metaGraph.waitForInstagramContainerReady({ containerId: "c", accessToken: SECRET_ACCESS_TOKEN, timeoutMs: 4000, intervalMs: 2000, sleep: async () => {} }),
+  );
+  assert.equal(calls.length, 3, "0 ms, 2000 ms, 4000 ms — then stops");
+});
+
+test("meta-graph: a Meta error logs stage, HTTP status, code, subcode, type, message and fbtrace_id — never the token", async () => {
+  const cc = makeCapturingConsole();
+  const { fetch: mockFetch } = makeSequencedFetch([
+    {
+      ok: false,
+      status: 400,
+      body: { error: { message: "Media ID is not available", type: "OAuthException", code: 9007, error_subcode: 2207027, error_user_msg: "The media is not ready for publishing, please wait for a moment", fbtrace_id: "AbCdEf123" } },
+    },
+  ]);
+  const metaGraph = loadMetaGraph(mockFetch, cc);
+  await assert.rejects(
+    () => metaGraph.publishInstagramMediaContainer({ igUserId: "1784", accessToken: SECRET_ACCESS_TOKEN, containerId: "c" }),
+    (error) => {
+      assert.equal(error.details.stage, "medya yayınlama");
+      assert.equal(error.details.code, "9007");
+      assert.equal(error.details.subcode, "2207027");
+      assert.equal(error.details.fbtraceId, "AbCdEf123");
+      assert.equal(error.details.httpStatus, 400);
+      return true;
+    },
+  );
+  const line = cc.calls[0][0];
+  for (const part of ["stage=medya yayınlama", "status=400", "code=9007", "subcode=2207027", "type=OAuthException", "fbtrace_id=AbCdEf123", "not ready for publishing"]) {
+    assert.ok(line.includes(part), `log line must include ${part}`);
+  }
+  assert.ok(!containsSecret(cc.calls));
+});
+
+test("providers/meta: a CAROUSEL request creates 5 children in slide order, waits for each, creates the CAROUSEL container with the caption, waits, then publishes it", async () => {
+  const log = [];
+  const metaGraphMock = {
+    MetaGraphApiError: class extends Error {},
+    createInstagramMediaContainer: async (input) => {
+      log.push(["child", input.imageUrl, input.isCarouselItem, input.caption]);
+      return `child-${input.imageUrl.slice(-5, -4)}`;
+    },
+    waitForInstagramContainerReady: async (input) => log.push(["wait", input.containerId]),
+    createInstagramCarouselContainer: async (input) => {
+      log.push(["carousel", input.childContainerIds.join(","), input.caption]);
+      return "carousel-1";
+    },
+    publishInstagramMediaContainer: async (input) => {
+      log.push(["publish", input.containerId]);
+      return "media-1";
+    },
+  };
+  const provider = loadMetaProvider(metaGraphMock);
+  const urls = [1, 2, 3, 4, 5].map((n) => `https://proj.supabase.co/storage/v1/object/public/generated-visuals/u/slide-${n}.png`);
+  const result = await provider.publishToMeta({
+    platform: "instagram",
+    caption: "Carousel caption",
+    imageUrl: urls[0],
+    carouselImageUrls: urls,
+    externalAccountId: "1784",
+    accessToken: SECRET_ACCESS_TOKEN,
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.externalPostId, "media-1");
+  const children = log.filter((entry) => entry[0] === "child");
+  assert.equal(children.length, 5);
+  assert.ok(children.every((entry) => entry[2] === true && entry[3] === undefined), "children: is_carousel_item, no caption");
+  const carousel = log.find((entry) => entry[0] === "carousel");
+  assert.equal(carousel[1], "child-1,child-2,child-3,child-4,child-5");
+  assert.equal(carousel[2], "Carousel caption");
+  const waits = log.filter((entry) => entry[0] === "wait").map((entry) => entry[1]);
+  assert.deepEqual(waits, ["child-1", "child-2", "child-3", "child-4", "child-5", "carousel-1"]);
+  assert.deepEqual(log.at(-1), ["publish", "carousel-1"]);
+  assert.ok(log.findIndex((e) => e[0] === "publish") > log.findLastIndex((e) => e[0] === "wait"), "publish only after the last readiness check");
+});
+
+test("providers/meta: a SINGLE image waits for readiness before media_publish", async () => {
+  const log = [];
+  const metaGraphMock = {
+    MetaGraphApiError: class extends Error {},
+    createInstagramMediaContainer: async () => (log.push("create"), "c1"),
+    waitForInstagramContainerReady: async () => log.push("wait"),
+    createInstagramCarouselContainer: async () => (log.push("carousel"), "x"),
+    publishInstagramMediaContainer: async () => (log.push("publish"), "m1"),
+  };
+  const provider = loadMetaProvider(metaGraphMock);
+  const result = await provider.publishToMeta({ platform: "instagram", caption: "c", imageUrl: SECRET_IMAGE_URL, externalAccountId: "1", accessToken: SECRET_ACCESS_TOKEN });
+  assert.equal(result.success, true);
+  assert.deepEqual(log, ["create", "wait", "publish"]);
+});
+
+test("providers/meta: a container that never becomes ready is a failure and media_publish is NEVER called", async () => {
+  let published = false;
+  const metaGraphMock = {
+    MetaGraphApiError: class extends Error {},
+    createInstagramMediaContainer: async () => "c1",
+    waitForInstagramContainerReady: async () => {
+      throw new metaGraphMock.MetaGraphApiError("not ready");
+    },
+    createInstagramCarouselContainer: async () => "x",
+    publishInstagramMediaContainer: async () => {
+      published = true;
+      return "m1";
+    },
+  };
+  const provider = loadMetaProvider(metaGraphMock);
+  const result = await provider.publishToMeta({ platform: "instagram", caption: "c", imageUrl: SECRET_IMAGE_URL, carouselImageUrls: [1, 2, 3, 4, 5].map((n) => `https://proj.supabase.co/storage/v1/object/public/generated-visuals/u/slide-${n}.png`), externalAccountId: "1", accessToken: SECRET_ACCESS_TOKEN });
+  assert.equal(result.success, false);
+  assert.equal(published, false);
+});
+
+const APPROVED_ACCOUNT = [{ id: "conn-1", provider: "meta", platform: "instagram", externalAccountId: "1784", externalAccountName: null, tokenExpiresAt: null, hasCredential: true }];
+
+test("publishGeneratedPost: an approved CAROUSEL post sends all slide URLs in slide order (not just the cover)", async () => {
+  const urls = [1, 2, 3, 4, 5].map((n) => `https://proj.supabase.co/storage/v1/object/public/generated-visuals/u/slide-${n}.png`);
+  const shuffled = [3, 0, 4, 1, 2].map((i) => ({ slide: i + 1, imageUrl: urls[i] }));
+  const { mod, supabase, trackers } = loadPublishGeneratedPost({
+    post: { id: "post-1", content: "caption", final_image_url: urls[0], status: "approved", metadata: { platform: "instagram", outputMode: "carousel", carouselImages: shuffled } },
+    connectedAccounts: APPROVED_ACCOUNT,
+  });
+  const result = await mod.publishGeneratedPost(supabase, "user-1", "post-1");
+  assert.equal(result.success, true);
+  assert.equal(trackers.publishPostCalls[0].carouselImageUrls.join(" "), urls.join(" "));
+});
+
+test("publishGeneratedPost: a carousel with missing/invalid slides fails safely — never posts the cover alone, never marks posted", async () => {
+  const urls = [1, 2, 3, 4, 5].map((n) => `https://proj.supabase.co/storage/v1/object/public/generated-visuals/u/slide-${n}.png`);
+  for (const carouselImages of [undefined, [], [{ slide: 1, imageUrl: urls[0] }], [{ slide: 1, imageUrl: "http://insecure/x.png" }, { slide: 2, imageUrl: urls[1] }]]) {
+    const { mod, supabase, trackers } = loadPublishGeneratedPost({
+      post: { id: "post-1", content: "caption", final_image_url: urls[0], status: "approved", metadata: { platform: "instagram", outputMode: "carousel", carouselImages } },
+      connectedAccounts: APPROVED_ACCOUNT,
+    });
+    const result = await mod.publishGeneratedPost(supabase, "user-1", "post-1");
+    assert.equal(result.success, false);
+    assert.equal(trackers.publishPostCalls.length, 0);
+    assert.equal(trackers.updateCalls.length, 0);
+  }
+});
+
+test("publishGeneratedPost: a single-image post sends no carousel URLs", async () => {
+  const { mod, supabase, trackers } = loadPublishGeneratedPost({
+    post: { id: "post-1", content: "caption", final_image_url: SECRET_IMAGE_URL, status: "approved", metadata: { platform: "instagram" } },
+    connectedAccounts: APPROVED_ACCOUNT,
+  });
+  await mod.publishGeneratedPost(supabase, "user-1", "post-1");
+  assert.equal(trackers.publishPostCalls[0].carouselImageUrls, undefined);
+});
+
+test("dashboard: the route hosting the publish server action allows enough time for container readiness", () => {
+  const page = fs.readFileSync(path.join(projectRoot, "src/app/dashboard/page.tsx"), "utf8");
+  assert.match(page, /export const maxDuration = 60;/);
 });

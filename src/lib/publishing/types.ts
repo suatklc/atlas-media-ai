@@ -13,6 +13,9 @@ export type PublishRequest = {
   platform: PlatformId;
   caption: string;
   imageUrl: string;
+  // Carousel posts: every slide image, in slide order (2-10). Absent = a
+  // single-image post of imageUrl.
+  carouselImageUrls?: string[];
   // The connected destination's own id (an Instagram professional
   // account id today; a Facebook Page id once that provider is
   // implemented) — required now that a real provider call exists to

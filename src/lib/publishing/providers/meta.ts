@@ -1,8 +1,10 @@
 import type { PublishRequest, PublishResult } from "../types";
 import {
   MetaGraphApiError,
+  createInstagramCarouselContainer,
   createInstagramMediaContainer,
   publishInstagramMediaContainer,
+  waitForInstagramContainerReady,
 } from "../connections/meta-graph";
 
 // Meta (Instagram + Facebook) publishing provider.
@@ -24,6 +26,36 @@ async function publishFacebookPagePost(request: PublishRequest): Promise<never> 
   throw new Error(`Facebook sayfa paylaşımı henüz uygulanmadı (platform: ${request.platform}).`);
 }
 
+// Every container is checked with waitForInstagramContainerReady before it
+// is used: Meta only publishes a container whose status_code is FINISHED,
+// and a freshly created one is still IN_PROGRESS (measured live). A
+// carousel post follows Meta's documented flow — one is_carousel_item child
+// per slide (in slide order), then one CAROUSEL container carrying the
+// caption — so what Suat approved (all slides) is what gets published,
+// never just the cover.
+async function createInstagramContainer(request: PublishRequest): Promise<string> {
+  const base = { igUserId: request.externalAccountId, accessToken: request.accessToken };
+  const slides = request.carouselImageUrls;
+
+  if (!slides || slides.length === 0) {
+    const containerId = await createInstagramMediaContainer({ ...base, imageUrl: request.imageUrl, caption: request.caption });
+    await waitForInstagramContainerReady({ containerId, accessToken: request.accessToken });
+    return containerId;
+  }
+
+  // Created concurrently (Meta fetches/processes them in parallel); slide
+  // order is fixed by the children list below, not by creation order.
+  const childContainerIds = await Promise.all(
+    slides.map((imageUrl) => createInstagramMediaContainer({ ...base, imageUrl, isCarouselItem: true })),
+  );
+  for (const containerId of childContainerIds) {
+    await waitForInstagramContainerReady({ containerId, accessToken: request.accessToken });
+  }
+  const carouselId = await createInstagramCarouselContainer({ ...base, childContainerIds, caption: request.caption });
+  await waitForInstagramContainerReady({ containerId: carouselId, accessToken: request.accessToken });
+  return carouselId;
+}
+
 // Dispatches by platform within the Meta provider, converts any failure
 // into a typed PublishResult — never a thrown exception escaping to the
 // caller, and never a fabricated success. The Instagram branch only
@@ -35,12 +67,7 @@ async function publishFacebookPagePost(request: PublishRequest): Promise<never> 
 export async function publishToMeta(request: PublishRequest): Promise<PublishResult> {
   try {
     if (request.platform === "instagram") {
-      const containerId = await createInstagramMediaContainer({
-        igUserId: request.externalAccountId,
-        accessToken: request.accessToken,
-        imageUrl: request.imageUrl,
-        caption: request.caption,
-      });
+      const containerId = await createInstagramContainer(request);
 
       const mediaId = await publishInstagramMediaContainer({
         igUserId: request.externalAccountId,
@@ -65,9 +92,13 @@ export async function publishToMeta(request: PublishRequest): Promise<PublishRes
       error: "Meta sağlayıcısı bu platformu desteklemiyor.",
     };
   } catch (error) {
+    // One line with the failed stage and Meta's own error fields (code,
+    // subcode, type, message, fbtrace_id) — never the token or request.
+    const details = error instanceof MetaGraphApiError ? error.details : undefined;
     console.error(
-      "Meta publishing error:",
-      error instanceof MetaGraphApiError ? error.message : "unknown error",
+      details
+        ? `Meta publishing error — platform=${request.platform} stage=${details.stage} status=${details.httpStatus ?? "yok"} code=${details.code ?? "yok"} subcode=${details.subcode ?? "yok"} type=${details.type ?? "yok"} fbtrace_id=${details.fbtraceId ?? "yok"} message=${details.message ?? (error as Error).message}`
+        : `Meta publishing error — platform=${request.platform}: ${error instanceof MetaGraphApiError ? error.message : "unknown error"}`,
     );
     return {
       success: false,
