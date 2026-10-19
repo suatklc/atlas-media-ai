@@ -4,6 +4,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { publishGeneratedPost } from "@/lib/publishing/publishGeneratedPost";
+import { publishGeneratedPostToFacebook } from "@/lib/publishing/publishFacebookPost";
+import { runFacebookMultiPhotoCheck } from "@/lib/publishing/facebookCapability";
+import { selectFacebookPage } from "@/lib/publishing/connections/query";
 
 export async function signOutAction() {
   const supabase = await createClient();
@@ -110,4 +113,43 @@ export async function publishApprovedPost(
 
   revalidatePath("/dashboard");
   return { error: null };
+}
+
+// ===== Facebook Page (Facebook Login for Business) =====
+// Same thin-wrapper pattern as publishApprovedPost: session user id only,
+// every decision inside the lib functions. Facebook publishing is its own
+// explicit action — approving a post never publishes it to Facebook.
+
+async function sessionUserId(): Promise<{ supabase: Awaited<ReturnType<typeof createClient>>; userId: string | null }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  return { supabase, userId: user?.id ?? null };
+}
+
+export async function publishToFacebookAction(postId: string, _prevState: StatusActionState, _formData: FormData): Promise<StatusActionState> {
+  if (typeof postId !== "string" || !postId) return { error: "Geçersiz gönderi." };
+  const { supabase, userId } = await sessionUserId();
+  if (!userId) return { error: "Bu işlem için giriş yapmanız gerekiyor." };
+  const result = await publishGeneratedPostToFacebook(supabase, userId, postId);
+  revalidatePath("/dashboard");
+  return { error: result.success ? null : result.error };
+}
+
+export async function runFacebookCheckAction(_prevState: StatusActionState, _formData: FormData): Promise<StatusActionState> {
+  const { supabase, userId } = await sessionUserId();
+  if (!userId) return { error: "Bu işlem için giriş yapmanız gerekiyor." };
+  const result = await runFacebookMultiPhotoCheck(supabase, userId);
+  revalidatePath("/dashboard");
+  return { error: result.ok ? null : result.error ?? "Test başarısız oldu." };
+}
+
+export async function selectFacebookPageAction(accountId: string, _prevState: StatusActionState, _formData: FormData): Promise<StatusActionState> {
+  if (typeof accountId !== "string" || !accountId) return { error: "Geçersiz sayfa." };
+  const { supabase, userId } = await sessionUserId();
+  if (!userId) return { error: "Bu işlem için giriş yapmanız gerekiyor." };
+  const ok = await selectFacebookPage(supabase, userId, accountId);
+  revalidatePath("/dashboard");
+  return { error: ok ? null : "Sayfa seçilemedi. Lütfen tekrar deneyin." };
 }

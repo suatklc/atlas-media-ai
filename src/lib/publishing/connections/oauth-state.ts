@@ -10,6 +10,7 @@
 // by luring a victim to a crafted URL containing a stolen/guessed code.
 
 export const META_OAUTH_STATE_COOKIE = "atlas_meta_oauth_state";
+export const FACEBOOK_OAUTH_STATE_COOKIE = "atlas_facebook_oauth_state";
 
 // Long enough to cover the Meta consent dialog, short enough to keep the
 // replay window small. Single-use regardless: callback/route.ts deletes the
@@ -20,7 +21,9 @@ export function createOAuthState(): string {
   return crypto.randomUUID();
 }
 
-export function oauthStateCookieOptions() {
+// path scopes the cookie to its own OAuth flow (/api/meta = Instagram,
+// /api/facebook = Facebook Page) so the two flows never share state.
+export function oauthStateCookieOptions(path: string = "/api/meta") {
   return {
     httpOnly: true as const,
     // http://localhost is exempt from Secure-cookie restrictions by
@@ -28,7 +31,7 @@ export function oauthStateCookieOptions() {
     // without breaking local development.
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax" as const,
-    path: "/api/meta",
+    path,
     maxAge: STATE_MAX_AGE_SECONDS,
   };
 }

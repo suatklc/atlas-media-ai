@@ -6,6 +6,7 @@ import {
   publishInstagramMediaContainer,
   waitForInstagramContainerReady,
 } from "../connections/meta-graph";
+import { publishFacebookPagePhotos } from "../connections/facebook-graph";
 
 // Meta (Instagram + Facebook) publishing provider.
 //
@@ -18,12 +19,19 @@ import {
 // reached (see publishGeneratedPost.ts) — this provider makes no Supabase/
 // Vault call of its own and never logs the token it's given.
 //
-// Facebook remains an intentional stub: this task's scope is Instagram
-// only (Handoff 6 Step 5D follow-up). Kept as a distinct function — never
-// conflated with Instagram's two-step flow — so implementing it later is
-// additive, not a restructuring of this file.
-async function publishFacebookPagePost(request: PublishRequest): Promise<never> {
-  throw new Error(`Facebook sayfa paylaşımı henüz uygulanmadı (platform: ${request.platform}).`);
+// Facebook Page (Facebook Login for Business + Pages API, see
+// connections/facebook-graph.ts): externalAccountId is the Page id and
+// accessToken the Page token (never the Instagram token). Every image —
+// all carousel slides in order, or the single image — is uploaded
+// unpublished, then attached to ONE Page post.
+async function publishFacebookPagePost(request: PublishRequest): Promise<string> {
+  const imageUrls = request.carouselImageUrls && request.carouselImageUrls.length > 0 ? request.carouselImageUrls : [request.imageUrl];
+  return publishFacebookPagePhotos({
+    pageId: request.externalAccountId,
+    pageToken: request.accessToken,
+    message: request.caption,
+    imageUrls,
+  });
 }
 
 // Every container is checked with waitForInstagramContainerReady before it
@@ -79,11 +87,8 @@ export async function publishToMeta(request: PublishRequest): Promise<PublishRes
     }
 
     if (request.platform === "facebook") {
-      await publishFacebookPagePost(request);
-      // Unreachable — publishFacebookPagePost always throws. Kept so this
-      // branch's shape is already correct for when a live implementation
-      // replaces the stub above.
-      return { success: true, platform: request.platform };
+      const postId = await publishFacebookPagePost(request);
+      return { success: true, platform: request.platform, externalPostId: postId };
     }
 
     return {

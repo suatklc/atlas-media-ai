@@ -46,11 +46,11 @@ type DashboardPageProps = {
   // meta_connection is the one non-sensitive status param the Meta OAuth
   // callback (src/app/api/meta/callback/route.ts) actually sets today; no
   // other value is invented here.
-  searchParams: Promise<{ meta_connection?: string }>;
+  searchParams: Promise<{ meta_connection?: string; facebook_connection?: string }>;
 };
 
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
-  const { meta_connection: metaConnection } = await searchParams;
+  const { meta_connection: metaConnection, facebook_connection: facebookConnection } = await searchParams;
 
   const supabase = await createClient();
   const {
@@ -79,7 +79,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         <div className="space-y-6">
           <CurrentOpportunities />
           <AIAssistantPanel />
-          <SocialAccounts connectionStatus={metaConnection} />
+          <SocialAccounts connectionStatus={metaConnection} facebookStatus={facebookConnection} />
           <GenerationHistory />
         </div>
       </div>

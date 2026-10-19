@@ -18,7 +18,7 @@ const MAX_CAROUSEL_ITEMS = 10;
 // so an approved 5-slide carousel could never be published as approved.
 // null = not a carousel (single image); "invalid" = a carousel whose slides
 // can't all be published, which must fail rather than post the cover alone.
-function resolveCarouselImageUrls(metadata: unknown): string[] | null | "invalid" {
+export function resolveCarouselImageUrls(metadata: unknown): string[] | null | "invalid" {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
   const { outputMode, carouselImages } = metadata as { outputMode?: unknown; carouselImages?: unknown };
   if (outputMode !== "carousel") return null;

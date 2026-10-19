@@ -102,7 +102,9 @@ function logGraphError(details: MetaGraphErrorDetails): void {
   );
 }
 
-async function handleGraphResponse<T>(response: Response, context: string): Promise<T> {
+// Exported for facebook-graph.ts (Facebook Page publishing) so both Meta
+// surfaces share one error-parsing/logging path.
+export async function handleGraphResponse<T>(response: Response, context: string): Promise<T> {
   let body: unknown;
   try {
     body = await response.json();

@@ -21,4 +21,17 @@ export type ConnectedAccountSummary = {
   externalAccountName: string | null;
   tokenExpiresAt: string | null;
   hasCredential: boolean;
+  // Facebook Page rows only (from connected_accounts.metadata): whether
+  // Suat selected this Page as the publishing destination, and the result
+  // of the non-public multi-photo capability check run on it.
+  selected?: boolean;
+  multiPhotoCheck?: MultiPhotoCheck | null;
+};
+
+export type MultiPhotoCheck = {
+  ok: boolean;
+  // Number of photos the check attached and read back in order.
+  count: number;
+  checkedAt: string;
+  error?: string;
 };

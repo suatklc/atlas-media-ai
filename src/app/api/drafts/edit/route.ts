@@ -10,6 +10,7 @@ import {
 import { renderCarousel } from "@/lib/ai/image/templates/carousel";
 import { renderPremiumCarousel } from "@/lib/ai/image/templates/premiumCarousel";
 import { buildPublishableCaption } from "@/lib/ai/creative/caption";
+import { resolveFacebookText } from "@/lib/ai/content/facebookText";
 import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "@/lib/ai/context/businessProfile";
 import { GENERATED_VISUALS_BUCKET, uploadGeneratedImage } from "@/lib/supabase/storage";
 
@@ -119,6 +120,13 @@ export async function POST(request: NextRequest) {
   const captionWithHashtags = appendHashtagsToCaption(updated.caption, updated.hashtags);
   const content = buildPublishableCaption(captionWithHashtags).slice(0, MAX_CONTENT_LENGTH) || captionWithHashtags;
 
+  // Facebook text: unchanged unless Suat edited it; emptied = back to the
+  // deterministic default derived from the package.
+  const platformText = {
+    ...((metadata.platformText as Record<string, unknown> | undefined) ?? {}),
+    ...(edit.facebookText !== undefined ? { facebook: edit.facebookText || null } : {}),
+  };
+
   // Same row, still a draft: no `status` in the payload, and the WHERE
   // clause re-checks status = 'draft' so a concurrent approval wins.
   const { data: saved, error: updateError } = await supabase
@@ -126,7 +134,13 @@ export async function POST(request: NextRequest) {
     .update({
       content,
       final_image_url: uploadedSlides[0].imageUrl,
-      metadata: { ...metadata, carouselImages: uploadedSlides, contentPackage: updated, editedAt: new Date().toISOString() },
+      metadata: {
+        ...metadata,
+        carouselImages: uploadedSlides,
+        contentPackage: updated,
+        platformText,
+        editedAt: new Date().toISOString(),
+      },
     })
     .eq("id", postId)
     .eq("user_id", user.id)
@@ -138,5 +152,10 @@ export async function POST(request: NextRequest) {
   }
   if (!saved || saved.length === 0) return jsonError("Taslak artık düzenlenebilir durumda değil.", 409);
 
-  return Response.json({ images: uploadedSlides, contentPackage: updated, status: "draft" });
+  return Response.json({
+    images: uploadedSlides,
+    contentPackage: updated,
+    facebookText: resolveFacebookText({ contentPackage: updated, platformText }, content, ATLAS_DEFAULT_BUSINESS_PROFILE.geography.primary),
+    status: "draft",
+  });
 }

@@ -14,7 +14,11 @@ const MAX_CAPTION = 2200;
 const MAX_HASHTAGS = 30;
 
 type SlideEdit = { headline: string; body: string; facts: string[]; emphasis?: string; cta?: string };
-export type DraftEdit = { slides: SlideEdit[]; caption: string; hashtags: string[] };
+// facebookText: Suat's Facebook Page post text. undefined = unchanged (keep
+// whatever is stored); "" = reset to the deterministic default derived from
+// the package (see facebookText.ts).
+export type DraftEdit = { slides: SlideEdit[]; caption: string; hashtags: string[]; facebookText?: string };
+const MAX_FACEBOOK_TEXT = 5000;
 
 function text(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
@@ -43,7 +47,7 @@ export function parseHashtags(raw: unknown): string[] | null {
 
 export function parseDraftEdit(body: unknown): DraftEdit | string {
   if (!body || typeof body !== "object") return "Geçersiz istek gövdesi.";
-  const { slides, caption, hashtags } = body as Record<string, unknown>;
+  const { slides, caption, hashtags, facebookText } = body as Record<string, unknown>;
   if (!Array.isArray(slides) || slides.length !== SLIDE_COUNT) return "Tam olarak 5 slayt gerekli.";
 
   const parsedSlides: SlideEdit[] = [];
@@ -69,7 +73,14 @@ export function parseDraftEdit(body: unknown): DraftEdit | string {
   if (!parsedCaption) return `Açıklama boş olamaz (en fazla ${MAX_CAPTION} karakter).`;
   const parsedHashtags = parseHashtags(hashtags);
   if (!parsedHashtags) return `En az 1, en fazla ${MAX_HASHTAGS} hashtag girin.`;
-  return { slides: parsedSlides, caption: parsedCaption, hashtags: parsedHashtags };
+  const parsedFacebookText = facebookText === undefined ? undefined : text(facebookText, MAX_FACEBOOK_TEXT);
+  if (parsedFacebookText === null) return `Facebook metni en fazla ${MAX_FACEBOOK_TEXT} karakter olabilir.`;
+  return {
+    slides: parsedSlides,
+    caption: parsedCaption,
+    hashtags: parsedHashtags,
+    ...(parsedFacebookText !== undefined ? { facebookText: parsedFacebookText } : {}),
+  };
 }
 
 // The edit replaces only Suat-editable text; topic, source, hook, roles,

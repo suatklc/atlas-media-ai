@@ -58,10 +58,14 @@ export default function DraftEditor({
   postId,
   contentPackage,
   images,
+  facebookText,
 }: {
   postId: string;
   contentPackage: ContentPackage;
   images: SlideImage[];
+  // What will be published to Facebook (stored edit, or the deterministic
+  // default derived from this package) — editable here before approval.
+  facebookText: string;
 }) {
   const router = useRouter();
   const isExpert = contentPackage.contentMode === "expert";
@@ -69,6 +73,8 @@ export default function DraftEditor({
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(() => toForm(contentPackage));
   const [previews, setPreviews] = useState(images);
+  const [facebook, setFacebook] = useState(facebookText);
+  const [facebookBaseline, setFacebookBaseline] = useState(facebookText);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
@@ -89,6 +95,9 @@ export default function DraftEditor({
           postId,
           caption: form.caption,
           hashtags: form.hashtags,
+          // Only sent when Suat changed it, so an untouched default keeps
+          // following caption edits.
+          ...(facebook !== facebookBaseline ? { facebookText: facebook } : {}),
           slides: form.slides.map((slide) => ({
             headline: slide.headline,
             body: slide.body,
@@ -105,6 +114,10 @@ export default function DraftEditor({
       }
       setPreviews(data.images);
       setForm(toForm(data.contentPackage));
+      if (typeof data.facebookText === "string") {
+        setFacebook(data.facebookText);
+        setFacebookBaseline(data.facebookText);
+      }
       setMessage({ kind: "ok", text: "Kaydedildi ve görseller güncellendi. Gönderi taslak olarak kaldı." });
       router.refresh();
     } catch {
@@ -209,6 +222,13 @@ export default function DraftEditor({
                 rows={2}
                 value={form.hashtags}
                 onChange={(v) => setForm((current) => ({ ...current, hashtags: v }))}
+              />
+              <Field
+                label="Facebook metni"
+                hint="Facebook Sayfası paylaşımında kullanılır; Instagram'ı etkilemez. Boşaltırsanız açıklamadan otomatik oluşturulur"
+                rows={8}
+                value={facebook}
+                onChange={setFacebook}
               />
             </div>
 

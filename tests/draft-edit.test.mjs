@@ -130,6 +130,7 @@ function loadEditRoute({ status = "draft", contentMode = "expert", updateRows = 
       },
     },
     "@/lib/ai/creative/caption": { buildPublishableCaption: (value) => value },
+    "@/lib/ai/content/facebookText": loadTypeScriptModule("src/lib/ai/content/facebookText.ts"),
     "@/lib/ai/context/businessProfile": { ATLAS_DEFAULT_BUSINESS_PROFILE: { geography: { primary: "Zekeriyaköy", nearby: [] } } },
     "@/lib/supabase/storage": {
       GENERATED_VISUALS_BUCKET: "generated-visuals",

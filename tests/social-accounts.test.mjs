@@ -107,6 +107,10 @@ function loadSocialAccounts({ user, rows, queryError = null }) {
         "@/lib/publishing/connections/tokenLifecycle": tokenLifecycleModule,
         "@/lib/publishing/connections/credentials": { getConnectedAccountCredential: async () => "STORED_TOKEN" },
         "@/lib/ai/platform/config": platformConfigModule,
+        "./FacebookActions": {
+          FacebookCheckButton: ({ label }) => React.createElement("button", null, label),
+          FacebookSelectPageButton: () => React.createElement("button", null, "Bu Sayfayı Seç"),
+        },
         "react/jsx-runtime": reactRuntime,
         react: React,
       })[specifier] ?? {},

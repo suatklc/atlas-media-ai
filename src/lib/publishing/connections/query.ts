@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ConnectedAccountSummary, MetaConnectionPlatform } from "./types";
+import type { ConnectedAccountSummary, MetaConnectionPlatform, MultiPhotoCheck } from "./types";
 
 // Server-only. Takes the caller's own authenticated Supabase client (the
 // same request-scoped session pattern used everywhere else in this
@@ -20,7 +20,7 @@ export async function listConnectedMetaAccounts(
 ): Promise<ConnectedAccountSummary[]> {
   const { data, error } = await supabase
     .from("connected_accounts")
-    .select("id, provider, platform, external_account_id, external_account_name, token_expires_at, credential_secret_id")
+    .select("id, provider, platform, external_account_id, external_account_name, token_expires_at, credential_secret_id, metadata")
     .eq("user_id", userId)
     .eq("provider", "meta");
 
@@ -37,7 +37,64 @@ export async function listConnectedMetaAccounts(
     externalAccountName: row.external_account_name,
     tokenExpiresAt: row.token_expires_at,
     hasCredential: row.credential_secret_id !== null,
+    ...(row.platform === "facebook" ? facebookMetadata(row.metadata) : {}),
   }));
+}
+
+function facebookMetadata(metadata: unknown): Pick<ConnectedAccountSummary, "selected" | "multiPhotoCheck"> {
+  const meta = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? (metadata as Record<string, unknown>) : {};
+  const check = meta.multiPhotoCheck as Partial<MultiPhotoCheck> | undefined;
+  return {
+    selected: meta.selected === true,
+    multiPhotoCheck:
+      check && typeof check === "object" && typeof check.ok === "boolean" && typeof check.count === "number"
+        ? { ok: check.ok, count: check.count, checkedAt: String(check.checkedAt ?? ""), ...(check.error ? { error: String(check.error) } : {}) }
+        : null,
+  };
+}
+
+// Merges a patch into one owned connected_accounts row's metadata (read,
+// merge, write) — never replaces unrelated keys.
+export async function mergeConnectedAccountMetadata(
+  supabase: SupabaseClient,
+  userId: string,
+  connectedAccountId: string,
+  patch: Record<string, unknown>,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("connected_accounts")
+    .select("metadata")
+    .eq("id", connectedAccountId)
+    .eq("user_id", userId)
+    .single();
+  if (error || !data) return false;
+  const current = data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata) ? data.metadata : {};
+  const { error: updateError } = await supabase
+    .from("connected_accounts")
+    .update({ metadata: { ...current, ...patch } })
+    .eq("id", connectedAccountId)
+    .eq("user_id", userId);
+  if (updateError) {
+    console.error("Connected account metadata update error:", updateError.message);
+    return false;
+  }
+  return true;
+}
+
+// Facebook Page selection: the chosen Page becomes the only Facebook
+// destination; every other stored Page connection (and its Vault secret)
+// is removed through the same disconnect RPC.
+export async function selectFacebookPage(supabase: SupabaseClient, userId: string, connectedAccountId: string): Promise<boolean> {
+  const accounts = await listConnectedMetaAccounts(supabase, userId);
+  const chosen = accounts.find((a) => a.id === connectedAccountId && a.platform === "facebook");
+  if (!chosen) return false;
+  if (!(await mergeConnectedAccountMetadata(supabase, userId, chosen.id, { selected: true }))) return false;
+  for (const other of accounts) {
+    if (other.platform === "facebook" && other.id !== chosen.id) {
+      await disconnectAccount(supabase, other.id);
+    }
+  }
+  return true;
 }
 
 export type UpsertConnectedMetaAccountInput = {
@@ -69,7 +126,7 @@ export type UpsertConnectedMetaAccountResult =
 export async function upsertConnectedMetaAccount(
   supabase: SupabaseClient,
   input: UpsertConnectedMetaAccountInput,
-): Promise<UpsertConnectedMetaAccountResult> {
+): Promise<UpsertConnectedMetaAccountResult & { id?: string }> {
   const { data, error } = await supabase
     .from("connected_accounts")
     .upsert(
@@ -102,7 +159,7 @@ export async function upsertConnectedMetaAccount(
     return { success: false, error: "Kimlik bilgisi güvenli şekilde saklanamadı." };
   }
 
-  return { success: true };
+  return { success: true, id: data.id };
 }
 
 export type DisconnectAccountResult = { success: true } | { success: false; error: string };
