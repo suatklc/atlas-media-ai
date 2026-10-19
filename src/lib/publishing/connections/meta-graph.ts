@@ -350,7 +350,31 @@ export async function exchangeForLongLivedUserToken(input: ExchangeLongLivedInpu
   return { accessToken: body.access_token, expiresInSeconds };
 }
 
-type InstagramMeResponse = { data?: Array<{ user_id?: unknown; username?: unknown }> };
+// GET https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token
+// &access_token — refreshes a long-lived Instagram User token (Instagram API
+// with Instagram Login). Per Meta's current docs: the token must be at
+// least 24 hours old and not yet expired, the user must have granted
+// instagram_business_basic, the response carries a NEW access_token valid
+// for 60 days from the refresh, and a token not refreshed within 60 days
+// expires and can no longer be refreshed. Same flat response shape as the
+// long-lived exchange above. The token is only ever in the request URL,
+// which graphGet never logs.
+export async function refreshInstagramLongLivedToken(accessToken: string): Promise<MetaTokenResult> {
+  const url = new URL("https://graph.instagram.com/refresh_access_token");
+  url.searchParams.set("grant_type", "ig_refresh_token");
+  url.searchParams.set("access_token", accessToken);
+
+  const body = await graphGet<OAuthAccessTokenResponse>(url, "long-lived token refresh");
+  if (typeof body.access_token !== "string" || body.access_token.length === 0) {
+    throw new MetaGraphApiError("long-lived token refresh: Meta API beklenen erişim jetonunu döndürmedi.", {
+      stage: "long-lived token refresh",
+    });
+  }
+  const expiresInSeconds = typeof body.expires_in === "number" ? body.expires_in : null;
+  return { accessToken: body.access_token, expiresInSeconds };
+}
+
+type InstagramMeResponse ={ data?: Array<{ user_id?: unknown; username?: unknown }> };
 
 // GET https://graph.instagram.com/{version}/me?fields=user_id,username
 // &access_token — display-name lookup only; the account id itself already

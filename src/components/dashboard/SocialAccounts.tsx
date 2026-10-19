@@ -1,6 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
 import { listConnectedMetaAccounts } from "@/lib/publishing/connections/query";
 import { PLATFORM_CONFIGS } from "@/lib/ai/platform/config";
+import { getConnectedAccountCredential } from "@/lib/publishing/connections/credentials";
+import {
+  classifyInstagramToken,
+  ensureFreshInstagramToken,
+  needsInstagramReconnect,
+} from "@/lib/publishing/connections/tokenLifecycle";
 
 type SocialAccountsProps = {
   connectionStatus?: string;
@@ -23,6 +29,15 @@ export default async function SocialAccounts({ connectionStatus }: SocialAccount
 
     if (user) {
       accounts = await listConnectedMetaAccounts(supabase, user.id);
+      // Refresh-on-use: a dashboard visit refreshes an Instagram token that
+      // is within its refresh window (see tokenLifecycle.ts). The credential
+      // is only decrypted when a refresh is actually due.
+      for (const account of accounts) {
+        if (account.platform !== "instagram" || classifyInstagramToken(account.tokenExpiresAt) !== "refresh-due") continue;
+        const token = await getConnectedAccountCredential(supabase, account.id);
+        const fresh = await ensureFreshInstagramToken(supabase, account, token);
+        account.tokenExpiresAt = fresh.tokenExpiresAt;
+      }
     }
   } catch (error) {
     console.error("Social accounts load exception:", error);
@@ -65,10 +80,21 @@ export default async function SocialAccounts({ connectionStatus }: SocialAccount
               </div>
 
               <div className="flex items-center gap-2 text-xs font-medium">
-                <span className="inline-flex items-center gap-1 text-emerald-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                  Bağlı
-                </span>
+                {account.platform === "instagram" && needsInstagramReconnect(account.tokenExpiresAt) ? (
+                  <a
+                    href="/api/meta/connect"
+                    className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-amber-300 hover:border-amber-500/70"
+                  >
+                    {classifyInstagramToken(account.tokenExpiresAt) === "expired"
+                      ? "Bağlantı süresi doldu — Yeniden Bağla"
+                      : "Bağlantı yakında sona eriyor — Yeniden Bağla"}
+                  </a>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-emerald-400">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                    Bağlı
+                  </span>
+                )}
                 <span className={account.hasCredential ? "text-zinc-400" : "text-amber-400"}>
                   {account.hasCredential ? "Kimlik bilgisi kayıtlı" : "Kimlik bilgisi eksik"}
                 </span>

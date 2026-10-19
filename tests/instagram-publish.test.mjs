@@ -238,8 +238,12 @@ test("providers/meta: a publish-step failure (container created, publish fails) 
 
 // ===== publishGeneratedPost.ts: the full orchestrator =====
 
-function makeSupabaseMock({ selectResult, updateResult = { error: null } }, trackers) {
+function makeSupabaseMock({ selectResult, updateResult = { error: null }, rpcResult = { error: null } }, trackers) {
   return {
+    rpc: async (name, args) => {
+      trackers.rpcCalls.push([name, args]);
+      return rpcResult;
+    },
     from: (table) => {
       trackers.fromCalls.push(table);
       return {
@@ -266,14 +270,26 @@ function makeSupabaseMock({ selectResult, updateResult = { error: null } }, trac
   };
 }
 
+function loadTokenLifecycle(refreshInstagramLongLivedToken, capturingConsole = { console }) {
+  return loadTypeScriptModule(
+    "src/lib/publishing/connections/tokenLifecycle.ts",
+    (specifier) => (specifier === "./meta-graph" ? { refreshInstagramLongLivedToken } : {}),
+    { console: capturingConsole.console, Date },
+  );
+}
+
 function loadPublishGeneratedPost({
   post,
   connectedAccounts,
   credential,
   publishResult,
   updateResult,
+  rpcResult,
+  refreshImpl,
 }) {
   const trackers = {
+    rpcCalls: [],
+    refreshCalls: [],
     fromCalls: [],
     selectCalls: [],
     updateCalls: [],
@@ -282,7 +298,11 @@ function loadPublishGeneratedPost({
     publishPostCalls: [],
   };
 
-  const supabase = makeSupabaseMock({ selectResult: { data: post, error: post ? null : { message: "not found" } }, updateResult }, trackers);
+  const supabase = makeSupabaseMock({ selectResult: { data: post, error: post ? null : { message: "not found" } }, updateResult, rpcResult }, trackers);
+  const tokenLifecycleModule = loadTokenLifecycle(async (token) => {
+    trackers.refreshCalls.push(token);
+    return refreshImpl ? refreshImpl(token) : { accessToken: "REFRESHED_TOKEN", expiresInSeconds: 5184000 };
+  });
 
   const platformConfigModule = loadTypeScriptModule("src/lib/ai/platform/config.ts", () => ({}), {});
   const eligibilityModule = loadTypeScriptModule(
@@ -322,6 +342,7 @@ function loadPublishGeneratedPost({
         "./router": routerMock,
         "./connections/query": queryMock,
         "./connections/credentials": credentialsMock,
+        "./connections/tokenLifecycle": tokenLifecycleModule,
         "../ai/platform/config": platformConfigModule,
       })[specifier] ?? {},
     { console },
@@ -694,4 +715,169 @@ test("publishGeneratedPost: a single-image post sends no carousel URLs", async (
 test("dashboard: the route hosting the publish server action allows enough time for container readiness", () => {
   const page = fs.readFileSync(path.join(projectRoot, "src/app/dashboard/page.tsx"), "utf8");
   assert.match(page, /export const maxDuration = 60;/);
+});
+
+// ===== Instagram token lifecycle (Instagram API with Instagram Login) =====
+// Long-lived Instagram User token: 60 days; refreshable once >= 24 h old and
+// unexpired via graph.instagram.com/refresh_access_token (ig_refresh_token);
+// not refreshed within 60 days = expired, reconnect required.
+
+const DAY = 24 * 60 * 60 * 1000;
+const NOW = Date.parse("2026-10-19T12:00:00.000Z");
+const inDays = (days) => new Date(NOW + days * DAY).toISOString();
+const IG_ACCOUNT = (tokenExpiresAt) => ({ id: "conn-1", provider: "meta", platform: "instagram", externalAccountId: "1784", externalAccountName: "suatkilic.era", tokenExpiresAt, hasCredential: true });
+
+test("meta-graph: refreshInstagramLongLivedToken GETs graph.instagram.com/refresh_access_token with ig_refresh_token and returns the NEW token + expires_in", async () => {
+  const cc = makeCapturingConsole();
+  const { fetch: mockFetch, calls } = makeSequencedFetch([{ ok: true, body: { access_token: "NEW_TOKEN", token_type: "bearer", expires_in: 5184000 } }]);
+  const metaGraph = loadMetaGraph(mockFetch, cc);
+  const result = await metaGraph.refreshInstagramLongLivedToken(SECRET_ACCESS_TOKEN);
+  const url = new URL(calls[0].url);
+  assert.equal(url.origin + url.pathname, "https://graph.instagram.com/refresh_access_token");
+  assert.equal(url.searchParams.get("grant_type"), "ig_refresh_token");
+  assert.equal(calls[0].options.method, "GET");
+  assert.equal(result.accessToken, "NEW_TOKEN");
+  assert.equal(result.expiresInSeconds, 5184000);
+  assert.equal(cc.calls.length, 0);
+});
+
+test("meta-graph: a failed token refresh throws without logging the token", async () => {
+  const cc = makeCapturingConsole();
+  const { fetch: mockFetch } = makeSequencedFetch([{ ok: false, status: 400, body: { error: { message: "Error validating access token", type: "OAuthException", code: 190 } } }]);
+  const metaGraph = loadMetaGraph(mockFetch, cc);
+  await assert.rejects(() => metaGraph.refreshInstagramLongLivedToken(SECRET_ACCESS_TOKEN));
+  assert.ok(cc.calls.length > 0);
+  assert.ok(!containsSecret(cc.calls));
+});
+
+test("tokenLifecycle: classification — >30 days valid, <=30 days refresh-due, past expired, missing unknown; reconnect only when expired or <=7 days left", () => {
+  const lifecycle = loadTokenLifecycle(async () => {
+    throw new Error("unused");
+  });
+  assert.equal(lifecycle.classifyInstagramToken(inDays(45), NOW), "valid");
+  assert.equal(lifecycle.classifyInstagramToken(inDays(30), NOW), "refresh-due");
+  assert.equal(lifecycle.classifyInstagramToken(inDays(-1), NOW), "expired");
+  assert.equal(lifecycle.classifyInstagramToken(null, NOW), "unknown");
+  assert.equal(lifecycle.needsInstagramReconnect(inDays(45), NOW), false);
+  assert.equal(lifecycle.needsInstagramReconnect(inDays(20), NOW), false, "still refreshable — no reconnect prompt");
+  assert.equal(lifecycle.needsInstagramReconnect(inDays(5), NOW), true);
+  assert.equal(lifecycle.needsInstagramReconnect(inDays(-1), NOW), true);
+  assert.equal(lifecycle.needsInstagramReconnect(null, NOW), false);
+});
+
+function lifecycleSupabase({ rpcError = null, updateError = null } = {}) {
+  const t = { rpc: [], updates: [], eqs: [] };
+  return {
+    t,
+    client: {
+      rpc: async (name, args) => (t.rpc.push([name, args]), { error: rpcError }),
+      from: (table) => ({
+        update: (patch) => (t.updates.push([table, patch]), { eq: async (c, v) => (t.eqs.push([c, v]), { error: updateError }) }),
+      }),
+    },
+  };
+}
+
+test("tokenLifecycle: a VALID token is used as-is — no refresh, no writes", async () => {
+  let refreshed = 0;
+  const lifecycle = loadTokenLifecycle(async () => (refreshed++, { accessToken: "X", expiresInSeconds: 1 }));
+  const { client, t } = lifecycleSupabase();
+  const result = await lifecycle.ensureFreshInstagramToken(client, IG_ACCOUNT(inDays(45)), "OLD", NOW);
+  assert.equal(result.accessToken, "OLD");
+  assert.equal(result.state, "valid");
+  assert.equal(refreshed, 0);
+  assert.equal(t.rpc.length + t.updates.length, 0);
+});
+
+test("tokenLifecycle: a REFRESH-DUE token is refreshed — new token stored in Vault first, then the new expiry", async () => {
+  const cc = makeCapturingConsole();
+  const lifecycle = loadTokenLifecycle(async (token) => {
+    assert.equal(token, "OLD");
+    return { accessToken: "NEW", expiresInSeconds: 60 * 24 * 3600 };
+  }, cc);
+  const { client, t } = lifecycleSupabase();
+  const result = await lifecycle.ensureFreshInstagramToken(client, IG_ACCOUNT(inDays(20)), "OLD", NOW);
+  assert.equal(result.state, "refreshed");
+  assert.equal(result.accessToken, "NEW");
+  assert.equal(result.tokenExpiresAt, inDays(60));
+  assert.equal(JSON.stringify(t.rpc[0]), JSON.stringify(["store_connected_account_credential", { p_connected_account_id: "conn-1", p_secret: "NEW" }]));
+  assert.equal(t.updates[0][0], "connected_accounts");
+  assert.equal(t.updates[0][1].token_expires_at, inDays(60));
+  assert.deepEqual(t.eqs[0], ["id", "conn-1"]);
+  assert.equal(cc.calls.length, 0);
+});
+
+test("tokenLifecycle: a failed refresh, or a failed Vault write, keeps the existing still-valid token and writes nothing else", async () => {
+  const failing = loadTokenLifecycle(async () => {
+    throw new Error("Meta refresh failed");
+  }, makeCapturingConsole());
+  const first = lifecycleSupabase();
+  const r1 = await failing.ensureFreshInstagramToken(first.client, IG_ACCOUNT(inDays(20)), "OLD", NOW);
+  assert.equal(r1.state, "refresh-failed");
+  assert.equal(r1.accessToken, "OLD");
+  assert.equal(r1.tokenExpiresAt, inDays(20));
+  assert.equal(first.t.rpc.length + first.t.updates.length, 0);
+
+  const cc = makeCapturingConsole();
+  const working = loadTokenLifecycle(async () => ({ accessToken: "NEW", expiresInSeconds: 5184000 }), cc);
+  const second = lifecycleSupabase({ rpcError: { message: "vault down" } });
+  const r2 = await working.ensureFreshInstagramToken(second.client, IG_ACCOUNT(inDays(20)), "OLD", NOW);
+  assert.equal(r2.accessToken, "OLD");
+  assert.equal(second.t.updates.length, 0, "expiry is never advanced without the new token stored");
+  assert.ok(!JSON.stringify(cc.calls).includes("NEW") && !JSON.stringify(cc.calls).includes("OLD"), "tokens are never logged");
+});
+
+test("tokenLifecycle: an EXPIRED token is never refreshed or returned", async () => {
+  let refreshed = 0;
+  const lifecycle = loadTokenLifecycle(async () => (refreshed++, { accessToken: "X", expiresInSeconds: 1 }));
+  const { client } = lifecycleSupabase();
+  const result = await lifecycle.ensureFreshInstagramToken(client, IG_ACCOUNT(inDays(-2)), "OLD", NOW);
+  assert.equal(result.state, "expired");
+  assert.equal(result.accessToken, null);
+  assert.equal(refreshed, 0);
+});
+
+test("publishGeneratedPost: an EXPIRED Instagram token stops before Meta with a reconnect message; the post stays approved", async () => {
+  const { mod, supabase, trackers } = loadPublishGeneratedPost({
+    post: { id: "post-1", content: "caption", final_image_url: SECRET_IMAGE_URL, status: "approved", metadata: { platform: "instagram" } },
+    connectedAccounts: [IG_ACCOUNT(new Date(Date.now() - DAY).toISOString())],
+  });
+  const result = await mod.publishGeneratedPost(supabase, "user-1", "post-1");
+  assert.equal(result.success, false);
+  assert.match(result.error, /yeniden bağlayın/);
+  assert.equal(trackers.publishPostCalls.length, 0);
+  assert.equal(trackers.updateCalls.length, 0);
+  assert.equal(trackers.refreshCalls.length, 0);
+});
+
+test("publishGeneratedPost: a REFRESH-DUE token is refreshed before publishing and the NEW token is used", async () => {
+  const { mod, supabase, trackers } = loadPublishGeneratedPost({
+    post: { id: "post-1", content: "caption", final_image_url: SECRET_IMAGE_URL, status: "approved", metadata: { platform: "instagram" } },
+    connectedAccounts: [IG_ACCOUNT(new Date(Date.now() + 10 * DAY).toISOString())],
+  });
+  const result = await mod.publishGeneratedPost(supabase, "user-1", "post-1");
+  assert.equal(result.success, true);
+  assert.deepEqual(trackers.refreshCalls, [SECRET_ACCESS_TOKEN]);
+  assert.equal(trackers.rpcCalls[0][0], "store_connected_account_credential");
+  assert.equal(trackers.publishPostCalls[0].accessToken, "REFRESHED_TOKEN");
+});
+
+test("publishGeneratedPost: if the refresh fails, publishing continues with the still-valid stored token", async () => {
+  const { mod, supabase, trackers } = loadPublishGeneratedPost({
+    post: { id: "post-1", content: "caption", final_image_url: SECRET_IMAGE_URL, status: "approved", metadata: { platform: "instagram" } },
+    connectedAccounts: [IG_ACCOUNT(new Date(Date.now() + 10 * DAY).toISOString())],
+    refreshImpl: () => {
+      throw new Error("refresh failed");
+    },
+  });
+  const result = await mod.publishGeneratedPost(supabase, "user-1", "post-1");
+  assert.equal(result.success, true);
+  assert.equal(trackers.publishPostCalls[0].accessToken, SECRET_ACCESS_TOKEN);
+});
+
+test("dashboard: Bağlı Hesaplar refreshes on use and offers 'Yeniden Bağla' only when needsInstagramReconnect", () => {
+  const ui = fs.readFileSync(path.join(projectRoot, "src/components/dashboard/SocialAccounts.tsx"), "utf8");
+  assert.match(ui, /ensureFreshInstagramToken/);
+  assert.match(ui, /needsInstagramReconnect\(account\.tokenExpiresAt\)/);
+  assert.match(ui, /Yeniden Bağla/);
 });

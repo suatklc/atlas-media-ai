@@ -54,7 +54,7 @@ function loadSocialAccounts({ user, rows, queryError = null }) {
       : React.createElement(type, finalProps);
   }
   const reactRuntime = { jsx, jsxs: jsx, Fragment: React.Fragment };
-  const callTracker = { fromCalls: 0 };
+  const callTracker = { fromCalls: 0, refreshCalls: 0 };
 
   const supabaseServerMock = {
     createClient: async () => ({
@@ -84,12 +84,28 @@ function loadSocialAccounts({ user, rows, queryError = null }) {
     {},
   );
 
+  const tokenLifecycleModule = loadTypeScriptModule(
+    "src/lib/publishing/connections/tokenLifecycle.ts",
+    (specifier) =>
+      specifier === "./meta-graph"
+        ? {
+            refreshInstagramLongLivedToken: async () => {
+              callTracker.refreshCalls += 1;
+              throw new Error("refresh unavailable in this test");
+            },
+          }
+        : {},
+    { console: { error: () => {} }, Date },
+  );
+
   const mod = loadTypeScriptModule(
     "src/components/dashboard/SocialAccounts.tsx",
     (specifier) =>
       ({
         "@/lib/supabase/server": supabaseServerMock,
         "@/lib/publishing/connections/query": queryModule,
+        "@/lib/publishing/connections/tokenLifecycle": tokenLifecycleModule,
+        "@/lib/publishing/connections/credentials": { getConnectedAccountCredential: async () => "STORED_TOKEN" },
         "@/lib/ai/platform/config": platformConfigModule,
         "react/jsx-runtime": reactRuntime,
         react: React,
@@ -208,4 +224,32 @@ test("SocialAccounts: an unauthenticated user renders the empty state without ev
   const html = renderToStaticMarkup(await mod.default({}));
   assert.match(html, /Bağlı hesap yok/);
   assert.equal(callTracker.fromCalls, 0, "connected_accounts must never be queried for a signed-out user");
+});
+
+// ===== Instagram token lifecycle in Bağlı Hesaplar =====
+function igRow(tokenExpiresAt) {
+  return { id: "row-ig", provider: "meta", platform: "instagram", external_account_id: "1784", external_account_name: "suatkilic.era", token_expires_at: tokenExpiresAt, credential_secret_id: "secret-1" };
+}
+
+test("SocialAccounts: a healthy Instagram token shows Bağlı, never a reconnect prompt, and is not refreshed", async () => {
+  const { mod, callTracker } = loadSocialAccounts({ user: { id: "user-1" }, rows: [igRow(new Date(Date.now() + 50 * 86400000).toISOString())] });
+  const html = renderToStaticMarkup(await mod.default({}));
+  assert.match(html, /Bağlı/);
+  assert.doesNotMatch(html, /Yeniden Bağla/);
+  assert.equal(callTracker.refreshCalls, 0);
+});
+
+test("SocialAccounts: an expired Instagram token shows 'Yeniden Bağla' linking to the existing connect route", async () => {
+  const { mod, callTracker } = loadSocialAccounts({ user: { id: "user-1" }, rows: [igRow(new Date(Date.now() - 86400000).toISOString())] });
+  const html = renderToStaticMarkup(await mod.default({}));
+  assert.match(html, /Bağlantı süresi doldu — Yeniden Bağla/);
+  assert.ok(html.includes('href="/api/meta/connect"'));
+  assert.equal(callTracker.refreshCalls, 0, "an expired token is never refreshed");
+});
+
+test("SocialAccounts: a refresh-due token is refreshed on dashboard load; if refresh fails with >7 days left, no reconnect prompt yet", async () => {
+  const { mod, callTracker } = loadSocialAccounts({ user: { id: "user-1" }, rows: [igRow(new Date(Date.now() + 20 * 86400000).toISOString())] });
+  const html = renderToStaticMarkup(await mod.default({}));
+  assert.equal(callTracker.refreshCalls, 1);
+  assert.doesNotMatch(html, /Yeniden Bağla/);
 });

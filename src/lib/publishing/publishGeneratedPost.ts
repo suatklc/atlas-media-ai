@@ -3,6 +3,7 @@ import { evaluatePublishEligibility } from "./eligibility";
 import { publishPost } from "./router";
 import { listConnectedMetaAccounts } from "./connections/query";
 import { getConnectedAccountCredential } from "./connections/credentials";
+import { ensureFreshInstagramToken } from "./connections/tokenLifecycle";
 import { resolvePlatformFromMetadata } from "../ai/platform/config";
 
 export type PublishGeneratedPostResult = { success: true } | { success: false; error: string };
@@ -94,10 +95,22 @@ export async function publishGeneratedPost(
     return { success: false, error: "Bağlı ve kimlik bilgisi kayıtlı bir hesap bulunamadı." };
   }
 
-  const accessToken = await getConnectedAccountCredential(supabase, account.id);
-  if (!accessToken) {
+  const storedToken = await getConnectedAccountCredential(supabase, account.id);
+  if (!storedToken) {
     return { success: false, error: "Kimlik bilgisi alınamadı." };
   }
+
+  // Instagram token lifecycle: an expired token is never sent to Meta (it
+  // can't be refreshed — only a reconnect fixes it); a token close to expiry
+  // is refreshed first. A failed refresh keeps the still-valid stored token.
+  const fresh = await ensureFreshInstagramToken(supabase, account, storedToken);
+  if (fresh.state === "expired") {
+    return {
+      success: false,
+      error: "Instagram bağlantısının süresi doldu. Lütfen Bağlı Hesaplar'dan Instagram'ı yeniden bağlayın.",
+    };
+  }
+  const accessToken = fresh.accessToken ?? storedToken;
 
   const carousel = resolveCarouselImageUrls(post.metadata);
   if (carousel === "invalid") {
