@@ -35,6 +35,18 @@ function premiumVillaArtDirection(region: string): string {
   ].join("; ");
 }
 
+// The villa art direction above is only right when the content is actually
+// about a home. Atlas's expert content covers the whole property scope
+// (land, zoning, construction, market), so a land/zoning post must not get
+// a villa cover: land vocabulary wins over residential vocabulary.
+const LAND_TERMS = /(^|[^\p{L}])(arsa\p{L}*|arazi\p{L}*|parsel\p{L}*|tarla\p{L}*|imar\p{L}*)(?=$|[^\p{L}])/u;
+const RESIDENTIAL_TERMS = /(^|[^\p{L}])(villa\p{L}*|müstakil\p{L}*|konut\p{L}*|ev(?:i|in\p{L}*|ler\p{L}*)?)(?=$|[^\p{L}])/u;
+
+export function prefersVillaArtDirection(text: string): boolean {
+  const normalized = text.toLocaleLowerCase("tr-TR");
+  return RESIDENTIAL_TERMS.test(normalized) && !LAND_TERMS.test(normalized);
+}
+
 export function buildExpertVillaImagePrompt(visualBrief: string, region: string): string {
   const clauses = [
     premiumVillaArtDirection(region),

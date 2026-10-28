@@ -26,12 +26,15 @@ function loadTypeScriptModule(relativePath, dependencyLoader = () => ({}), globa
 // Real module — discover.ts renders whyNow in Turkey-local time through it.
 const turkishDateForDiscover = loadTypeScriptModule("src/lib/ai/research/retrieval/turkishDate.ts");
 const businessProfile = loadTypeScriptModule("src/lib/ai/context/businessProfile.ts");
+// Real module — discover.ts's real-estate scope gate (Handoff 9).
+const realEstateScope = loadTypeScriptModule("src/lib/ai/research/realEstateScope.ts", () => ({}), { URL });
 const discover = loadTypeScriptModule(
   "src/lib/ai/research/discover.ts",
   (specifier) => {
     if (specifier === "../context/businessProfile") return businessProfile;
     if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => [] };
     if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
+    if (specifier === "./realEstateScope") return realEstateScope;
     return {};
   },
   { URL },
@@ -106,8 +109,8 @@ test("maxAgeDays: material older than 30 days is excluded, not merely down-ranke
 test("maxAgeDays end-to-end via discoverCurrentContentOpportunities: old February content never reaches the shortlist", async () => {
   const now = new Date("2026-08-27T00:00:00.000Z");
   const fixedResults = [
-    makeResult({ title: "Güncel Faiz Haberi", url: "https://a.example/1", publishedAt: "2026-08-22T00:00:00.000Z" }),
-    makeResult({ title: "Şubat Ayı Eski Haberi", url: "https://a.example/2", publishedAt: "2026-02-01T00:00:00.000Z" }),
+    makeResult({ title: "Güncel Konut Kredisi Haberi", url: "https://a.example/1", publishedAt: "2026-08-22T00:00:00.000Z" }),
+    makeResult({ title: "Şubat Ayı Eski Tapu Haberi", url: "https://a.example/2", publishedAt: "2026-02-01T00:00:00.000Z" }),
   ];
   const discoverWithFixedRouter = loadTypeScriptModule(
     "src/lib/ai/research/discover.ts",
@@ -115,6 +118,7 @@ test("maxAgeDays end-to-end via discoverCurrentContentOpportunities: old Februar
       if (specifier === "../context/businessProfile") return businessProfile;
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => fixedResults };
       if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
+      if (specifier === "./realEstateScope") return realEstateScope;
       return {};
     },
     { URL },
@@ -124,19 +128,20 @@ test("maxAgeDays end-to-end via discoverCurrentContentOpportunities: old Februar
     maxAgeDays: 30,
     limit: 5,
   });
-  assert.ok(opportunities.every((o) => o.topic !== "Şubat Ayı Eski Haberi"));
-  assert.ok(opportunities.some((o) => o.topic === "Güncel Faiz Haberi"));
+  assert.ok(opportunities.every((o) => o.topic !== "Şubat Ayı Eski Tapu Haberi"));
+  assert.ok(opportunities.some((o) => o.topic === "Güncel Konut Kredisi Haberi"));
 });
 
 test("maxAgeDays: a missing publication date is never treated as current", async () => {
   const now = new Date("2026-08-27T00:00:00.000Z");
-  const fixedResults = [makeResult({ title: "Tarihsiz Haber", url: "https://a.example/x", publishedAt: "" })];
+  const fixedResults = [makeResult({ title: "Tarihsiz Tapu Haberi", url: "https://a.example/x", publishedAt: "" })];
   const discoverWithFixedRouter = loadTypeScriptModule(
     "src/lib/ai/research/discover.ts",
     (specifier) => {
       if (specifier === "../context/businessProfile") return businessProfile;
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => fixedResults };
       if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
+      if (specifier === "./realEstateScope") return realEstateScope;
       return {};
     },
     { URL },
@@ -152,9 +157,9 @@ test("maxAgeDays: a missing publication date is never treated as current", async
 test("maxAgeDays: fewer than the requested limit is returned rather than padding with excluded old material", async () => {
   const now = new Date("2026-08-27T00:00:00.000Z");
   const fixedResults = [
-    makeResult({ title: "Tek Güncel Haber", url: "https://a.example/1", publishedAt: "2026-08-25T00:00:00.000Z" }),
+    makeResult({ title: "Tek Güncel Kira Haberi", url: "https://a.example/1", publishedAt: "2026-08-25T00:00:00.000Z" }),
     ...Array.from({ length: 4 }, (_, i) =>
-      makeResult({ title: `Eski Haber ${i}`, url: `https://a.example/old-${i}`, publishedAt: "2026-01-01T00:00:00.000Z" }),
+      makeResult({ title: `Eski Konut Haberi ${i}`, url: `https://a.example/old-${i}`, publishedAt: "2026-01-01T00:00:00.000Z" }),
     ),
   ];
   const discoverWithFixedRouter = loadTypeScriptModule(
@@ -163,6 +168,7 @@ test("maxAgeDays: fewer than the requested limit is returned rather than padding
       if (specifier === "../context/businessProfile") return businessProfile;
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => fixedResults };
       if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
+      if (specifier === "./realEstateScope") return realEstateScope;
       return {};
     },
     { URL },
@@ -177,13 +183,14 @@ test("maxAgeDays: fewer than the requested limit is returned rather than padding
 
 test("maxAgeDays omitted (undefined): existing callers/tests are byte-for-byte unaffected", async () => {
   const now = new Date("2026-08-27T00:00:00.000Z");
-  const fixedResults = [makeResult({ title: "Eski Haber", url: "https://a.example/old", publishedAt: "2026-01-01T00:00:00.000Z" })];
+  const fixedResults = [makeResult({ title: "Eski Konut Haberi", url: "https://a.example/old", publishedAt: "2026-01-01T00:00:00.000Z" })];
   const discoverWithFixedRouter = loadTypeScriptModule(
     "src/lib/ai/research/discover.ts",
     (specifier) => {
       if (specifier === "../context/businessProfile") return businessProfile;
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => fixedResults };
       if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
+      if (specifier === "./realEstateScope") return realEstateScope;
       return {};
     },
     { URL },

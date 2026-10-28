@@ -5,6 +5,7 @@ import type { ContentOpportunityFreshness, ResearchSource, SourceTier } from "./
 import type { NormalizedResearchResult, RankedContentOpportunity, RetrievalQuery, TopicFamily } from "./retrieval/types";
 import { retrieveCurrentInformation } from "./retrieval/router";
 import { toTurkeyCalendarDate } from "./retrieval/turkishDate";
+import { classifyRealEstateScope } from "./realEstateScope";
 
 // Phase 2/3 (Current Content Engine — live research foundation +
 // diversity): the deterministic RETRIEVAL -> NORMALIZATION -> CONTENT
@@ -790,6 +791,24 @@ export async function discoverCurrentContentOpportunities(
     options.maxAgeDays !== undefined
       ? results.filter((result) => isWithinMaxAge(result.publishedAt, now, options.maxAgeDays!))
       : results;
-  const opportunities = buildContentOpportunities(ageFiltered, now);
-  return rankContentOpportunities(opportunities, query.keywords, options.limit ?? 5);
+  const limit = options.limit ?? 5;
+
+  // Real-estate scope gate (realEstateScope.ts): the shortlist is built from
+  // property topics; rate/inflation/credit-only or region-only items are
+  // "when needed" material — at most MAX_MACRO_FILL, only from an official/
+  // primary-data source, and only when property topics alone leave the
+  // shortlist short; everything else is excluded.
+  const regionNames = [profile.geography.primary, ...profile.geography.nearby];
+  const scopeOf = (result: NormalizedResearchResult) =>
+    classifyRealEstateScope(`${result.title} ${result.snippet}`, regionNames, result.url);
+  const property = ageFiltered.filter((result) => scopeOf(result) === "property");
+  const macro = ageFiltered.filter((result) => scopeOf(result) === "macro" && MACRO_FILL_TIERS.has(result.tier));
+
+  const ranked = rankContentOpportunities(buildContentOpportunities(property, now), query.keywords, limit);
+  if (ranked.length >= limit || macro.length === 0) return ranked;
+  const fill = rankContentOpportunities(buildContentOpportunities(macro, now), query.keywords, Math.min(MAX_MACRO_FILL, limit - ranked.length));
+  return [...ranked, ...fill];
 }
+
+const MAX_MACRO_FILL = 1;
+const MACRO_FILL_TIERS = new Set<SourceTier>(["official-authority", "primary-data"]);

@@ -243,30 +243,55 @@ topic: fırsatın kısa özeti. hook: caption'ın da kullanacağı kısa, güçl
 // Suat's view, one audience, one CTA (slide 5 only).
 // ============================================================
 const EXPERT_SLIDE_ROLE_BRIEF: Record<string, string> = {
-  hook: "SLAYT 1 — KAPAK (sahibin sorunu): headline kapakta fotoğrafın üzerinde büyük görünür — EN FAZLA 55 karakter, TAM ve kendi başına anlamlı bir cümle (yarım kalan bir koşul cümlesi değil — '... satıyorsanız' tek başına YETMEZ); okuyucuya doğrudan hitap eden, 2 saniyede anlaşılan, merak uyandıran ama clickbait olmayan, premium ve sakin bir cümle. Korku dili yok, doğrulanamayan olgusal iddia yok. body: tek kısa cümlelik bağlam.",
+  hook: "SLAYT 1 — KAPAK (okuyucunun sorusu/sorunu): headline kapakta fotoğrafın üzerinde büyük görünür — EN FAZLA 55 karakter, TAM ve kendi başına anlamlı bir cümle (yarım kalan bir koşul cümlesi değil — '... satıyorsanız' tek başına YETMEZ); okuyucuya doğrudan hitap eden, 2 saniyede anlaşılan, merak uyandıran ama clickbait olmayan, premium ve sakin bir cümle. Korku dili yok, doğrulanamayan olgusal iddia yok. body: tek kısa cümlelik bağlam.",
   "what-happened":
-    "SLAYT 2 — TEŞHİS: headline slaytta BÜYÜK BAŞLIK olarak görünür — en fazla 50 karakter, sade Türkçe, tek bir içgörü (etiket gibi değil, anlamlı bir cümle). body: sahibin kendi durumunu ayırt edebileceği bir teşhis (ör. ilgi mi yok, ilgi var ama teklif mi yok, teklifler beklentinin altında mı) — kesin hüküm değil, profesyonel değerlendirme dili. En fazla 3 kısa cümle.",
+    "SLAYT 2 — TEŞHİS / KONUNUN ÖZÜ: headline slaytta BÜYÜK BAŞLIK olarak görünür — en fazla 50 karakter, sade Türkçe, tek bir içgörü (etiket gibi değil, anlamlı bir cümle). body: okuyucunun kendi durumunu ayırt edebileceği bir teşhis ya da konunun özü (ör. satışta: ilgi mi yok, ilgi var ama teklif mi yok; arsa alımında: ilk bakılması gerekenler) — kesin hüküm değil, profesyonel değerlendirme dili. En fazla 3 kısa cümle.",
   "why-it-matters":
-    "SLAYT 3 — VİLLADA KONUMLANDIRMA NEDEN BELİRLEYİCİ: headline en fazla 50 karakter, büyük başlık. body: villa alıcısının bir evi yalnızca metrekare ve oda sayısıyla değil, aşağıdaki villa değerlendirme boyutlarından birkaçıyla tarttığını Suat'ın uzman bakışıyla anlat; aynı alıcının aynı bütçeyle bakabildiği benzer villalara değin. En fazla 3 kısa cümle. Slayt 2'yi tekrarlama.",
+    "SLAYT 3 — ASIL MESELE (bu mülk türünde ne belirleyici): headline en fazla 50 karakter, büyük başlık. body: talimattaki mülk türüne uyan değerlendirme boyutlarından birkaçıyla Suat'ın uzman bakışını anlat (bir villa/konut yalnızca metrekare ve oda sayısıyla, bir arsa yalnızca büyüklüğü ve fiyatıyla tartılmaz). En fazla 3 kısa cümle. Slayt 2'yi tekrarlama.",
   "what-to-do":
-    "SLAYT 4 — PROFESYONEL SATIŞ STRATEJİSİ NEYİ DEĞİŞTİRİR: headline en fazla 50 karakter, büyük başlık. facts[]: 3-4 somut madde, her biri en fazla 70 karakterlik tek cümle, rakam yok, villa satışına özgü (ör. değeri aynı alıcının bakabildiği benzer villalara göre belirlemek; bahçe, mahremiyet ve yaşam alanını öne çıkaran sunum; hedef alıcıyı netleştirmek; gösterim ve teklif geri bildirimine göre stratejiyi güncellemek). body: tek kısa giriş cümlesi.",
-  cta: "SLAYT 5 — SUAT'IN UZMAN GÖRÜŞÜ + TEK EYLEM ÇAĞRISI: headline en fazla 50 karakter, büyük başlık — bu konuya özgü tek uzman çıkarımını kendisi söyleyen bir cümle (slayt 1-4'ün özeti DEĞİL; 'asıl soru şu' gibi içeriği başka yere erteleyen başlık değil). body: o çıkarımı 1-2 cümleyle aç, ardından villa sahibini villasının değerini, konumlandırmasını ve satış stratejisini Suat'la konuşmaya davet eden TEK ölçülü cümle, birinci tekil şahısla ('benimle', 'bana yazabilirsiniz'; 'Suat Kılıç ile' gibi üçüncü şahıs değil). Bu paketteki TEK eylem çağrısıdır.",
+    "SLAYT 4 — NE DEĞİŞİR / NE YAPILMALI: headline en fazla 50 karakter, büyük başlık. facts[]: 3-4 somut madde, her biri en fazla 70 karakterlik tek cümle, rakam yok, talimattaki konuya özgü (satış ise profesyonel satış stratejisinin değiştirdikleri; alım/yatırım ise doğru inceleme adımları; imar/yapılaşma ise hesaplamada ve belgelerde bakılacaklar). body: tek kısa giriş cümlesi.",
+  cta: "SLAYT 5 — SUAT'IN UZMAN GÖRÜŞÜ + TEK EYLEM ÇAĞRISI: headline en fazla 50 karakter, büyük başlık — bu konuya özgü tek uzman çıkarımını kendisi söyleyen bir cümle (slayt 1-4'ün özeti DEĞİL; 'asıl soru şu' gibi içeriği başka yere erteleyen başlık değil). body: o çıkarımı 1-2 cümleyle aç, ardından okuyucuyu kendi durumunu (talimattaki konuya göre: mülkünün değeri ve satış stratejisi, arsasının imar durumu ve potansiyeli, yatırım kararı vb.) Suat'la konuşmaya davet eden TEK ölçülü cümle, birinci tekil şahısla ('benimle', 'bana yazabilirsiniz'; 'Suat Kılıç ile' gibi üçüncü şahıs değil). Bu paketteki TEK eylem çağrısıdır.",
 };
 
-// Professional evaluation dimensions — the vocabulary of villa-sales
-// expertise, NOT market data, so the region is more than a place name on
-// generic advice.
-const VILLA_EVALUATION_DIMENSIONS = [
-  "mikro konum (sokak, ulaşım, çevre dokusu)",
-  "müstakil villa ile site içi yaşam farkı",
-  "arsa ve bahçe ilişkisi",
-  "mahremiyet",
-  "mimari karakter ve fiziksel durum",
-  "gerçekten kullanılabilir yaşam alanı",
-  "sunum (fotoğraf, ilan metni, gösterim)",
-  "aynı alıcının aynı bütçeyle bakabildiği alternatifler",
-  "hedef alıcı profili",
-];
+// Professional evaluation dimensions per property type — the vocabulary of
+// real-estate expertise, NOT market data, so the region is more than a place
+// name on generic advice. Atlas covers the whole property scope (villa is one
+// type, not the default): the writer picks the set that matches the
+// instruction.
+const PROPERTY_EVALUATION_DIMENSIONS: Record<string, string[]> = {
+  "villa / konut": [
+    "mikro konum (sokak, ulaşım, çevre dokusu)",
+    "müstakil yapı ile site içi yaşam farkı",
+    "arsa ve bahçe ilişkisi",
+    "mahremiyet",
+    "mimari karakter ve fiziksel durum",
+    "gerçekten kullanılabilir yaşam alanı",
+    "sunum (fotoğraf, ilan metni, gösterim)",
+    "aynı alıcının aynı bütçeyle bakabildiği alternatifler",
+    "hedef alıcı profili",
+  ],
+  "arsa / arazi": [
+    "imar durumunun resmi kaynaktan (belediye imar durumu belgesi) teyidi",
+    "tapu niteliği ve hisseli/müstakil tapu farkı",
+    "yola cephe ve ulaşım",
+    "eğim, zemin ve topografya",
+    "altyapıya (yol, su, elektrik) erişim",
+    "parselin şekli ve gerçekten kullanılabilir alanı",
+    "hedef kullanım (konut, yatırım, tarım)",
+  ],
+  "imar / yatırım / inşaat-yapılaşma": [
+    "emsal (KAKS) ve TAKS gibi kavramların yapılaşmaya etkisi (oran/sayı vermeden)",
+    "çekme mesafeleri ve plan notlarının kullanılabilir alana etkisi",
+    "resmi plan ve imar durumu belgesine dayanmanın önemi",
+    "maliyet kalemlerini hesaba katma mantığı (rakam vermeden)",
+    "yatırım süresi, likidite ve çıkış senaryosu",
+  ],
+  "piyasa / bölgesel gelişmeler": [
+    "aynı bölgedeki benzer mülklerle karşılaştırma mantığı",
+    "mikro konum farkları",
+    "bölgesel gelişmelerin mülk değerine olası etkisini (uydurmadan) değerlendirme",
+  ],
+};
 
 // A production review flagged these as unsupported frequency claims and
 // consultant jargon in expert copy.
@@ -275,35 +300,42 @@ const EXPERT_JARGON = ["rakip grup", "değer önerisi", "segment", "algı yönet
 
 function buildExpertContentPackagePrompt(): string {
   const geography = ATLAS_DEFAULT_BUSINESS_PROFILE.geography;
+  const dimensions = Object.entries(PROPERTY_EVALUATION_DIMENSIONS)
+    .map(([type, items]) => `- ${type}: ${items.join("; ")}`)
+    .join("\n");
 
-  return `Kimlik: ${SIGNATURE_NAME} (${SIGNATURE_TITLE}) için çalışan profesyonel bir gayrimenkul içerik stratejistisin. Bu bir HABER içeriği DEĞİL: kullanıcının talimatındaki konu için KALICI (evergreen) bir UZMAN İÇERİĞİ üretiyorsun. Okuyucu sonunda "bu danışman bu bölgede böyle bir mülkün nasıl konumlandırılıp satılacağını biliyor; onunla konuşmalıyım" demeli.
+  return `Kimlik: ${SIGNATURE_NAME} (${SIGNATURE_TITLE}) için çalışan profesyonel bir gayrimenkul içerik stratejistisin. Bu bir HABER içeriği DEĞİL: kullanıcının talimatındaki konu için KALICI (evergreen) bir UZMAN İÇERİĞİ üretiyorsun. Okuyucu sonunda "bu danışman bu konuyu ve bu bölgeyi gerçekten biliyor; onunla konuşmalıyım" demeli.
 
-Ses: profesyonel, bilgili, sakin, güvenilir, sade ve insani Türkçe; sahiple yüz yüze konuşan deneyimli bir danışman gibi. ASLA: kurumsal PR dili, yapay zeka dolgu dili, abartı, korku/satış baskısı, "hayatınızı bir üst seviyeye taşıyın" gibi kalıplar, "portföyünüzü bana verin" gibi doğrudan talep. Şu kalıplardan ve yakın varyasyonlarından kaçın: ${AVOIDED_CLICHE_PHRASES.map((p) => `"${p}"`).join(", ")}.
-Danışman jargonu kullanma, sade Türkçe karşılığını yaz: ${EXPERT_JARGON.map((p) => `"${p}"`).join(", ")} (ör. "rakip grup" yerine "aynı alıcının aynı bütçeyle bakabildiği benzer villalar").
+Ses: profesyonel, bilgili, sakin, güvenilir, sade ve insani Türkçe; okuyucuyla yüz yüze konuşan deneyimli bir danışman gibi. ASLA: kurumsal PR dili, yapay zeka dolgu dili, abartı, korku/satış baskısı, "hayatınızı bir üst seviyeye taşıyın" gibi kalıplar, "portföyünüzü bana verin" gibi doğrudan talep. Şu kalıplardan ve yakın varyasyonlarından kaçın: ${AVOIDED_CLICHE_PHRASES.map((p) => `"${p}"`).join(", ")}.
+Danışman jargonu kullanma, sade Türkçe karşılığını yaz: ${EXPERT_JARGON.map((p) => `"${p}"`).join(", ")} (ör. "rakip grup" yerine "aynı alıcının aynı bütçeyle bakabildiği benzer mülkler").
 
 Görev: Talimata göre TEK bir yapılandırılmış içerik paketi üret. Yalnızca istenen JSON alanlarını doldur.
 
+Kural — KONU KAPSAMI: Önce talimattaki konuyu ve mülk türünü belirle (villa/konut, arsa/arazi, imar/yatırım, inşaat/yapılaşma, gayrimenkul piyasası/bölgesel gelişme, yatırım eğitimi). Talimat villa demiyorsa villa varsayma; paketin tamamını (slaytlar, caption, hashtag, visualBrief) o konuya göre yaz.
+
 Kural — KİTLE: Talimattaki hedef kitleye TEK kitle olarak yaz. Talimatta olmayan kitleleri (alıcı, yatırımcı, kiracı, kiraya veren, arsa sahibi, yabancı alıcı, genel mülk sahibi vb.) EKLEME — caption dahil hiçbir yerde. Okuyucuya doğrudan hitap et.
 
-Kural — TEK İLERLEYİŞ, TEKRARSIZLIK: sahibin sorunu (slayt 1) → teşhis (slayt 2) → bu mülk türünde konumlandırma neden belirleyici (slayt 3) → profesyonel satış stratejisi neyi değiştirir (slayt 4) → ${SIGNATURE_NAME}'ın görüşü + tek eylem çağrısı (slayt 5). Her slayt yalnızca kendi işini yapar; aynı fikri iki slaytta ya da slayt + caption'da ana mesaj olarak tekrarlama.
+Kural — TEK İLERLEYİŞ, TEKRARSIZLIK: okuyucunun sorusu/sorunu (slayt 1) → teşhis / konunun özü (slayt 2) → bu mülk türünde asıl belirleyici olan (slayt 3) → ne değişir / ne yapılmalı (slayt 4) → ${SIGNATURE_NAME}'ın görüşü + tek eylem çağrısı (slayt 5). Her slayt yalnızca kendi işini yapar; aynı fikri iki slaytta ya da slayt + caption'da ana mesaj olarak tekrarlama.
 
-Kural — UZMANLIK, VERİ DEĞİL: Bölge adını genel tavsiyenin başına eklemek yetmez. Uzmanlığı şu profesyonel değerlendirme boyutlarıyla göster (konuya uyanları seç, hepsini zorlama): ${VILLA_EVALUATION_DIMENSIONS.join("; ")}. Bunlar piyasa istatistiği değil, bir danışmanın mülke bakış açısıdır.
+Kural — UZMANLIK, VERİ DEĞİL: Bölge adını genel tavsiyenin başına eklemek yetmez. Uzmanlığı talimattaki konuya uyan profesyonel değerlendirme boyutlarıyla göster (uyanları seç, hepsini zorlama):
+${dimensions}
+Bunlar piyasa istatistiği değil, bir danışmanın mülke bakış açısıdır.
 
-Kural — OLGU YOK, YORUM VAR (kritik): Doğrulanmış bir kaynak YOK. Hiçbir istatistik, fiyat, oran, süre (ör. ortalama satış süresi), talep/alıcı sayısı, piyasa performansı, mevzuat bilgisi veya doğrulanamayan yerel bilgi YAZMA; rakam kullanma. ContentPackage.facts boş dizi olsun. Şu sıklık/kesinlik ifadelerini KULLANMA: ${EXPERT_FREQUENCY_WORDS.map((p) => `"${p}"`).join(", ")}. Bir gözlem paylaşacaksan açıkça ${SIGNATURE_NAME}'ın kişisel değerlendirmesi olarak ve sıklık iddiası kurmadan yaz ("bence ...", "bir villaya bakarken ilk sorduğum ..."). Sahte deneyim/otorite iddiası ("20 yıllık tecrübemle" gibi) ekleme.
+Kural — OLGU YOK, YORUM VAR (kritik): Doğrulanmış bir kaynak YOK. Hiçbir istatistik, fiyat, oran, süre (ör. ortalama satış süresi), talep/alıcı sayısı, piyasa performansı, mevzuat bilgisi (yürürlük tarihi, oran, zorunluluk) veya doğrulanamayan yerel bilgi YAZMA; rakam kullanma. Bir kavramı (ör. emsal/TAKS) genel olarak açıklayabilirsin ama okuyucuyu kendi durumunun resmi belgesine (imar durumu, tapu kaydı) yönlendir. ContentPackage.facts boş dizi olsun. Şu sıklık/kesinlik ifadelerini KULLANMA: ${EXPERT_FREQUENCY_WORDS.map((p) => `"${p}"`).join(", ")}. Bir gözlem paylaşacaksan açıkça ${SIGNATURE_NAME}'ın kişisel değerlendirmesi olarak ve sıklık iddiası kurmadan yaz ("bence ...", "bir mülke bakarken ilk sorduğum ..."). Sahte deneyim/otorite iddiası ("20 yıllık tecrübemle" gibi) ekleme.
 
 Yerel konumlandırma: ${SIGNATURE_NAME}'ın uzmanlık bölgesi ${geography.primary} ve çevresi (${geography.nearby.join(", ")}). Talimatta geçen bölgeyi doğal biçimde an; bölge hakkında uydurma bilgi verme.
 
 Slayt içerikleri (sıra ve rol sistem tarafından sabittir; yalnızca headline/body/facts/visualBrief doldur). Slayt 2-5'in headline'ları slaytlarda BÜYÜK BAŞLIK olarak görünür; body'ler mobilde okunacak kadar kısa olsun:
 ${Object.values(EXPERT_SLIDE_ROLE_BRIEF).join("\n")}
-visualBrief: SADECE görsel konsept, sahne tarifi (ör. "olgun ağaçlarla çevrili, geniş bahçeli çağdaş müstakil villa, doğal taş ve ahşap, yumuşak gün ışığı") — ekranda yazı, marka veya logo isteme.
+visualBrief: SADECE görsel konsept, konuya uygun sahne tarifi (villa/konut ise ör. "olgun ağaçlarla çevrili, geniş bahçeli çağdaş müstakil villa, doğal taş ve ahşap, yumuşak gün ışığı"; arsa/arazi ise ör. "kuzey İstanbul'un ağaçlık, yeşil kırsal dokusunda boş bir arazi parseli, doğal gün ışığı"; imar/yapılaşma ise ör. "mimari vaziyet planı ve maket üzerinde çalışılan sakin bir masa") — ekranda yazı, marka veya logo isteme.
 
-hook: 5-12 kelime, villa sahibine hitap eden kısa açılış cümlesi; slayt 1 headline ile birebir aynı olmasın. Yazım hatası olmasın.
+hook: 5-12 kelime, talimattaki hedef kitleye hitap eden kısa açılış cümlesi; slayt 1 headline ile birebir aynı olmasın. Yazım hatası olmasın.
 
-Caption (karuselin tekrarı DEĞİL; slayt cümlelerini yeniden yazma): 2-3 kısa paragraf — kısa bağlam + ${SIGNATURE_NAME}'ın slaytlarda olmayan kişisel bakışı + son paragrafta tek kısa, birinci tekil şahısla konuşma daveti (yeni/ikinci bir eylem önerme; slayt 5'teki davet cümlesini ve onun "değer, konumlandırma, satış stratejisi" sıralamasını tekrarlama — farklı, daha kişisel bir ifade kullan). Caption baştan sona birinci tekil şahıs; kendinden üçüncü şahısla söz etme. Şu imzayla biter:
+Caption (karuselin tekrarı DEĞİL; slayt cümlelerini yeniden yazma): 2-3 kısa paragraf — kısa bağlam + ${SIGNATURE_NAME}'ın slaytlarda olmayan kişisel bakışı + son paragrafta tek kısa, birinci tekil şahısla konuşma daveti (yeni/ikinci bir eylem önerme; slayt 5'teki davet cümlesini tekrarlama — farklı, daha kişisel bir ifade kullan). Caption baştan sona birinci tekil şahıs; kendinden üçüncü şahısla söz etme. Şu imzayla biter:
 ${SIGNATURE_NAME}
 ${SIGNATURE_TITLE}
 
-Hashtag: 5-9 arası, konuya uygun; her biri BOŞLUKSUZ tek kelime (ör. #VillaSatışı, "#villa satışı" değil); bölge etiketi yalnızca talimatta geçen bölge için; jenerik yığın yok; tutarlı yazım.
+Hashtag: 5-9 arası, konuya uygun; her biri BOŞLUKSUZ tek kelime (ör. #VillaSatışı veya #ArsaYatırımı, "#villa satışı" değil); bölge etiketi yalnızca talimatta geçen bölge için; jenerik yığın yok; tutarlı yazım.
 
 topic: talimatın kısa özeti. source: {"name": "", "url": "", "publishedAt": ""} — sistem doldurur.`;
 }

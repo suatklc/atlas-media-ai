@@ -465,7 +465,7 @@ function loadGenerateVisualRoute(overrides = {}) {
     },
     "@/lib/ai/creative/goldStandardImagePrompt": {
       buildGoldStandardImagePrompt: () => "gold-standard-prompt",
-      buildExpertVillaImagePrompt: () => "expert-villa-prompt",
+      buildExpertVillaImagePrompt: () => "expert-villa-prompt", prefersVillaArtDirection: () => true,
     },
     "@/lib/ai/context/businessProfile": { ATLAS_DEFAULT_BUSINESS_PROFILE: { geography: { primary: "Zekeriyaköy", nearby: [] } } },
     "@/lib/ai/research/retrieval/turkishDate": turkishDate,
@@ -643,7 +643,7 @@ function loadGenerateVisualRouteForContentPackage() {
       isContentPackage: (v) => Boolean(v && typeof v === "object" && Array.isArray(v.slides)),
       validateContentPackage: () => ({ ok: true }),
     },
-    "@/lib/ai/creative/goldStandardImagePrompt": { buildGoldStandardImagePrompt: () => "prompt", buildExpertVillaImagePrompt: () => "expert-villa-prompt" },
+    "@/lib/ai/creative/goldStandardImagePrompt": { buildGoldStandardImagePrompt: () => "prompt", buildExpertVillaImagePrompt: () => "expert-villa-prompt", prefersVillaArtDirection: () => true },
     "@/lib/ai/context/businessProfile": { ATLAS_DEFAULT_BUSINESS_PROFILE: { geography: { primary: "Zekeriyaköy", nearby: [] } } },
     "@/lib/ai/research/retrieval/turkishDate": turkishDate,
     "@/lib/ai/content/carouselSlides": carouselSlides,

@@ -22,7 +22,11 @@ import { resolveCarouselStructure } from "@/lib/ai/content/carousel-structure";
 import { buildSeedMessage, isContentOpportunity } from "@/lib/ai/research/opportunity";
 import { isVisualFormat, buildFormatSuffix } from "@/lib/ai/research/formatRecommendation";
 import { isContentPackage, validateContentPackage, type ContentPackage } from "@/lib/ai/content/contentPackage";
-import { buildExpertVillaImagePrompt, buildGoldStandardImagePrompt } from "@/lib/ai/creative/goldStandardImagePrompt";
+import {
+  buildExpertVillaImagePrompt,
+  buildGoldStandardImagePrompt,
+  prefersVillaArtDirection,
+} from "@/lib/ai/creative/goldStandardImagePrompt";
 import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "@/lib/ai/context/businessProfile";
 import {
   appendHashtagsToCaption,
@@ -279,10 +283,12 @@ export async function POST(request: NextRequest) {
       generated = await generateImage({
         provider,
         model,
-        // Expert/portfolio packages get the premium-villa art direction
-        // (region from the business profile); news keeps its prompt.
+        // Expert packages about a home get the premium-villa art direction
+        // (region from the business profile); land/zoning/other expert
+        // topics and news keep the general Turkish-context prompt.
         prompt:
-          rawContentPackage.contentMode === "expert"
+          rawContentPackage.contentMode === "expert" &&
+          prefersVillaArtDirection(`${contentPackage.topic} ${contentPackage.hook} ${hookSlide.visualBrief}`)
             ? buildExpertVillaImagePrompt(hookSlide.visualBrief, ATLAS_DEFAULT_BUSINESS_PROFILE.geography.primary)
             : buildGoldStandardImagePrompt(hookSlide.visualBrief),
         aspectRatio: platformConfig.aspectRatio,
