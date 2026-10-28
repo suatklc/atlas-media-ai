@@ -57,7 +57,7 @@ const TOPIC_KEYWORD_CATEGORIES: { category: string; keywords: string[] }[] = [
   // observed to drop a genuine TKGM circular on foreigners' property
   // valuation reports ("Yabancıların Taşınmaz Edinimlerinde ...").
   { category: "tapu-kadastro", keywords: ["tapu", "kadastro", "takbis", "tescil", "taşınmaz"] },
-  { category: "imar-yapilasma", keywords: ["imar", "inşaat", "ruhsat", "kentsel dönüşüm"] },
+  { category: "imar-yapilasma", keywords: ["imar", "inşaat", "ruhsat", "yapılaşma", "kentsel dönüşüm"] },
   { category: "konut-piyasasi", keywords: ["konut", "satış", "fiyat"] },
   { category: "kira", keywords: ["kira", "kiralık"] },
   { category: "kredi-faiz", keywords: ["faiz", "kredi", "ipotek"] },

@@ -19,22 +19,55 @@
 // "genuinely reused by two adapters now" extraction turishDate.ts already
 // documents for itself.
 
-const TURKISH_WORD_CHARS = "a-zA-ZçğıöşüÇĞİÖŞÜ0-9_";
+const TURKISH_WORD_CHARS = "a-zA-ZçğıöşüâîûÇĞİÖŞÜÂÎÛ0-9_";
 const TURKISH_WORD_CHAR_PATTERN = new RegExp(`^[${TURKISH_WORD_CHARS}]$`);
 
 function isTurkishWordChar(char: string | undefined): boolean {
   return char !== undefined && TURKISH_WORD_CHAR_PATTERN.test(char);
 }
 
+// Turkish is agglutinative: a keyword usually appears with suffixes
+// ("konutlarına", "konutun", "arsaların", "kentsel dönüşümde"). Requiring a
+// word boundary on BOTH sides silently dropped real property news — live
+// (Handoff 9): ÇŞİDB's "MALTEPE'DE VATANDAŞLAR SAĞLAM KONUTLARINA
+// KAVUŞUYOR" and "500 BİN SOSYAL KONUTUN ..." never reached the Radar. So a
+// match must START at a word boundary and may be followed by suffix
+// letters, with two narrow exceptions:
+//   - EXACT_ONLY_KEYWORDS: keywords whose suffixed forms are a different,
+//     unrelated word — "yapı" must never match "yapılmasına" (the real
+//     Resmî Gazete false positive this module was built to prevent).
+//   - BLOCKED_SUFFIXED_WORDS: whole words that start like a keyword but
+//     mean something else ("kiraz" ≠ kira, "imaret" ≠ imar, "mülki" =
+//     civil administration; "mülkiyet" stays a match).
+const EXACT_ONLY_KEYWORDS = new Set(["yapı"]);
+const BLOCKED_SUFFIXED_WORD_PREFIXES = ["kiraz", "imaret"];
+const BLOCKED_SUFFIXED_WORDS = new Set(["mülki", "mülkî"]);
+
+function wordAt(haystack: string, start: number): string {
+  let end = start;
+  while (end < haystack.length && isTurkishWordChar(haystack[end])) end += 1;
+  return haystack.slice(start, end);
+}
+
 function hasWordBoundaryMatch(haystack: string, needle: string): boolean {
+  const exactOnly = EXACT_ONLY_KEYWORDS.has(needle);
+  // For a multi-word keyword, suffixes attach to its LAST word only.
+  const lastWordStart = needle.lastIndexOf(" ") + 1;
   let searchFrom = 0;
   for (;;) {
     const index = haystack.indexOf(needle, searchFrom);
     if (index === -1) return false;
-    const before = index > 0 ? haystack[index - 1] : undefined;
-    const after = haystack[index + needle.length];
-    if (!isTurkishWordChar(before) && !isTurkishWordChar(after)) return true;
     searchFrom = index + 1;
+    const before = index > 0 ? haystack[index - 1] : undefined;
+    if (isTurkishWordChar(before)) continue;
+    const after = haystack[index + needle.length];
+    if (!isTurkishWordChar(after)) return true;
+    if (exactOnly) continue;
+    const suffixedWord = wordAt(haystack, index + lastWordStart);
+    if (BLOCKED_SUFFIXED_WORDS.has(suffixedWord) || BLOCKED_SUFFIXED_WORD_PREFIXES.some((prefix) => suffixedWord.startsWith(prefix))) {
+      continue;
+    }
+    return true;
   }
 }
 
@@ -64,6 +97,7 @@ export const REAL_ESTATE_RELEVANCE_KEYWORDS = [
   "konut",
   "inşaat",
   "yapı",
+  "yapılaşma",
   "kentsel dönüşüm",
   "mekansal plan",
   "çevre düzeni planı",
@@ -100,6 +134,7 @@ export const PROPERTY_MARKET_RELEVANCE_KEYWORDS = [
   "parsel",
   "konut",
   "inşaat",
+  "yapılaşma",
   "kentsel dönüşüm",
   "emlak",
   "mülk",

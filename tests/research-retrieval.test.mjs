@@ -377,11 +377,12 @@ const RESMI_GAZETE_FIXTURE_HTML = `
 <div class="fihrist-item mb-1"><a href="https://www.resmigazete.gov.tr/eskiler/2026/08/20260827-9.htm" data-modal="True">–– Elektrik Piyasasında Üretim Faaliyetinde Bulunmak Üzere Su Kullanım Hakkı Anlaşması</a></div>
 </body></html>`;
 
-// Research Breadth Expansion v2: resmiGazete.ts now fetches via
-// secureFetch.ts's fetchWithSystemTrust (node:https + a system-CA Agent)
-// instead of global fetch() — these two tests mock that module directly
-// instead of the global fetch, matching the real import.
-test("resmiGazete.ts: keeps a genuine tapu-related entry and rejects the real false-positive case ('yapılmasına' must not match 'yapı')", async () => {
+// Handoff 9: resmiGazete.ts uses standard fetch() first and falls back to
+// secureFetch.ts's fetchWithSystemTrust (node:https + system CA) ONLY on a
+// TLS/certificate error — live, fetch() answered in ~115 ms while the
+// node:https path timed out every run.
+function loadResmiGazete({ fetchImpl, secureImpl }) {
+  const calls = { fetch: 0, secure: 0 };
   const resmiGazete = loadTypeScriptModule(
     "src/lib/ai/research/retrieval/providers/resmiGazete.ts",
     (specifier) => {
@@ -391,17 +392,41 @@ test("resmiGazete.ts: keeps a genuine tapu-related entry and rejects the real fa
       if (specifier === "../relevance") return relevance;
       if (specifier === "../secureFetch") {
         return {
-          fetchWithSystemTrust: async () => ({
-            status: 200,
-            contentType: "text/html; charset=UTF-8",
-            text: RESMI_GAZETE_FIXTURE_HTML,
-          }),
+          fetchWithSystemTrust: async (...args) => {
+            calls.secure += 1;
+            return secureImpl(...args);
+          },
         };
       }
       return {};
     },
-    { console: { error: () => {}, log: () => {}, warn: () => {} } },
+    {
+      console: { error: () => {}, log: () => {}, warn: () => {} },
+      fetch: async (...args) => {
+        calls.fetch += 1;
+        return fetchImpl(...args);
+      },
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      Buffer,
+    },
   );
+  return { resmiGazete, calls };
+}
+
+const htmlResponse = (status, body) => ({
+  status,
+  headers: { get: (name) => (name === "content-type" ? "text/html; charset=UTF-8" : null) },
+  arrayBuffer: async () => new TextEncoder().encode(body).buffer,
+});
+const fixtureSecure = async () => ({ status: 200, contentType: "text/html; charset=UTF-8", text: RESMI_GAZETE_FIXTURE_HTML });
+
+test("resmiGazete.ts: keeps a genuine tapu-related entry and rejects the real false-positive case ('yapılmasına' must not match 'yapı')", async () => {
+  const { resmiGazete, calls } = loadResmiGazete({
+    fetchImpl: async () => htmlResponse(200, RESMI_GAZETE_FIXTURE_HTML),
+    secureImpl: fixtureSecure,
+  });
 
   const results = await resmiGazete.fetchResmiGazeteAnnouncements();
   assert.equal(results.length, 1, "only the genuine tapu entry should survive the relevance filter");
@@ -409,48 +434,43 @@ test("resmiGazete.ts: keeps a genuine tapu-related entry and rejects the real fa
   assert.equal(results[0].publisher, "T.C. Resmî Gazete");
   assert.equal(results[0].tier, "official-authority");
   assert.equal(results[0].publishedAt, new Date("2026-08-27T00:00:00+03:00").toISOString());
+  assert.equal(calls.fetch, 1);
+  assert.equal(calls.secure, 0, "standard fetch succeeded — no secureFetch fallback");
 });
 
-test("resmiGazete.ts: a network failure is caught and returns an empty list, never throws", async () => {
-  const resmiGazete = loadTypeScriptModule(
-    "src/lib/ai/research/retrieval/providers/resmiGazete.ts",
-    (specifier) => {
-      if (specifier === "../sourceQuality") return sourceQuality;
-      if (specifier === "../turkishDate") return turkishDate;
-      if (specifier === "../relevance") return relevance;
-      if (specifier === "../secureFetch") {
-        return {
-          fetchWithSystemTrust: async () => {
-            throw new Error("simulated TLS/network failure");
-          },
-        };
-      }
-      return {};
+test("resmiGazete.ts: a TLS/certificate error from fetch() falls back to secureFetch (the original UNABLE_TO_VERIFY_LEAF_SIGNATURE case)", async () => {
+  const { resmiGazete, calls } = loadResmiGazete({
+    fetchImpl: async () => {
+      const error = new TypeError("fetch failed");
+      error.cause = { code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE", message: "unable to verify the first certificate" };
+      throw error;
     },
-    { console: { error: () => {}, log: () => {}, warn: () => {} } },
-  );
+    secureImpl: fixtureSecure,
+  });
+
+  const results = await resmiGazete.fetchResmiGazeteAnnouncements();
+  assert.equal(calls.secure, 1);
+  assert.equal(results.length, 1);
+  assert.match(results[0].title, /Tapu Sicili/);
+});
+
+test("resmiGazete.ts: a non-TLS network failure is caught and returns an empty list, never throws — and never retries via secureFetch", async () => {
+  const { resmiGazete, calls } = loadResmiGazete({
+    fetchImpl: async () => {
+      const error = new TypeError("fetch failed");
+      error.cause = { code: "ECONNRESET", message: "socket hang up" };
+      throw error;
+    },
+    secureImpl: fixtureSecure,
+  });
 
   const results = await resmiGazete.fetchResmiGazeteAnnouncements();
   assert.deepEqual(Array.from(results), []);
+  assert.equal(calls.secure, 0);
 });
 
 test("resmiGazete.ts: a non-2xx status is treated as a failure and returns an empty list, never throws", async () => {
-  const resmiGazete = loadTypeScriptModule(
-    "src/lib/ai/research/retrieval/providers/resmiGazete.ts",
-    (specifier) => {
-      if (specifier === "../sourceQuality") return sourceQuality;
-      if (specifier === "../turkishDate") return turkishDate;
-      if (specifier === "../relevance") return relevance;
-      if (specifier === "../secureFetch") {
-        return {
-          fetchWithSystemTrust: async () => ({ status: 503, contentType: "text/html", text: "" }),
-        };
-      }
-      return {};
-    },
-    { console: { error: () => {}, log: () => {}, warn: () => {} } },
-  );
-
+  const { resmiGazete } = loadResmiGazete({ fetchImpl: async () => htmlResponse(503, ""), secureImpl: fixtureSecure });
   const results = await resmiGazete.fetchResmiGazeteAnnouncements();
   assert.deepEqual(Array.from(results), []);
 });
@@ -566,6 +586,26 @@ test("tkgm.ts: extractSubjectLine reads the official 'Konu :' subject from real 
 test("relevance.ts: word-boundary matching rejects the real 'yapılmasına' false-positive for 'yapı', case-insensitively", () => {
   assert.equal(relevance.hasAnyWordBoundaryMatch("Değişiklik Yapılmasına Dair Yönetmelik", ["yapı"]), false);
   assert.equal(relevance.hasAnyWordBoundaryMatch("Yeni Bir Yapı İnşa Edildi", ["yapı"]), true);
+});
+
+test("relevance.ts: suffixed Turkish forms match (live-dropped ÇŞİDB titles), without the known false positives", () => {
+  const RE = relevance.REAL_ESTATE_RELEVANCE_KEYWORDS;
+  const PM = relevance.PROPERTY_MARKET_RELEVANCE_KEYWORDS;
+  // Real ÇŞİDB /haberler titles the old both-sides word boundary dropped.
+  assert.equal(relevance.hasAnyWordBoundaryMatch("MALTEPE’DE VATANDAŞLAR SAĞLAM KONUTLARINA KAVUŞUYOR", RE), true);
+  assert.equal(relevance.hasAnyWordBoundaryMatch("BAKAN KURUM: 500 BİN SOSYAL KONUTUN YAKLAŞIK 80 BİNİ BİTME AŞAMASINA GELDİ", RE), true);
+  assert.equal(relevance.hasAnyWordBoundaryMatch("Olağanüstü Hal Kapsamında Yerleşme ve Yapılaşmaya İlişkin Karar", RE), true);
+  assert.equal(relevance.hasAnyWordBoundaryMatch("Kentsel dönüşümde yeni dönem", RE), true, "suffix on the last word of a phrase");
+  assert.equal(relevance.hasAnyWordBoundaryMatch("Kat mülkiyeti kanununda değişiklik", PM), true);
+  assert.equal(relevance.hasAnyWordBoundaryMatch("Kira artışlarında yeni dönem", PM), true);
+  // Still rejected: the documented "yapı" false positive, and look-alike words.
+  assert.equal(relevance.hasAnyWordBoundaryMatch("Değişiklik Yapılmasına Dair Yönetmelik", RE), false);
+  assert.equal(relevance.hasAnyWordBoundaryMatch("Kiraz ihracatında rekor", PM), false);
+  assert.equal(relevance.hasAnyWordBoundaryMatch("Mülki idare amirleri kararnamesi", PM), false);
+  assert.equal(relevance.hasAnyWordBoundaryMatch("İmaret restorasyonu tamamlandı", RE), false);
+  assert.equal(relevance.hasAnyWordBoundaryMatch("Akaryakıt fiyatlarına zam", PM), false);
+  // A keyword must still start a word.
+  assert.equal(relevance.hasAnyWordBoundaryMatch("Sanayikonut kelimesi", RE), false);
 });
 
 test("relevance.ts: REAL_ESTATE_RELEVANCE_KEYWORDS covers the property/zoning vocabulary both mixed-content adapters rely on", () => {

@@ -33,12 +33,46 @@ const FETCH_TIMEOUT_MS = 10_000;
 // generous safety cap, not a tuned expectation.
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
+// Standard fetch() first; the node:https system-CA path (secureFetch.ts) is
+// only a fallback for a TLS/certificate error. Live (Handoff 9): fetch()
+// returned 200 in ~115 ms while the node:https path timed out every time,
+// so the old "always secureFetch" route had become the adapter's failure.
+const TLS_ERROR_PATTERN = /CERT|SSL|TLS|ISSUER|SIGNATURE|SELF_SIGNED/i;
+
+function isTlsError(error: unknown): boolean {
+  const cause = (error as { cause?: { code?: unknown; message?: unknown } } | null)?.cause;
+  return TLS_ERROR_PATTERN.test(`${cause?.code ?? ""} ${cause?.message ?? ""}`);
+}
+
+async function fetchWithStandardFetch(): Promise<{ status: number; contentType: string; text: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(HOMEPAGE_URL, { signal: controller.signal, headers: { Accept: "text/html" } });
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > MAX_RESPONSE_BYTES) throw new Error("response exceeded the size limit");
+    return {
+      status: response.status,
+      contentType: response.headers.get("content-type") ?? "",
+      text: Buffer.from(buffer).toString("utf-8"),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchHomepageHtml(): Promise<string> {
-  const result = await fetchWithSystemTrust(HOMEPAGE_URL, {
-    timeoutMs: FETCH_TIMEOUT_MS,
-    maxBytes: MAX_RESPONSE_BYTES,
-    accept: "text/html",
-  });
+  let result: { status: number; contentType: string; text: string };
+  try {
+    result = await fetchWithStandardFetch();
+  } catch (error) {
+    if (!isTlsError(error)) throw error;
+    result = await fetchWithSystemTrust(HOMEPAGE_URL, {
+      timeoutMs: FETCH_TIMEOUT_MS,
+      maxBytes: MAX_RESPONSE_BYTES,
+      accept: "text/html",
+    });
+  }
 
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`request failed with status ${result.status}`);

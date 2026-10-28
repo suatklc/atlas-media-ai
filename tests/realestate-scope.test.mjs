@@ -177,3 +177,9 @@ test("scope: a property-domain source (TKGM) is in scope without property wordin
     "out",
   );
 });
+
+test("discover: the retrieval query includes 'yapılaşma' (TKGM's live 'Yerleşme ve Yapılaşmaya İlişkin' notice was dropped without it)", () => {
+  const discover = loadDiscover([]);
+  const businessProfile = loadTypeScriptModule("src/lib/ai/context/businessProfile.ts");
+  assert.ok(discover.buildRetrievalQuery(businessProfile.ATLAS_DEFAULT_BUSINESS_PROFILE).keywords.includes("yapılaşma"));
+});
