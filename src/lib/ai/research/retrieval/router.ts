@@ -4,6 +4,7 @@ import { fetchTkgmAnnouncements } from "./providers/tkgm";
 import { fetchResmiGazeteAnnouncements } from "./providers/resmiGazete";
 import { fetchCsbAnnouncements } from "./providers/csb";
 import { fetchEconomyNewsAnnouncements } from "./providers/economyNews";
+import { errorKind, radarDiag, tally } from "./diagnostics";
 
 const DEFAULT_MAX_RESULTS = 20;
 
@@ -55,12 +56,12 @@ const DEFAULT_MAX_RESULTS = 20;
 //
 // Adding a real, live-validated future adapter means adding one more
 // entry to this array; nothing else here changes.
-const ADAPTERS: Array<() => Promise<NormalizedResearchResult[]>> = [
-  fetchTcmbAnnouncements,
-  fetchTkgmAnnouncements,
-  fetchResmiGazeteAnnouncements,
-  fetchCsbAnnouncements,
-  fetchEconomyNewsAnnouncements,
+const ADAPTERS: Array<{ source: string; fetch: () => Promise<NormalizedResearchResult[]> }> = [
+  { source: "tcmb", fetch: fetchTcmbAnnouncements },
+  { source: "tkgm", fetch: fetchTkgmAnnouncements },
+  { source: "resmi-gazete", fetch: fetchResmiGazeteAnnouncements },
+  { source: "csb", fetch: fetchCsbAnnouncements },
+  { source: "aa-dunya", fetch: fetchEconomyNewsAnnouncements },
 ];
 
 function normalizeForMatch(text: string): string {
@@ -91,12 +92,18 @@ export async function retrieveCurrentInformation(
   const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS;
 
   const settled = await Promise.all(
-    ADAPTERS.map((adapter) =>
-      adapter().catch((error: unknown) => {
+    ADAPTERS.map(async (adapter) => {
+      const startedAt = Date.now();
+      try {
+        const items = await adapter.fetch();
+        radarDiag("adapter", { source: adapter.source, status: "ok", raw: items.length, ms: Date.now() - startedAt });
+        return items;
+      } catch (error: unknown) {
         console.error("Research adapter failed:", error instanceof Error ? error.message : String(error));
+        radarDiag("adapter", { source: adapter.source, status: "error", error: errorKind(error), raw: 0, ms: Date.now() - startedAt });
         return [] as NormalizedResearchResult[];
-      }),
-    ),
+      }
+    }),
   );
   const all = settled.flat();
 
@@ -104,8 +111,13 @@ export async function retrieveCurrentInformation(
     return all.slice(0, maxResults);
   }
 
-  return all
-    .map((result) => ({ result, score: relevanceScore(result, query.keywords) }))
+  const scored = all.map((result) => ({ result, score: relevanceScore(result, query.keywords) }));
+  const keywordPass: Record<string, number> = {};
+  const keywordDrop: Record<string, number> = {};
+  for (const entry of scored) tally(entry.score > 0 ? keywordPass : keywordDrop, entry.result.publisher);
+  radarDiag("router-keyword-filter", { pass: keywordPass, drop: keywordDrop });
+
+  return scored
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, maxResults)

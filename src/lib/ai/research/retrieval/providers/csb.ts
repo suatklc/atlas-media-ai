@@ -2,6 +2,7 @@ import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { parseTurkishLongDate } from "../turkishDate";
 import { hasAnyWordBoundaryMatch, REAL_ESTATE_RELEVANCE_KEYWORDS } from "../relevance";
+import { errorKind, radarDiag } from "../diagnostics";
 import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
 
 // LIVE, real provider — the Ministry of Environment, Urbanization and
@@ -118,11 +119,13 @@ export async function fetchCsbAnnouncements(): Promise<NormalizedResearchResult[
     html = await fetchHtml(NEWS_URL);
   } catch (error) {
     console.error("ÇŞİDB news retrieval failed:", error instanceof Error ? error.message : String(error));
+    radarDiag("csb-listing", { status: "error", error: errorKind(error) });
     return [];
   }
 
   const items = extractNewsItems(html);
   const relevant = items.filter((item) => hasAnyWordBoundaryMatch(item.title, REAL_ESTATE_RELEVANCE_KEYWORDS));
+  radarDiag("csb-listing", { status: "ok", extracted: items.length, relevant: relevant.length });
 
   const results: NormalizedResearchResult[] = relevant.map((item) => ({
     title: item.title,

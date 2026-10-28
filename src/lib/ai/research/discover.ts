@@ -6,6 +6,7 @@ import type { NormalizedResearchResult, RankedContentOpportunity, RetrievalQuery
 import { retrieveCurrentInformation } from "./retrieval/router";
 import { toTurkeyCalendarDate } from "./retrieval/turkishDate";
 import { classifyRealEstateScope } from "./realEstateScope";
+import { radarDiag, tally } from "./retrieval/diagnostics";
 
 // Phase 2/3 (Current Content Engine — live research foundation +
 // diversity): the deterministic RETRIEVAL -> NORMALIZATION -> CONTENT
@@ -805,10 +806,33 @@ export async function discoverCurrentContentOpportunities(
   const macro = ageFiltered.filter((result) => scopeOf(result) === "macro" && MACRO_FILL_TIERS.has(result.tier));
 
   const ranked = rankContentOpportunities(buildContentOpportunities(property, now), query.keywords, limit);
-  if (ranked.length >= limit || macro.length === 0) return ranked;
-  const fill = rankContentOpportunities(buildContentOpportunities(macro, now), query.keywords, Math.min(MAX_MACRO_FILL, limit - ranked.length));
+  const fill =
+    ranked.length >= limit || macro.length === 0
+      ? []
+      : rankContentOpportunities(buildContentOpportunities(macro, now), query.keywords, Math.min(MAX_MACRO_FILL, limit - ranked.length));
+  logDiscoverFunnel(results, ageFiltered, scopeOf, [...ranked, ...fill], options.maxAgeDays, limit);
   return [...ranked, ...fill];
 }
 
 const MAX_MACRO_FILL = 1;
+
+// Diagnostics only (Handoff 9): per-publisher counts at each stage.
+function logDiscoverFunnel(
+  retrieved: NormalizedResearchResult[],
+  ageFiltered: NormalizedResearchResult[],
+  scopeOf: (result: NormalizedResearchResult) => string,
+  shortlist: RankedContentOpportunity[],
+  maxAgeDays: number | undefined,
+  limit: number,
+): void {
+  const stages: Record<string, Record<string, number>> = {};
+  const bump = (publisher: string, stage: string) => tally((stages[publisher] ??= {}), stage);
+  for (const result of retrieved) bump(result.publisher, "retrieved");
+  for (const result of ageFiltered) {
+    bump(result.publisher, "withinAge");
+    bump(result.publisher, `scope:${scopeOf(result)}`);
+  }
+  for (const opportunity of shortlist) bump(opportunity.sources[0]?.publisher ?? "unknown", "shortlisted");
+  radarDiag("discover-funnel", { maxAgeDays: maxAgeDays ?? null, limit, shortlist: shortlist.length, bySource: stages });
+}
 const MACRO_FILL_TIERS = new Set<SourceTier>(["official-authority", "primary-data"]);

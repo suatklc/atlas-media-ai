@@ -3,6 +3,7 @@ import { classifySourceTier } from "../sourceQuality";
 import { parseTurkishLongDate } from "../turkishDate";
 import { hasAnyWordBoundaryMatch, REAL_ESTATE_RELEVANCE_KEYWORDS } from "../relevance";
 import { fetchWithSystemTrust } from "../secureFetch";
+import { errorKind, radarDiag } from "../diagnostics";
 
 // Research Breadth Expansion v2: NOW REGISTERED in retrieval/router.ts.
 // The previous blocker — Node's global fetch() rejecting this host with
@@ -67,6 +68,7 @@ async function fetchHomepageHtml(): Promise<string> {
     result = await fetchWithStandardFetch();
   } catch (error) {
     if (!isTlsError(error)) throw error;
+    radarDiag("resmi-gazete-fetch", { fallback: "secureFetch", reason: errorKind(error) });
     result = await fetchWithSystemTrust(HOMEPAGE_URL, {
       timeoutMs: FETCH_TIMEOUT_MS,
       maxBytes: MAX_RESPONSE_BYTES,
@@ -139,6 +141,7 @@ export async function fetchResmiGazeteAnnouncements(): Promise<NormalizedResearc
     html = await fetchHomepageHtml();
   } catch (error) {
     console.error("Resmî Gazete retrieval failed:", error instanceof Error ? error.message : String(error));
+    radarDiag("resmi-gazete", { status: "error", error: errorKind(error) });
     return [];
   }
 
@@ -146,6 +149,7 @@ export async function fetchResmiGazeteAnnouncements(): Promise<NormalizedResearc
   const items = extractFihristItems(html);
 
   const relevant = items.filter((item) => hasAnyWordBoundaryMatch(item.title, REAL_ESTATE_RELEVANCE_KEYWORDS));
+  radarDiag("resmi-gazete", { status: "ok", issueDateParsed: Boolean(publishedAt), extracted: items.length, relevant: relevant.length });
 
   return relevant.map((item) => ({
     title: item.title,

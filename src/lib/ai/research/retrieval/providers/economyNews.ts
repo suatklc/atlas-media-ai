@@ -1,6 +1,7 @@
 import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { hasAnyWordBoundaryMatch, PROPERTY_MARKET_RELEVANCE_KEYWORDS } from "../relevance";
+import { errorKind, radarDiag } from "../diagnostics";
 import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
 
 // Current Content Radar V1 — Layer 2 (news/market attention). LIVE, real
@@ -170,12 +171,13 @@ export async function fetchEconomyNewsAnnouncements(): Promise<NormalizedResearc
         `Economy news feed retrieval failed (${feed.label}):`,
         error instanceof Error ? error.message : String(error),
       );
+      radarDiag("economy-feed", { feed: feed.label, status: "error", error: errorKind(error) });
       continue;
     }
 
-    const relevantItems = extractItems(xml).filter((item) =>
-      hasAnyWordBoundaryMatch(item.title, PROPERTY_MARKET_RELEVANCE_KEYWORDS),
-    );
+    const extracted = extractItems(xml);
+    const relevantItems = extracted.filter((item) => hasAnyWordBoundaryMatch(item.title, PROPERTY_MARKET_RELEVANCE_KEYWORDS));
+    radarDiag("economy-feed", { feed: feed.label, status: "ok", extracted: extracted.length, relevant: relevantItems.length });
 
     for (const item of relevantItems) {
       results.push({

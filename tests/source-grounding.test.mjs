@@ -12,13 +12,28 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const nodeRequire = createRequire(import.meta.url);
 
 // Same sandboxed loader convention as every other tests/*.test.mjs file.
+let cachedRadarDiagnostics;
+function radarDiagnosticsModule() {
+  if (!cachedRadarDiagnostics) {
+    cachedRadarDiagnostics = loadTypeScriptModule("src/lib/ai/research/retrieval/diagnostics.ts", () => ({}), {
+      console: { log: () => {} },
+    });
+  }
+  return cachedRadarDiagnostics;
+}
+
 function loadTypeScriptModule(relativePath, dependencyLoader = () => ({}), globals = {}) {
   const source = fs.readFileSync(path.join(projectRoot, relativePath), "utf8");
   const output = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   const loadedModule = { exports: {} };
-  const context = { loadedModule, exports: loadedModule.exports, dependencyLoader, ...globals };
+  // Temporary Radar diagnostics (retrieval/diagnostics.ts) resolve to the
+  // real, silent module in every loader, so adapters under test keep their
+  // exact behavior without each loader having to list it.
+  const withDiagnostics = (specifier) =>
+    specifier === "diagnostics" || specifier.endsWith("/diagnostics") ? radarDiagnosticsModule() : dependencyLoader(specifier);
+  const context = { loadedModule, exports: loadedModule.exports, dependencyLoader: withDiagnostics, ...globals };
   vm.runInNewContext(
     `(function (exports, dependencyLoader) { const require = dependencyLoader; ${output}\n})(exports, dependencyLoader);`,
     context,

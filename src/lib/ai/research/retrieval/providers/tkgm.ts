@@ -1,5 +1,6 @@
 import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
+import { errorKind, radarDiag, tally } from "../diagnostics";
 import { parseTurkishLongDate } from "../turkishDate";
 import {
   toEvidenceTextOrUndefined,
@@ -176,15 +177,30 @@ export function extractSubjectLine(evidenceText: string): string | undefined {
   return subject ? subject : undefined;
 }
 
-async function attachDetailPageEvidence(results: NormalizedResearchResult[]): Promise<void> {
+// Diagnostics only (Handoff 9): counts per outcome; behavior unchanged.
+type TkgmEvidenceStats = {
+  detailOk: number;
+  detailFailed: Record<string, number>;
+  pdfOk: number;
+  pdfNoText: number;
+  pdfNotLinked: number;
+  pdfFailed: Record<string, number>;
+};
+
+async function attachDetailPageEvidence(
+  results: NormalizedResearchResult[],
+  stats: TkgmEvidenceStats = { detailOk: 0, detailFailed: {}, pdfOk: 0, pdfNoText: 0, pdfNotLinked: 0, pdfFailed: {} },
+): Promise<void> {
   await Promise.allSettled(
     results.slice(0, MAX_DETAIL_FETCHES).map(async (result) => {
       let detailHtml: string;
       try {
         detailHtml = await fetchHtml(result.url);
         result.evidenceText = toEvidenceTextOrUndefined(detailHtml);
-      } catch {
+        stats.detailOk += 1;
+      } catch (error) {
         // Safe failure — evidenceText stays absent, never faked.
+        tally(stats.detailFailed, errorKind(error));
         return;
       }
 
@@ -195,15 +211,22 @@ async function attachDetailPageEvidence(results: NormalizedResearchResult[]): Pr
       // gate will correctly classify as thin) — never a fabricated
       // fallback, and never a crash.
       const pdfUrl = findLinkedPdfUrl(detailHtml);
-      if (!pdfUrl) return;
+      if (!pdfUrl) {
+        stats.pdfNotLinked += 1;
+        return;
+      }
       try {
         const pdfBytes = await fetchPdfBytes(pdfUrl);
         const pdfText = await extractPdfTextOrUndefined(pdfBytes);
         if (pdfText) {
           result.evidenceText = pdfText;
+          stats.pdfOk += 1;
+        } else {
+          stats.pdfNoText += 1;
         }
-      } catch {
+      } catch (error) {
         // Safe failure — keep the existing detail-page evidenceText.
+        tally(stats.pdfFailed, errorKind(error));
       }
     }),
   );
@@ -212,6 +235,7 @@ async function attachDetailPageEvidence(results: NormalizedResearchResult[]): Pr
 export async function fetchTkgmAnnouncements(): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
   const results: NormalizedResearchResult[] = [];
+  const listing: Record<string, unknown> = {};
 
   for (const page of LISTING_PAGES) {
     let html: string;
@@ -219,8 +243,10 @@ export async function fetchTkgmAnnouncements(): Promise<NormalizedResearchResult
       html = await fetchHtml(page.url);
     } catch (error) {
       console.error(`TKGM listing retrieval failed (${page.url}):`, error instanceof Error ? error.message : String(error));
+      listing[page.basePath] = { status: "error", error: errorKind(error) };
       continue;
     }
+    const before = results.length;
 
     for (const item of extractListingItems(html, page.basePath)) {
       const fullUrl = `${ORIGIN}${item.url}`;
@@ -237,16 +263,28 @@ export async function fetchTkgmAnnouncements(): Promise<NormalizedResearchResult
         retrievedAt,
       });
     }
+    listing[page.basePath] = { status: "ok", items: results.length - before };
   }
 
-  await attachDetailPageEvidence(results);
+  const stats: TkgmEvidenceStats = { detailOk: 0, detailFailed: {}, pdfOk: 0, pdfNoText: 0, pdfNotLinked: 0, pdfFailed: {} };
+  await attachDetailPageEvidence(results, stats);
 
+  let subjectFound = 0;
   for (const result of results) {
     const subject = result.evidenceText ? extractSubjectLine(result.evidenceText) : undefined;
     if (subject) {
       result.snippet = `${result.title} — Konu: ${subject}`;
+      subjectFound += 1;
     }
   }
+  radarDiag("tkgm-evidence", {
+    listing,
+    items: results.length,
+    detailAttempted: Math.min(results.length, MAX_DETAIL_FETCHES),
+    ...stats,
+    subjectFound,
+    titleOnly: results.length - subjectFound,
+  });
 
   return results;
 }
