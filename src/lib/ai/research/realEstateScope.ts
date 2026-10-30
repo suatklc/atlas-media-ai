@@ -25,20 +25,40 @@
 
 export type RealEstateScope = "property" | "macro" | "out";
 
-// Sources whose entire remit is real property: everything they publish is
-// in scope regardless of title wording (live-observed: TKGM's "2024/4
-// Sayılı Genelge Değişikliği Hakkında Duyuru" — a citizenship-by-property
-// valuation rule — names no property word in its title).
+// Sources whose remit is real property (TKGM). Their notices often name no
+// generic property word in the title (live-observed: "2024/4 Sayılı Genelge
+// Değişikliği Hakkında Duyuru" — a citizenship-by-property valuation rule),
+// so they get their own source-specific evaluation below — but NOT
+// unconditional acceptance: TKGM also publishes holiday greetings, hiring
+// notices and executive visits (live-observed "29 Ekim Cumhuriyet Bayramı").
 const PROPERTY_DOMAIN_HOSTS = ["tkgm.gov.tr"];
 
-function isPropertyDomainSource(url: string): boolean {
+function parseUrl(url: string): URL | undefined {
   try {
-    const host = new URL(url).hostname.toLocaleLowerCase("en-US");
-    return PROPERTY_DOMAIN_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+    return new URL(url);
   } catch {
-    return false;
+    return undefined;
   }
 }
+
+export function isPropertyDomainSource(url: string): boolean {
+  const host = parseUrl(url)?.hostname.toLocaleLowerCase("en-US");
+  return Boolean(host && PROPERTY_DOMAIN_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`)));
+}
+
+// Property-domain evaluation, over the title plus the official "Konu:"
+// subject line when the adapter could read it (tkgm.ts appends it to the
+// snippet). In scope when the text names property subject matter (the
+// shared stems/phrases) or TKGM's own regulatory/registry vocabulary; an
+// announcement-amendment title on the /duyurular section ("Duyuru
+// Değişikliği", "Genelge Güncellemesi") is in scope even title-only — it
+// amends one of TKGM's own regulatory notices. Ceremonial items are out.
+// Never "macro": nothing here is rate/inflation material.
+const PROPERTY_DOMAIN_NOISE_STEMS = ["bayram", "kutlama"];
+const PROPERTY_DOMAIN_STEMS = ["genelge", "yönetmeli", "tebliğ", "kararname", "mevzuat", "tescil", "harç"];
+const PROPERTY_DOMAIN_PHRASES = ["kültür varlık", "usul ve esas"];
+const ANNOUNCEMENT_AMENDMENT_STEMS = ["değişikli", "güncelleme"];
+const ANNOUNCEMENT_SECTION_PATH = "/duyurular/";
 
 // Word-start stems: a token qualifies when it starts with one of these, so
 // Turkish suffixes ("konutlar", "arsaların", "tapuda", "imarlı") match.
@@ -120,12 +140,22 @@ function hasPhrase(normalized: string, phrases: string[]): boolean {
   return phrases.some((phrase) => spaced.includes(` ${phrase}`));
 }
 
-// url (optional): a property-domain source (TKGM) is in scope without
-// property wording in the title — after the administrative-noise check.
+function classifyPropertyDomainItem(normalized: string, url: string): RealEstateScope {
+  const words = tokens(normalized);
+  if (hasStem(words, PROPERTY_DOMAIN_NOISE_STEMS)) return "out";
+  if (hasStem(words, PROPERTY_STEMS) || hasPhrase(normalized, PROPERTY_PHRASES)) return "property";
+  if (hasStem(words, PROPERTY_DOMAIN_STEMS) || hasPhrase(normalized, PROPERTY_DOMAIN_PHRASES)) return "property";
+  const isAnnouncement = parseUrl(url)?.pathname.startsWith(ANNOUNCEMENT_SECTION_PATH) ?? false;
+  if (isAnnouncement && hasStem(words, ANNOUNCEMENT_AMENDMENT_STEMS)) return "property";
+  return "out";
+}
+
+// url (optional): a property-domain source (TKGM) gets its own source-
+// specific evaluation (above) — after the shared administrative-noise check.
 export function classifyRealEstateScope(text: string, regionNames: string[] = [], url?: string): RealEstateScope {
   let normalized = ` ${tokens(text.toLocaleLowerCase("tr-TR")).join(" ")} `;
   if (hasPhrase(normalized, ADMINISTRATIVE_NOISE_PHRASES)) return "out";
-  if (url && isPropertyDomainSource(url)) return "property";
+  if (url && isPropertyDomainSource(url)) return classifyPropertyDomainItem(normalized, url);
   for (const name of NON_PROPERTY_NAMES) normalized = normalized.split(` ${name} `).join(" ");
   const words = tokens(normalized);
   if (hasStem(words, PROPERTY_STEMS) || hasPhrase(normalized, PROPERTY_PHRASES)) return "property";

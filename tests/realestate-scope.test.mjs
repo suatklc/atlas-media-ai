@@ -193,6 +193,98 @@ test("scope: a property-domain source (TKGM) is in scope without property wordin
   );
 });
 
+// ===== TKGM source-specific evaluation (live titles + "Konu:" lines, 2026-10-30) =====
+
+const TKGM_DUYURU = "https://www.tkgm.gov.tr/duyurular/x";
+const TKGM_HABER = "https://www.tkgm.gov.tr/haberler/x";
+const tkgmScope = (text, url = TKGM_DUYURU) => scope.classifyRealEstateScope(text, REGIONS, url);
+
+test("TKGM: 'Vakıf Kültür Varlıklarının Tespiti' is in scope — with its Konu line and title-only", () => {
+  assert.equal(tkgmScope("Vakıf Kültür Varlıklarının Tespiti Konulu Duyuru — Konu: Vakıf kültür varlıklarının tespiti hk."), "property");
+  assert.equal(tkgmScope("Vakıf Kültür Varlıklarının Tespiti Konulu Duyuru"), "property");
+});
+
+test("TKGM: 'Duyuru Değişikliği' is in scope — via its Konu line (yapılaşma) and, title-only, as a /duyurular amendment", () => {
+  assert.equal(
+    tkgmScope("Duyuru Değişikliği — Konu: 7452 sayılı Olağanüstü Hal Kapsamında Yerleşme ve Yapılaşmaya İlişkin Cumhurbaşkanlığı Kararnamesinin Kabul Edilmesine Dair Kanun’un Ek Madde 1 Uygulamaları Hk."),
+    "property",
+  );
+  assert.equal(tkgmScope("Duyuru Değişikliği"), "property");
+  assert.equal(tkgmScope("Duyuru Değişikliği", TKGM_HABER), "out", "the amendment rule is scoped to the announcements section");
+});
+
+test("TKGM: '29 Ekim Cumhuriyet Bayramı' and other ceremonial/administrative items are out — TKGM is not accepted unconditionally", () => {
+  for (const [title, url] of [
+    ["29 Ekim Cumhuriyet Bayramı", TKGM_HABER],
+    ["Kurban Bayramı Tebrik Mesajı", TKGM_HABER],
+    ["Yeni Yıl Kutlaması", TKGM_HABER],
+    ["Genel Müdürümüz Hakan Gedikli, St. Petersburg Uluslararası Ekonomik Forumu’nda Konuştu", TKGM_HABER],
+    ["Tapu ve Kadastro Genel Müdürlüğü Sözleşmeli Bilişim Personel Alım İlanı", TKGM_DUYURU],
+    ["3713 Sayılı Kanun Kapsamında Kurumumuz Emrine Yerleştirilen Adaylar Hakkında Duyuru", TKGM_DUYURU],
+    ["Çevre, Şehircilik ve İklim Değişikliği Bakanımız Sayın Murat Kurum, Cenevre’de Türkiye’nin Şehircilik ve Konut Politikalarındaki Tecrübesini Anlattı", TKGM_HABER],
+  ]) {
+    assert.equal(tkgmScope(title, url), "out", title);
+  }
+});
+
+test("TKGM: genuine tapu/kadastro/taşınmaz/imar/mülkiyet notices stay in scope", () => {
+  for (const title of [
+    "2024/4 Sayılı Genelge Değişikliği Hakkında Duyuru — Konu: Türk Vatandaşlığı Kanununun Uygulanmasına İlişkin Yönetmelik Hk",
+    "2024/2 Sayılı Genelge Güncellemesi Hakkında Duyuru — Konu: Yabancıların Taşınmaz Edinimlerinde ve Bazı İşlemlerde Kullanılacak Değerleme Raporlarına İlişkin Usul ve Esaslar",
+    "Satış İşlemlerinde Zorunlu Deprem Sigortası Hakkında Duyuru",
+    "Kadastro çalışmaları hakkında duyuru",
+    "Kat mülkiyeti tesisinde yeni uygulama",
+    "İmar uygulamalarına ilişkin tescil işlemleri",
+  ]) {
+    assert.equal(tkgmScope(title), "property", title);
+  }
+});
+
+test("discover: TKGM items skip the router keyword pre-filter (scope gate decides); other sources do not", async () => {
+  let captured;
+  const turkishDate = loadTypeScriptModule("src/lib/ai/research/retrieval/turkishDate.ts");
+  const businessProfile = loadTypeScriptModule("src/lib/ai/context/businessProfile.ts");
+  const discover = loadTypeScriptModule("src/lib/ai/research/discover.ts", (specifier) => {
+    if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async (query) => ((captured = query), []) };
+    if (specifier === "./retrieval/turkishDate") return turkishDate;
+    if (specifier === "../context/businessProfile") return businessProfile;
+    if (specifier === "./realEstateScope") return scope;
+    return {};
+  });
+  await discover.discoverCurrentContentOpportunities({ now: NOW, limit: 5, maxAgeDays: 30 });
+  assert.equal(captured.keywordFilterExempt({ url: "https://www.tkgm.gov.tr/duyurular/x" }), true);
+  assert.equal(captured.keywordFilterExempt({ url: "https://www.resmigazete.gov.tr/eskiler/x.htm" }), false);
+  assert.equal(captured.keywordFilterExempt({ url: "https://www.aa.com.tr/tr/ekonomi/x" }), false);
+});
+
+test("discover: TKGM end to end — Vakıf + Duyuru Değişikliği shortlisted title-only, Bayram excluded, 30-day cutoff kept", async () => {
+  const tkgmItem = (title, path, daysAgo) => ({
+    ...result(title, "official-authority", daysAgo),
+    url: `https://www.tkgm.gov.tr/${path}/${encodeURIComponent(title)}`,
+    publisher: "TKGM",
+    snippet: title,
+  });
+  const discover = loadDiscover([
+    tkgmItem("Vakıf Kültür Varlıklarının Tespiti Konulu Duyuru", "duyurular", 9),
+    tkgmItem("Duyuru Değişikliği", "duyurular", 10),
+    tkgmItem("29 Ekim Cumhuriyet Bayramı", "haberler", 1),
+    tkgmItem("2024/4 Sayılı Genelge Değişikliği Hakkında Duyuru", "duyurular", 31),
+  ]);
+  const titles = (await discover.discoverCurrentContentOpportunities({ now: NOW, limit: 5, maxAgeDays: 30 })).map((o) => o.topic).join(" | ");
+  assert.match(titles, /Vakıf Kültür/);
+  assert.match(titles, /Duyuru Değişikliği/);
+  assert.doesNotMatch(titles, /Bayram/);
+  assert.doesNotMatch(titles, /2024\/4/, "older than 30 days stays out");
+});
+
+test("discover: the retrieval query includes 'yapı denetim' and still never bare 'yapı'", () => {
+  const discover = loadDiscover([]);
+  const businessProfile = loadTypeScriptModule("src/lib/ai/context/businessProfile.ts");
+  const keywords = discover.buildRetrievalQuery(businessProfile.ATLAS_DEFAULT_BUSINESS_PROFILE).keywords;
+  assert.ok(keywords.includes("yapı denetim"));
+  assert.ok(!keywords.includes("yapı"));
+});
+
 test("discover: the retrieval query includes 'yapılaşma' (TKGM's live 'Yerleşme ve Yapılaşmaya İlişkin' notice was dropped without it)", () => {
   const discover = loadDiscover([]);
   const businessProfile = loadTypeScriptModule("src/lib/ai/context/businessProfile.ts");

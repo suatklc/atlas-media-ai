@@ -122,14 +122,21 @@ export async function retrieveCurrentInformation(
     return all.slice(0, maxResults);
   }
 
-  const scored = all.map((result) => ({ result, score: relevanceScore(result, query.keywords) }));
+  const scored = all.map((result) => ({
+    result,
+    score: relevanceScore(result, query.keywords),
+    exempt: query.keywordFilterExempt?.(result) ?? false,
+  }));
   const keywordPass: Record<string, number> = {};
   const keywordDrop: Record<string, number> = {};
-  for (const entry of scored) tally(entry.score > 0 ? keywordPass : keywordDrop, entry.result.publisher);
-  radarDiag("router-keyword-filter", { pass: keywordPass, drop: keywordDrop });
+  const keywordExempt: Record<string, number> = {};
+  for (const entry of scored) {
+    tally(entry.score > 0 ? keywordPass : entry.exempt ? keywordExempt : keywordDrop, entry.result.publisher);
+  }
+  radarDiag("router-keyword-filter", { pass: keywordPass, drop: keywordDrop, exempt: keywordExempt });
 
   return scored
-    .filter((entry) => entry.score > 0)
+    .filter((entry) => entry.score > 0 || entry.exempt)
     .sort((a, b) => b.score - a.score)
     .slice(0, maxResults)
     .map((entry) => entry.result);

@@ -127,6 +127,38 @@ test("csb.ts: a listing AbortError is reported to the router and the adapter sti
   assert.deepEqual(Array.from(await csb.fetchCsbAnnouncements()), [], "callers that pass no reporter are unaffected");
 });
 
+function discoverQueryKeywords() {
+  const businessProfile = loadTypeScriptModule("src/lib/ai/context/businessProfile.ts");
+  const discover = loadTypeScriptModule("src/lib/ai/research/discover.ts", (specifier) =>
+    specifier === "../context/businessProfile" ? businessProfile : specifier.endsWith("diagnostics") ? capturingDiagnostics().diagnostics : {},
+  );
+  return discover.buildRetrievalQuery(businessProfile.ATLAS_DEFAULT_BUSINESS_PROFILE).keywords;
+}
+
+const rgItem = (title) => ({ ...item(title), url: "https://www.resmigazete.gov.tr/eskiler/2026/10/x.htm", publisher: "T.C. Resmî Gazete" });
+const onlyResmiGazete = (items) => ({ tcmb: async () => [], tkgm: async () => [], resmiGazete: async () => items, csb: async () => [], economyNews: async () => [] });
+
+test("router + discover query: the real Resmî Gazete 'Yapı Denetimi' tebliğ (2026-10-30) passes; unrelated gazette titles still do not", async () => {
+  const yapiDenetim = "Yapı Sahipleri ile Yapı Denetimi Hizmet Sözleşmesi İmzalayacak Yapı Denetim Kuruluşlarının Belirlenmesine İlişkin Tebliğ";
+  const { router } = loadRouter(onlyResmiGazete([
+    rgItem(yapiDenetim),
+    rgItem("Bazı Kamu Kurum ve Kuruluşlarına Ait Yönetim Kurulu Üyeliklerine Atama Kararı"),
+    rgItem("Türk Gıda Kodeksi Etiketleme Tebliğinde Değişiklik Yapılmasına Dair Tebliğ"),
+    rgItem("Milletlerarası Andlaşma"),
+  ]));
+  const titles = (await router.retrieveCurrentInformation({ keywords: discoverQueryKeywords() }, { maxResults: 50 })).map((r) => r.title);
+  assert.equal(titles.join(" | "), yapiDenetim);
+});
+
+test("router: keywordFilterExempt lets a matching item through with zero keyword hits; without it the item is dropped", async () => {
+  const { router, events } = loadRouter({ ...onlyResmiGazete([]), tkgm: async () => [{ ...item("Duyuru Değişikliği"), url: "https://www.tkgm.gov.tr/duyurular/x", publisher: "TKGM" }] });
+  const exempt = (r) => r.url.includes("tkgm.gov.tr");
+  assert.equal((await router.retrieveCurrentInformation({ keywords: ["tapu"], keywordFilterExempt: exempt }, { maxResults: 50 })).length, 1);
+  const filterLine = events().filter((e) => e.event === "router-keyword-filter").at(-1).data;
+  assert.equal(filterLine.exempt.TKGM, 1);
+  assert.equal((await router.retrieveCurrentInformation({ keywords: ["tapu"] }, { maxResults: 50 })).length, 0);
+});
+
 test("discover route: no preferredRegion (not applied to Node.js functions on Vercel) and logs request start/end", () => {
   const source = fs.readFileSync(path.join(projectRoot, "src/app/api/research/discover/route.ts"), "utf8");
   assert.ok(!source.includes("preferredRegion"));

@@ -5,7 +5,7 @@ import type { ContentOpportunityFreshness, ResearchSource, SourceTier } from "./
 import type { NormalizedResearchResult, RankedContentOpportunity, RetrievalQuery, TopicFamily } from "./retrieval/types";
 import { retrieveCurrentInformation } from "./retrieval/router";
 import { toTurkeyCalendarDate } from "./retrieval/turkishDate";
-import { classifyRealEstateScope } from "./realEstateScope";
+import { classifyRealEstateScope, isPropertyDomainSource } from "./realEstateScope";
 import { radarDiag, tally } from "./retrieval/diagnostics";
 
 // Phase 2/3 (Current Content Engine — live research foundation +
@@ -58,7 +58,12 @@ const TOPIC_KEYWORD_CATEGORIES: { category: string; keywords: string[] }[] = [
   // observed to drop a genuine TKGM circular on foreigners' property
   // valuation reports ("Yabancıların Taşınmaz Edinimlerinde ...").
   { category: "tapu-kadastro", keywords: ["tapu", "kadastro", "takbis", "tescil", "taşınmaz"] },
-  { category: "imar-yapilasma", keywords: ["imar", "inşaat", "ruhsat", "yapılaşma", "kentsel dönüşüm"] },
+  // "yapı denetim" — live (2026-10-30): Resmî Gazete's "Yapı Sahipleri ile
+  // Yapı Denetimi Hizmet Sözleşmesi ... Tebliğ" passed the adapter's own
+  // relevance filter but matched none of these words and was dropped here.
+  // A phrase, never bare "yapı" (router matching is plain substring:
+  // "yapı" would match "yapılmasına").
+  { category: "imar-yapilasma", keywords: ["imar", "inşaat", "ruhsat", "yapılaşma", "yapı denetim", "kentsel dönüşüm"] },
   { category: "konut-piyasasi", keywords: ["konut", "satış", "fiyat"] },
   { category: "kira", keywords: ["kira", "kiralık"] },
   { category: "kredi-faiz", keywords: ["faiz", "kredi", "ipotek"] },
@@ -787,7 +792,15 @@ export async function discoverCurrentContentOpportunities(
   const profile = options.profile ?? ATLAS_DEFAULT_BUSINESS_PROFILE;
   const now = options.now ?? new Date();
   const query = buildRetrievalQuery(profile);
-  const results = await retrieveCurrentInformation(query, { maxResults: CANDIDATE_POOL_SIZE });
+  // Property-domain sources (TKGM) skip the router's keyword pre-filter:
+  // their titles rarely carry query words ("Vakıf Kültür Varlıklarının
+  // Tespiti", "Duyuru Değişikliği"), so a genuine notice used to survive
+  // only when its PDF "Konu:" line could be read. The scope gate below
+  // evaluates them with a stricter source-specific rule instead.
+  const results = await retrieveCurrentInformation(
+    { ...query, keywordFilterExempt: (result) => isPropertyDomainSource(result.url) },
+    { maxResults: CANDIDATE_POOL_SIZE },
+  );
   const ageFiltered =
     options.maxAgeDays !== undefined
       ? results.filter((result) => isWithinMaxAge(result.publishedAt, now, options.maxAgeDays!))

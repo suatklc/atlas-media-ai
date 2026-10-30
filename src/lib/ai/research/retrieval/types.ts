@@ -34,6 +34,11 @@ export type NormalizedResearchResult = ResearchSource & {
 // router.ts's own comment).
 export type RetrievalQuery = {
   keywords: string[];
+  // Optional: results this returns true for skip the keyword filter (they
+  // still rank by keyword score). For sources whose own titles rarely carry
+  // query vocabulary and that the caller evaluates with a stricter,
+  // source-specific gate afterwards (discover.ts: TKGM -> realEstateScope).
+  keywordFilterExempt?: (result: NormalizedResearchResult) => boolean;
 };
 
 export type RetrievalOptions = {

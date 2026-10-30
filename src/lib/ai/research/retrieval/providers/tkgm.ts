@@ -177,7 +177,9 @@ export function extractSubjectLine(evidenceText: string): string | undefined {
   return subject ? subject : undefined;
 }
 
-// Diagnostics only (Handoff 9): counts per outcome; behavior unchanged.
+// Diagnostics only (Handoff 9): counts per outcome and per-phase durations
+// (ms); behavior unchanged. Detail/PDF requests run in parallel, so the
+// phase's wall time is close to its slowest item, not the sum.
 type TkgmEvidenceStats = {
   detailOk: number;
   detailFailed: Record<string, number>;
@@ -185,15 +187,27 @@ type TkgmEvidenceStats = {
   pdfNoText: number;
   pdfNotLinked: number;
   pdfFailed: Record<string, number>;
+  detailMs: number[];
+  pdfFetchMs: number[];
+  pdfParseMs: number[];
 };
+
+function emptyEvidenceStats(): TkgmEvidenceStats {
+  return { detailOk: 0, detailFailed: {}, pdfOk: 0, pdfNoText: 0, pdfNotLinked: 0, pdfFailed: {}, detailMs: [], pdfFetchMs: [], pdfParseMs: [] };
+}
+
+function msSummary(values: number[]): { n: number; max: number; sum: number } {
+  return { n: values.length, max: values.length ? Math.max(...values) : 0, sum: values.reduce((a, b) => a + b, 0) };
+}
 
 async function attachDetailPageEvidence(
   results: NormalizedResearchResult[],
-  stats: TkgmEvidenceStats = { detailOk: 0, detailFailed: {}, pdfOk: 0, pdfNoText: 0, pdfNotLinked: 0, pdfFailed: {} },
+  stats: TkgmEvidenceStats = emptyEvidenceStats(),
 ): Promise<void> {
   await Promise.allSettled(
     results.slice(0, MAX_DETAIL_FETCHES).map(async (result) => {
       let detailHtml: string;
+      const detailStartedAt = Date.now();
       try {
         detailHtml = await fetchHtml(result.url);
         result.evidenceText = toEvidenceTextOrUndefined(detailHtml);
@@ -202,6 +216,8 @@ async function attachDetailPageEvidence(
         // Safe failure — evidenceText stays absent, never faked.
         tally(stats.detailFailed, errorKind(error));
         return;
+      } finally {
+        stats.detailMs.push(Date.now() - detailStartedAt);
       }
 
       // Prefer the real linked PDF's own text over the thin detail-page
@@ -216,8 +232,16 @@ async function attachDetailPageEvidence(
         return;
       }
       try {
-        const pdfBytes = await fetchPdfBytes(pdfUrl);
+        const pdfStartedAt = Date.now();
+        let pdfBytes: Uint8Array;
+        try {
+          pdfBytes = await fetchPdfBytes(pdfUrl);
+        } finally {
+          stats.pdfFetchMs.push(Date.now() - pdfStartedAt);
+        }
+        const parseStartedAt = Date.now();
         const pdfText = await extractPdfTextOrUndefined(pdfBytes);
+        stats.pdfParseMs.push(Date.now() - parseStartedAt);
         if (pdfText) {
           result.evidenceText = pdfText;
           stats.pdfOk += 1;
@@ -239,11 +263,12 @@ export async function fetchTkgmAnnouncements(report?: AdapterReport): Promise<No
 
   for (const page of LISTING_PAGES) {
     let html: string;
+    const listingStartedAt = Date.now();
     try {
       html = await fetchHtml(page.url);
     } catch (error) {
       console.error(`TKGM listing retrieval failed (${page.url}):`, error instanceof Error ? error.message : String(error));
-      listing[page.basePath] = { status: "error", error: errorKind(error) };
+      listing[page.basePath] = { status: "error", error: errorKind(error), ms: Date.now() - listingStartedAt };
       report?.fail(`${page.basePath}: ${errorKind(error)}`);
       continue;
     }
@@ -264,11 +289,14 @@ export async function fetchTkgmAnnouncements(report?: AdapterReport): Promise<No
         retrievedAt,
       });
     }
-    listing[page.basePath] = { status: "ok", items: results.length - before };
+    listing[page.basePath] = { status: "ok", items: results.length - before, ms: Date.now() - listingStartedAt };
   }
 
-  const stats: TkgmEvidenceStats = { detailOk: 0, detailFailed: {}, pdfOk: 0, pdfNoText: 0, pdfNotLinked: 0, pdfFailed: {} };
+  const stats = emptyEvidenceStats();
+  const evidenceStartedAt = Date.now();
   await attachDetailPageEvidence(results, stats);
+  const evidencePhaseMs = Date.now() - evidenceStartedAt;
+  const { detailMs, pdfFetchMs, pdfParseMs, ...counts } = stats;
 
   let subjectFound = 0;
   for (const result of results) {
@@ -282,7 +310,13 @@ export async function fetchTkgmAnnouncements(report?: AdapterReport): Promise<No
     listing,
     items: results.length,
     detailAttempted: Math.min(results.length, MAX_DETAIL_FETCHES),
-    ...stats,
+    ...counts,
+    timingMs: {
+      evidencePhase: evidencePhaseMs,
+      detail: msSummary(detailMs),
+      pdfFetch: msSummary(pdfFetchMs),
+      pdfParse: msSummary(pdfParseMs),
+    },
     subjectFound,
     titleOnly: results.length - subjectFound,
   });
