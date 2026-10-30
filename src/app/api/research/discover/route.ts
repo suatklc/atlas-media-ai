@@ -1,6 +1,7 @@
 import { type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { discoverCurrentContentOpportunities } from "@/lib/ai/research/discover";
+import { errorKind, radarDiag } from "@/lib/ai/research/retrieval/diagnostics";
 
 // Phase 2 (Current Content Engine — live research foundation): the
 // smallest safe server-side entry point to trigger research manually. No
@@ -58,13 +59,20 @@ export async function POST(request: NextRequest) {
       ? Math.min(Math.floor(rawLimit), MAX_LIMIT)
       : DEFAULT_LIMIT;
 
+  // Temporary Radar diagnostics (Handoff 9): request start/end with the
+  // function's actual region, so a missing later log line can be told
+  // apart from a request that never finished.
+  const startedAt = Date.now();
+  radarDiag("discover-request", { phase: "start", region: process.env.VERCEL_REGION ?? "local", limit });
   try {
     const opportunities = await discoverCurrentContentOpportunities({
       limit,
       maxAgeDays: MAX_OPPORTUNITY_AGE_DAYS,
     });
+    radarDiag("discover-request", { phase: "end", ms: Date.now() - startedAt, opportunities: opportunities.length });
     return Response.json({ opportunities });
   } catch (error) {
+    radarDiag("discover-request", { phase: "error", ms: Date.now() - startedAt, error: errorKind(error) });
     console.error("Research discovery error:", error instanceof Error ? error.message : String(error));
     return jsonError("Güncel içerik fırsatları alınamadı. Lütfen tekrar deneyin.", 502);
   }

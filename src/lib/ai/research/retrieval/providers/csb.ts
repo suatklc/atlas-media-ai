@@ -2,7 +2,7 @@ import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { parseTurkishLongDate } from "../turkishDate";
 import { hasAnyWordBoundaryMatch, REAL_ESTATE_RELEVANCE_KEYWORDS } from "../relevance";
-import { errorKind, radarDiag } from "../diagnostics";
+import { errorKind, radarDiag, type AdapterReport } from "../diagnostics";
 import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
 
 // LIVE, real provider — the Ministry of Environment, Urbanization and
@@ -111,7 +111,7 @@ async function attachDetailPageEvidence(results: NormalizedResearchResult[]): Pr
   );
 }
 
-export async function fetchCsbAnnouncements(): Promise<NormalizedResearchResult[]> {
+export async function fetchCsbAnnouncements(report?: AdapterReport): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
 
   let html: string;
@@ -120,6 +120,7 @@ export async function fetchCsbAnnouncements(): Promise<NormalizedResearchResult[
   } catch (error) {
     console.error("ÇŞİDB news retrieval failed:", error instanceof Error ? error.message : String(error));
     radarDiag("csb-listing", { status: "error", error: errorKind(error) });
+    report?.fail(errorKind(error));
     return [];
   }
 

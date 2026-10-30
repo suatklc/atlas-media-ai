@@ -1,6 +1,6 @@
 import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
-import { errorKind, radarDiag, tally } from "../diagnostics";
+import { errorKind, radarDiag, tally, type AdapterReport } from "../diagnostics";
 import { parseTurkishLongDate } from "../turkishDate";
 import {
   toEvidenceTextOrUndefined,
@@ -232,7 +232,7 @@ async function attachDetailPageEvidence(
   );
 }
 
-export async function fetchTkgmAnnouncements(): Promise<NormalizedResearchResult[]> {
+export async function fetchTkgmAnnouncements(report?: AdapterReport): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
   const results: NormalizedResearchResult[] = [];
   const listing: Record<string, unknown> = {};
@@ -244,6 +244,7 @@ export async function fetchTkgmAnnouncements(): Promise<NormalizedResearchResult
     } catch (error) {
       console.error(`TKGM listing retrieval failed (${page.url}):`, error instanceof Error ? error.message : String(error));
       listing[page.basePath] = { status: "error", error: errorKind(error) };
+      report?.fail(`${page.basePath}: ${errorKind(error)}`);
       continue;
     }
     const before = results.length;

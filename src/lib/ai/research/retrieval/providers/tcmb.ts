@@ -1,6 +1,7 @@
 import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
+import { errorKind, type AdapterReport } from "../diagnostics";
 
 // LIVE, real provider — the Turkish Central Bank (TCMB)'s own public Atom
 // feeds. No API key, no external search provider: TCMB publishes these
@@ -151,7 +152,7 @@ function extractEntries(xml: string): RawEntry[] {
 // retrieval (see retrieval/router.ts, which already treats every adapter
 // this way too; this per-feed isolation is an extra, adapter-internal
 // layer of the same principle).
-export async function fetchTcmbAnnouncements(): Promise<NormalizedResearchResult[]> {
+export async function fetchTcmbAnnouncements(report?: AdapterReport): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
   const results: NormalizedResearchResult[] = [];
 
@@ -164,6 +165,7 @@ export async function fetchTcmbAnnouncements(): Promise<NormalizedResearchResult
         `TCMB feed retrieval failed (${feed.label}):`,
         error instanceof Error ? error.message : String(error),
       );
+      report?.fail(`${feed.label}: ${errorKind(error)}`);
       continue;
     }
 

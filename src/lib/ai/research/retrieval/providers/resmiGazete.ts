@@ -3,7 +3,7 @@ import { classifySourceTier } from "../sourceQuality";
 import { parseTurkishLongDate } from "../turkishDate";
 import { hasAnyWordBoundaryMatch, REAL_ESTATE_RELEVANCE_KEYWORDS } from "../relevance";
 import { fetchWithSystemTrust } from "../secureFetch";
-import { errorKind, radarDiag } from "../diagnostics";
+import { errorKind, radarDiag, type AdapterReport } from "../diagnostics";
 
 // Research Breadth Expansion v2: NOW REGISTERED in retrieval/router.ts.
 // The previous blocker — Node's global fetch() rejecting this host with
@@ -133,7 +133,7 @@ function extractFihristItems(html: string): { title: string; url: string }[] {
 // the safe, correct behavior when genuine evidence can't be captured;
 // content-package generation already treats an absent evidenceText as
 // "headline-only" and constrains itself accordingly.
-export async function fetchResmiGazeteAnnouncements(): Promise<NormalizedResearchResult[]> {
+export async function fetchResmiGazeteAnnouncements(report?: AdapterReport): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
 
   let html: string;
@@ -142,6 +142,7 @@ export async function fetchResmiGazeteAnnouncements(): Promise<NormalizedResearc
   } catch (error) {
     console.error("Resmî Gazete retrieval failed:", error instanceof Error ? error.message : String(error));
     radarDiag("resmi-gazete", { status: "error", error: errorKind(error) });
+    report?.fail(errorKind(error));
     return [];
   }
 

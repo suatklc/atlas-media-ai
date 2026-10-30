@@ -4,7 +4,7 @@ import { fetchTkgmAnnouncements } from "./providers/tkgm";
 import { fetchResmiGazeteAnnouncements } from "./providers/resmiGazete";
 import { fetchCsbAnnouncements } from "./providers/csb";
 import { fetchEconomyNewsAnnouncements } from "./providers/economyNews";
-import { errorKind, radarDiag, tally } from "./diagnostics";
+import { errorKind, radarDiag, tally, type AdapterReport } from "./diagnostics";
 
 const DEFAULT_MAX_RESULTS = 20;
 
@@ -56,7 +56,7 @@ const DEFAULT_MAX_RESULTS = 20;
 //
 // Adding a real, live-validated future adapter means adding one more
 // entry to this array; nothing else here changes.
-const ADAPTERS: Array<{ source: string; fetch: () => Promise<NormalizedResearchResult[]> }> = [
+const ADAPTERS: Array<{ source: string; fetch: (report?: AdapterReport) => Promise<NormalizedResearchResult[]> }> = [
   { source: "tcmb", fetch: fetchTcmbAnnouncements },
   { source: "tkgm", fetch: fetchTkgmAnnouncements },
   { source: "resmi-gazete", fetch: fetchResmiGazeteAnnouncements },
@@ -94,9 +94,20 @@ export async function retrieveCurrentInformation(
   const settled = await Promise.all(
     ADAPTERS.map(async (adapter) => {
       const startedAt = Date.now();
+      const failures: string[] = [];
+      radarDiag("adapter-start", { source: adapter.source });
       try {
-        const items = await adapter.fetch();
-        radarDiag("adapter", { source: adapter.source, status: "ok", raw: items.length, ms: Date.now() - startedAt });
+        const items = await adapter.fetch({ fail: (kind) => failures.push(kind) });
+        // An adapter that swallowed a failure is "error" when nothing came
+        // back, "partial" when another feed/page still returned items.
+        const status = failures.length === 0 ? "ok" : items.length > 0 ? "partial" : "error";
+        radarDiag("adapter", {
+          source: adapter.source,
+          status,
+          raw: items.length,
+          ms: Date.now() - startedAt,
+          ...(failures.length > 0 ? { errors: failures } : {}),
+        });
         return items;
       } catch (error: unknown) {
         console.error("Research adapter failed:", error instanceof Error ? error.message : String(error));

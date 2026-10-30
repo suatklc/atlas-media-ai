@@ -1,7 +1,7 @@
 import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { hasAnyWordBoundaryMatch, PROPERTY_MARKET_RELEVANCE_KEYWORDS } from "../relevance";
-import { errorKind, radarDiag } from "../diagnostics";
+import { errorKind, radarDiag, type AdapterReport } from "../diagnostics";
 import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
 
 // Current Content Radar V1 — Layer 2 (news/market attention). LIVE, real
@@ -158,7 +158,7 @@ function extractItems(xml: string): RawItem[] {
 // adapter this way too; this per-feed isolation is an extra,
 // adapter-internal layer of the same principle, matching tcmb.ts's own
 // two-feed handling).
-export async function fetchEconomyNewsAnnouncements(): Promise<NormalizedResearchResult[]> {
+export async function fetchEconomyNewsAnnouncements(report?: AdapterReport): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
   const results: NormalizedResearchResult[] = [];
 
@@ -172,6 +172,7 @@ export async function fetchEconomyNewsAnnouncements(): Promise<NormalizedResearc
         error instanceof Error ? error.message : String(error),
       );
       radarDiag("economy-feed", { feed: feed.label, status: "error", error: errorKind(error) });
+      report?.fail(`${feed.label}: ${errorKind(error)}`);
       continue;
     }
 

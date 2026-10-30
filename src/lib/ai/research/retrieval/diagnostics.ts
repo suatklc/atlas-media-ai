@@ -32,6 +32,12 @@ export function errorKind(error: unknown): string {
   return name;
 }
 
+// Adapters catch their own failures and return [] (so one source can never
+// break discovery). They report each swallowed failure here, so the router
+// logs the real status ("error" / "partial") instead of "ok". Optional:
+// callers that pass nothing (tests, other code) see no change at all.
+export type AdapterReport = { fail: (kind: string) => void };
+
 // Increments a counter map in place ({ "AbortError": 2, ... }).
 export function tally(counts: Record<string, number>, key: string): void {
   counts[key] = (counts[key] ?? 0) + 1;
