@@ -76,6 +76,7 @@ const factContract = loadTypeScriptModule("src/lib/ai/content/factContract.ts", 
 // Source Intelligence: real registry module (pure; no dependencies).
 const sourceRegistry = loadTypeScriptModule("src/lib/ai/research/sourceRegistry.ts", () => ({}), { URL });
 // Editorial Quality Repair: real module, wired to the real factContract.
+const expertCopyGate = loadTypeScriptModule("src/lib/ai/content/expertCopyGate.ts");
 const editorialRevision = loadTypeScriptModule("src/lib/ai/content/editorialRevision.ts", (specifier) =>
   specifier === "./factContract" ? factContract : {},
 );
@@ -508,7 +509,8 @@ function loadContentPackageRoute(overrides = {}) {
               state.lastContentPackageModel = args.model;
               return {
                 choices: [
-                  { message: { content: JSON.stringify(overrides.completionResponse ?? defaultCompletionResponse) } },
+                  // completionResponses: one package per Job 2 call (expert copy gate regeneration).
+                  { message: { content: JSON.stringify(overrides.completionResponses?.[state.contentPackageCalls - 1] ?? overrides.completionResponse ?? defaultCompletionResponse) } },
                 ],
               };
             },
@@ -539,6 +541,7 @@ function loadContentPackageRoute(overrides = {}) {
     "@/lib/ai/research/retrieval/evidenceExtraction": evidenceExtraction,
     "@/lib/ai/content/factContract": factContract,
     "@/lib/ai/content/editorialRevision": editorialRevision,
+    "@/lib/ai/content/expertCopyGate": expertCopyGate,
     "@/lib/ai/research/sourceRegistry": sourceRegistry,
     "@/lib/ai/research/retrieval/turkishDate": turkishDate,
   };
@@ -3005,4 +3008,64 @@ test("dashboard: 'Instagram paylaşımı hazırla' no longer sends the legacy li
   assert.match(card, /Instagram paylaşımı hazırla/);
   assert.match(card, /JSON\.stringify\(\{ instruction: text, visualFormat: "carousel" \}\)/);
   assert.doesNotMatch(card, /fetch\("\/api\/assistant"/);
+});
+
+// ============================================================
+// Expert copy gate (expertCopyGate.ts): a real expert run shipped
+// "birçok alıcının sandığından" — a frequency claim the brief forbids.
+// ============================================================
+
+const LAND_INSTRUCTION =
+  "Arsa veya arazi bakan alıcılara, tapudaki niteliğin (arsa, tarla, bağ, bahçe gibi) ne anlama geldiğini ve bu niteliğin yapılaşma beklentisini nasıl etkilediğini anlatan bir paylaşım hazırla.";
+const expertPackage = (caption, slides = fiveSlides()) => ({ topic: "t", source: { name: "", url: "", publishedAt: "" }, hook: "Tapudaki nitelik ne söyler?", caption, hashtags: ["#ArsaAlımı"], facts: [], slides });
+
+test("expert copy gate: finds unsupported generalisations, jargon and generic phrasing as whole words only", () => {
+  const issues = (caption) => expertCopyGate.findExpertCopyIssues({ hook: "h", caption, slides: fiveSlides() });
+  assert.deepEqual([...issues("Tapuda yazan nitelik, birçok alıcının sandığından daha belirleyicidir.")], ["birçok"]);
+  assert.deepEqual([...issues("Bir çok kişi bunu atlar.")], ["bir çok"]);
+  assert.deepEqual([...issues("Pek çok parsel aynı görünür.")], ["pek çok"]);
+  assert.deepEqual([...issues("Bu segment için doğru adres burası.")], ["segment", "doğru adres"]);
+  assert.deepEqual([...issues("Tapudaki nitelik tek başına yapı izni anlamına gelmez; imar durumuna bakın.")], []);
+  assert.deepEqual([...issues("Çoğulcu bir bakış ve birçokları değil.")], [], "never inside another word");
+});
+
+test("/api/content-package: an expert package with a banned phrase is regenerated ONCE and only the clean package is returned", async () => {
+  const { route, state } = loadContentPackageRoute({
+    completionResponses: [
+      expertPackage("Tapuda yazan nitelik, birçok alıcının sandığından daha belirleyicidir."),
+      expertPackage("Tapuda yazan nitelik, bir arsaya bakarken ilk okuduğum satırdır."),
+    ],
+  });
+  const response = await route.POST({ json: async () => ({ instruction: LAND_INSTRUCTION, visualFormat: "carousel" }) });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(state.contentPackageCalls, 2, "exactly one regeneration");
+  assert.match(body.contentPackage.caption, /ilk okuduğum satırdır/);
+  assert.doesNotMatch(body.contentPackage.caption, /birçok/);
+  const retryUser = state.lastMessages.find((m) => m.role === "user").content;
+  assert.match(retryUser, /"birçok"/, "the regeneration is told which phrase failed");
+});
+
+test("/api/content-package: still failing after the one regeneration -> no package (502), never a flawed one", async () => {
+  const dirty = expertPackage("Tapuda yazan nitelik, birçok alıcının sandığından daha belirleyicidir.");
+  const { route, state } = loadContentPackageRoute({ completionResponses: [dirty, dirty, dirty] });
+  const response = await route.POST({ json: async () => ({ instruction: LAND_INSTRUCTION, visualFormat: "carousel" }) });
+  const body = await response.json();
+  assert.equal(response.status, 502);
+  assert.equal(body.contentPackage, undefined);
+  assert.equal(state.contentPackageCalls, 2, "never a loop");
+});
+
+test("/api/content-package: a clean expert package passes the gate with a single Job 2 call; news packages never go through it", async () => {
+  const clean = loadContentPackageRoute({ completionResponse: expertPackage("Tapuda yazan nitelik, bir arsaya bakarken ilk okuduğum satırdır.") });
+  const cleanResponse = await clean.route.POST({ json: async () => ({ instruction: LAND_INSTRUCTION, visualFormat: "carousel" }) });
+  assert.equal(cleanResponse.status, 200);
+  assert.equal(clean.state.contentPackageCalls, 1);
+
+  const news = loadContentPackageRoute({
+    completionResponse: { ...expertPackage("Birçok alıcı için önemli."), source: { name: "TKGM", url: "https://example.com/duyuru", publishedAt: "2026-09-01T00:00:00.000Z" } },
+  });
+  const newsResponse = await news.route.POST({ json: async () => makeOpportunityWithEvidence(MEANINGFUL_EVIDENCE_TEXT) });
+  assert.equal(newsResponse.status, 200);
+  assert.equal(news.state.contentPackageCalls, 1, "news mode is unchanged");
 });

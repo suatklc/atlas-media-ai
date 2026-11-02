@@ -42,6 +42,7 @@ import {
   type EditorialGateResult,
   type EditorialRevisionOutcome,
 } from "@/lib/ai/content/editorialRevision";
+import { EXPERT_FREQUENCY_WORDS, EXPERT_JARGON, findExpertCopyIssues } from "@/lib/ai/content/expertCopyGate";
 
 // Gold Standard V1 — the structured generation path for Current Content
 // Radar opportunities. Deliberately separate from /api/assistant (which
@@ -293,11 +294,9 @@ const PROPERTY_EVALUATION_DIMENSIONS: Record<string, string[]> = {
   ],
 };
 
-// A production review flagged these as unsupported frequency claims and
-// consultant jargon in expert copy.
-const EXPERT_FREQUENCY_WORDS = ["çoğu zaman", "sık sık", "genellikle", "çoğu", "pek çok", "birçok", "her zaman", "en sık"];
-const EXPERT_JARGON = ["rakip grup", "değer önerisi", "segment", "algı yönetimi"];
-
+// EXPERT_FREQUENCY_WORDS / EXPERT_JARGON (expertCopyGate.ts): a production
+// review flagged these as unsupported frequency claims and consultant
+// jargon in expert copy; the same module checks the output for them.
 function buildExpertContentPackagePrompt(): string {
   const geography = ATLAS_DEFAULT_BUSINESS_PROFILE.geography;
   const dimensions = Object.entries(PROPERTY_EVALUATION_DIMENSIONS)
@@ -793,8 +792,9 @@ export async function POST(request: NextRequest) {
   const roleSequence = format === "carousel" ? CAROUSEL_SLIDE_ROLES : (["hook"] as const);
   const formatContext = `İstenen format: ${format}. Üretilecek slayt sayısı: ${expectedSlideCount} (sıra: ${roleSequence.join(", ")}).`;
 
-  let modelPackage: ModelPackage;
-  try {
+  // Job 2. `retryNote` is used only by the expert copy gate below, for its
+  // single regeneration.
+  const generateModelPackage = async (retryNote?: string): Promise<ModelPackage> => {
     const completion = await openai.chat.completions.create({
       model: CONTENT_PACKAGE_EDITORIAL_MODEL,
       response_format: {
@@ -804,7 +804,7 @@ export async function POST(request: NextRequest) {
       max_completion_tokens: 4096,
       messages: [
         { role: "system", content: systemMessage },
-        { role: "user", content: `${userMessage}\n\n${formatContext}` },
+        { role: "user", content: `${userMessage}\n\n${formatContext}${retryNote ? `\n\n${retryNote}` : ""}` },
       ],
     });
 
@@ -812,7 +812,12 @@ export async function POST(request: NextRequest) {
     if (!raw) {
       throw new Error("empty structured response");
     }
-    modelPackage = JSON.parse(raw) as ModelPackage;
+    return JSON.parse(raw) as ModelPackage;
+  };
+
+  let modelPackage: ModelPackage;
+  try {
+    modelPackage = await generateModelPackage();
   } catch (error) {
     console.error("Content package generation error:", error instanceof Error ? error.message : String(error));
     return jsonError("İçerik paketi oluşturulamadı. Lütfen tekrar deneyin.", 502);
@@ -900,11 +905,42 @@ export async function POST(request: NextRequest) {
     return null;
   };
 
-  const contentPackage = assemblePackage(modelPackage);
+  let contentPackage = assemblePackage(modelPackage);
   const violation = findSafetyViolation(contentPackage);
   if (violation) {
     console.error("Content package failed deterministic checks:", violation);
     return jsonError("Oluşturulan içerik paketi doğrulamadan geçemedi. Lütfen tekrar deneyin.", 502);
+  }
+
+  // Expert copy gate (expertCopyGate.ts): an expert package reaches the
+  // user only without unsupported generalisations, jargon or generic
+  // phrasing. On a hit, Job 2 runs ONE more time, told exactly which
+  // phrases to avoid; the regenerated package goes through every check
+  // above again. Still failing -> no package (never a flawed one).
+  if (contentMode === "expert") {
+    const issues = findExpertCopyIssues(contentPackage);
+    if (issues.length > 0) {
+      console.log(`Expert copy gate: FAIL phrases=${issues.join(",")} -> one regeneration`);
+      try {
+        const retryModel = await generateModelPackage(
+          `Önceki taslak şu ifadeleri içerdiği için kalite kontrolünden geçmedi: ${issues.map((p) => `"${p}"`).join(", ")}. Bu ifadeleri ve aynı işi gören genellemeleri kullanmadan yeniden yaz.`,
+        );
+        if (!Array.isArray(retryModel.slides) || retryModel.slides.length !== expectedSlideCount) {
+          throw new Error("wrong slide count");
+        }
+        contentPackage = assemblePackage(retryModel);
+      } catch (error) {
+        console.error("Expert copy gate regeneration error:", error instanceof Error ? error.message : String(error));
+        return jsonError("İçerik kalite kontrolünden geçemedi. Lütfen tekrar deneyin.", 502);
+      }
+      const retryViolation = findSafetyViolation(contentPackage);
+      const retryIssues = findExpertCopyIssues(contentPackage);
+      if (retryViolation || retryIssues.length > 0) {
+        console.error(`Expert copy gate: FAIL after regeneration ${retryViolation ?? `phrases=${retryIssues.join(",")}`}`);
+        return jsonError("İçerik kalite kontrolünden geçemedi. Lütfen tekrar deneyin.", 502);
+      }
+    }
+    console.log("Expert copy gate: PASS");
   }
 
   // Editorial Quality Repair (final step, max ONE attempt) — see

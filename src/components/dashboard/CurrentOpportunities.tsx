@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, Loader2, ExternalLink, ImagePlus, RefreshCw } from "lucide-react";
+import { Sparkles, Loader2, ExternalLink, ImagePlus, RefreshCw, CalendarDays } from "lucide-react";
 import type { RankedContentOpportunity } from "@/lib/ai/research/retrieval/types";
+import type { WeeklyContentPlan, WeeklyPlanItem } from "@/lib/ai/content/weeklyPlan";
 import { describeFreshnessBand } from "@/lib/ai/research/freshnessBand";
 import { describeContentType } from "@/lib/ai/research/contentTypeLabel";
 import { recommendVisualFormat } from "@/lib/ai/research/formatRecommendation";
@@ -88,6 +89,48 @@ export default function CurrentOpportunities() {
   // opportunity — owns the package preview below.
   const [instruction, setInstruction] = useState("");
   const [activeInstruction, setActiveInstruction] = useState<string | null>(null);
+  const instructionBoxRef = useRef<HTMLDivElement>(null);
+
+  // "Haftalık Planı Oluştur": the week's topic suggestions (/api/content-plan).
+  // A picked idea runs the instruction flow above; a picked current topic
+  // becomes the selected Radar opportunity — both unchanged flows.
+  const [plan, setPlan] = useState<WeeklyContentPlan | null>(null);
+  const [isPlanning, setIsPlanning] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+
+  async function handleBuildPlan() {
+    setIsPlanning(true);
+    setPlanError(null);
+    try {
+      const response = await fetch("/api/content-plan", { method: "POST" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data?.items)) {
+        throw new Error(data?.error || "Haftalık plan oluşturulamadı. Lütfen tekrar deneyin.");
+      }
+      setPlan(data as WeeklyContentPlan);
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : "Haftalık plan oluşturulamadı. Lütfen tekrar deneyin.");
+    } finally {
+      setIsPlanning(false);
+    }
+  }
+
+  function handleUsePlanItem(item: WeeklyPlanItem) {
+    if (item.kind === "idea") {
+      setInstruction(item.instruction);
+      instructionBoxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      void handleGenerateFromInstruction(item.instruction);
+      return;
+    }
+    setActiveInstruction(null);
+    setOpportunities([item.opportunity]);
+    setHasSearched(true);
+    setSelectedIndex(0);
+    setFormatChoice(recommendVisualFormat(item.opportunity));
+    setContentPackage(null);
+    setVisual(null);
+    setGenerationError(null);
+  }
 
   async function handleFindOpportunities() {
     setIsSearching(true);
@@ -169,8 +212,8 @@ export default function CurrentOpportunities() {
     }
   }
 
-  async function handleGenerateFromInstruction() {
-    const text = instruction.trim();
+  async function handleGenerateFromInstruction(override?: string) {
+    const text = (override ?? instruction).trim();
     if (text.length < 15) {
       setGenerationError("Lütfen paylaşımın konusunu ve hedef kitlesini birkaç cümleyle yazın.");
       setActiveInstruction(text);
@@ -393,16 +436,35 @@ export default function CurrentOpportunities() {
             <Sparkles className="h-5 w-5" />
           </div>
           <div>
-            <p className="text-base font-semibold text-white">Güncel İçerik Fırsatları</p>
-            <p className="text-sm text-zinc-400">Güvenilir kaynaklardan güncel gayrimenkul gelişmeleri</p>
+            <p className="text-base font-semibold text-white">İçerik Planı ve Güncel Fırsatlar</p>
+            <p className="text-sm text-zinc-400">Haftalık uzmanlık içerikleri ve güvenilir kaynaklardan güncel gelişmeler</p>
           </div>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={handleBuildPlan}
+          disabled={isPlanning}
+          className="flex items-center gap-1.5 rounded-full bg-indigo-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {isPlanning ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Plan hazırlanıyor…
+            </>
+          ) : (
+            <>
+              <CalendarDays className="h-4 w-4" />
+              Haftalık Planı Oluştur
+            </>
+          )}
+        </button>
         <button
           type="button"
           onClick={handleFindOpportunities}
           disabled={isSearching}
-          className="flex items-center gap-1.5 rounded-full bg-indigo-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex items-center gap-1.5 rounded-full border border-zinc-700 px-4 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/50 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isSearching ? (
             <>
@@ -416,10 +478,43 @@ export default function CurrentOpportunities() {
             </>
           )}
         </button>
+        </div>
       </div>
 
       <div className={`space-y-4 px-5 ${isEmptyGuidanceOnly ? "py-3" : "py-4"}`}>
-      <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+      {planError && (
+        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-300">{planError}</p>
+      )}
+
+      {plan && (
+        <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+          <p className="text-sm font-medium text-white">Bu haftanın içerik planı</p>
+          <p className="mt-1 text-sm text-zinc-400">
+            {plan.radar === "used"
+              ? "Uzmanlık konuları ve bu haftanın güncel gelişmesi. Bir fikri seçin; Atlas taslağı hazırlasın."
+              : plan.radar === "unavailable"
+                ? "Güncel kaynaklara şu anda ulaşılamadı; plan uzmanlık konularıyla hazırlandı. Bir fikri seçin; Atlas taslağı hazırlasın."
+                : "Bu hafta güçlü bir güncel gelişme bulunamadı; plan uzmanlık konularıyla hazırlandı. Bir fikri seçin; Atlas taslağı hazırlasın."}
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            {plan.items.map((item, index) => (
+              <PlanCard key={`plan-${index}`} item={item} onUse={handleUsePlanItem} disabled={isGenerating} />
+            ))}
+          </div>
+          {plan.alternates.length > 0 && (
+            <>
+              <p className="mt-4 text-xs font-medium uppercase tracking-wide text-zinc-500">Yedek öneriler</p>
+              <div className="mt-2 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                {plan.alternates.map((item, index) => (
+                  <PlanCard key={`alt-${index}`} item={item} onUse={handleUsePlanItem} disabled={isGenerating} />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      <div ref={instructionBoxRef} className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
         <p className="text-sm font-medium text-white">Instagram paylaşımı hazırla</p>
         <p className="mt-1 text-sm text-zinc-400">
           Konuyu ve kime hitap edeceğini yazın; Atlas 5 slaytlık carousel, caption ve hashtagleri taslak olarak hazırlasın.
@@ -434,7 +529,7 @@ export default function CurrentOpportunities() {
         />
         <button
           type="button"
-          onClick={handleGenerateFromInstruction}
+          onClick={() => handleGenerateFromInstruction()}
           disabled={isGenerating}
           className="mt-3 flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-4 py-2.5 text-sm font-medium text-indigo-300 transition-colors hover:border-indigo-500/70 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -598,5 +693,35 @@ export default function CurrentOpportunities() {
       )}
       </div>
     </section>
+  );
+}
+
+function PlanCard({ item, onUse, disabled }: { item: WeeklyPlanItem; onUse: (item: WeeklyPlanItem) => void; disabled: boolean }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-4 py-3.5">
+      <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium">
+        <span
+          className={`rounded-full border px-2.5 py-1 ${
+            item.kind === "current"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+              : "border-indigo-500/30 bg-indigo-500/10 text-indigo-300"
+          }`}
+        >
+          {item.label}
+        </span>
+        {item.kind === "idea" && <span className="rounded-full border border-zinc-800 px-2.5 py-1 text-zinc-400">{item.format}</span>}
+      </div>
+      <p className="text-[15px] font-medium leading-snug text-white">{item.title}</p>
+      <p className="text-sm text-zinc-400">{item.reason}</p>
+      <button
+        type="button"
+        onClick={() => onUse(item)}
+        disabled={disabled}
+        className="mt-1 flex w-fit items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3.5 py-2 text-sm font-medium text-indigo-300 transition-colors hover:border-indigo-500/70 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <Sparkles className="h-4 w-4" />
+        {item.kind === "idea" ? "Bu fikirle carousel hazırla" : "Bu konuyu seç"}
+      </button>
+    </div>
   );
 }

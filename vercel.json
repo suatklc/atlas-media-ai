@@ -1,5 +1,6 @@
 {
   "functions": {
-    "src/app/api/research/discover/route.ts": { "regions": ["fra1"] }
+    "src/app/api/research/discover/route.ts": { "regions": ["fra1"] },
+    "src/app/api/content-plan/route.ts": { "regions": ["fra1"] }
   }
 }
