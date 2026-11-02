@@ -349,6 +349,14 @@ export default function CurrentOpportunities() {
                       </p>
                       <p className="mt-1 text-sm font-medium text-white">{slide.headline}</p>
                       <p className="mt-1 text-sm text-zinc-400">{slide.body}</p>
+                      {/* Slide facts (e.g. slide 4's checklist) render on the carousel — show them here too. */}
+                      {slide.facts.length > 0 && (
+                        <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-sm text-zinc-400">
+                          {slide.facts.map((fact, factIndex) => (
+                            <li key={factIndex}>{fact}</li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   ))}
                 </div>

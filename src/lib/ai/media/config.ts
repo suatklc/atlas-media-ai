@@ -5,7 +5,11 @@ import type { ImageProvider, VideoProvider, VideoTier } from "./types";
 // allowlisted server-side override is supplied (see IMAGE_MODEL_CONFIGS
 // below); there is no public/browser-supplied way to change this.
 export const DEFAULT_IMAGE_PROVIDER: ImageProvider = "openai";
-export const DEFAULT_IMAGE_MODEL = "gpt-image-1";
+// gpt-image-1 was shut down by OpenAI on 2026-10-23 (production returned
+// "The model 'gpt-image-1' does not exist"). gpt-image-2.5-sunburst takes
+// the same request (1024x1536/1024x1024, quality high, png, n=1, base64
+// response) — verified against the API before the switch.
+export const DEFAULT_IMAGE_MODEL = "gpt-image-2.5-sunburst";
 
 export type ImageModelConfig = {
   provider: ImageProvider;
@@ -18,7 +22,7 @@ export type ImageModelConfig = {
 // placeholder — set it to the actual model being benchmarked before use.
 export const IMAGE_MODEL_CONFIGS: Record<string, ImageModelConfig> = {
   default: { provider: DEFAULT_IMAGE_PROVIDER, model: DEFAULT_IMAGE_MODEL },
-  "fal-benchmark": { provider: "openai", model: "gpt-image-1" },
+  "fal-benchmark": { provider: "openai", model: DEFAULT_IMAGE_MODEL },
 };
 
 // ============================================================

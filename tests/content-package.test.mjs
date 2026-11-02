@@ -3069,3 +3069,12 @@ test("/api/content-package: a clean expert package passes the gate with a single
   assert.equal(newsResponse.status, 200);
   assert.equal(news.state.contentPackageCalls, 1, "news mode is unchanged");
 });
+
+// Production (2026-11-02): slide 4's checklist lives in slide.facts — the
+// carousel renders it, but the dashboard package preview showed only
+// headline + body, so the checklist looked missing.
+test("dashboard package preview shows each slide's facts (slide 4 checklist), not only headline and body", () => {
+  const card = fs.readFileSync(path.join(projectRoot, "src/components/dashboard/CurrentOpportunities.tsx"), "utf8");
+  assert.match(card, /slide\.facts\.length > 0 &&/);
+  assert.match(card, /slide\.facts\.map\(\(fact, factIndex\) =>/);
+});
