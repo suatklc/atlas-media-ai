@@ -24,20 +24,51 @@ rewritten to fit a visual-format choice.
 ## B. Research pipeline
 
 Live adapters (`src/lib/ai/research/retrieval/providers/`: `tcmb.ts`,
-`tkgm.ts`, `resmiGazete.ts`, `csb.ts`) → `retrieveCurrentInformation`
-(`retrieval/router.ts`, fan-out + relevance scoring)
-→ `discover.ts` (`discoverCurrentContentOpportunities`) — builds and
-  ranks `ContentOpportunity` objects, applies a 30-day freshness cutoff,
-  topic-family diversification, recurring-series suppression
+`tkgm.ts`, `resmiGazete.ts`, `csb.ts`, plus `economyNews.ts` for the AA
+Economy + Dünya RSS feeds) → `retrieveCurrentInformation`
+(`retrieval/router.ts`, fan-out + query-keyword filter + relevance
+scoring)
+→ `discover.ts` (`discoverCurrentContentOpportunities`) — 30-day
+  freshness cutoff → **real-estate scope gate** (below) → builds and
+  ranks `ContentOpportunity` objects, topic-family diversification,
+  recurring-series suppression, cross-source near-duplicate collapse
 → `/api/research/discover` → `CurrentOpportunities.tsx` dashboard card
 
 `resmiGazete.ts` and `csb.ts` are "mixed official source" adapters (their
 sites cover far more than real estate) and share a relevance filter —
-`retrieval/relevance.ts`'s `hasAnyWordBoundaryMatch` — before an entry
-becomes a candidate; `tcmb.ts`/`tkgm.ts` need no such filter (everything
-they publish is already in-domain). `resmiGazete.ts` fetches via
-`retrieval/secureFetch.ts` instead of plain `fetch()` — see that file for
-why (its own TLS trust-chain fix).
+`retrieval/relevance.ts`'s word-boundary matcher, which starts at a word
+boundary and tolerates Turkish suffixes ("konutlarına", "Maltepe'de"),
+with "yapı" kept exact (never "yapılmasına") — before an entry becomes a
+candidate. `resmiGazete.ts` tries plain `fetch()` first and falls back to
+`retrieval/secureFetch.ts` (its own TLS trust-chain fix) only on a
+TLS/certificate error.
+
+**Real-estate scope gate** (`src/lib/ai/research/realEstateScope.ts`,
+applied in `discover.ts`): the router's query contains generic economy/
+admin words (faiz, kredi, enflasyon, vergi, yönetmelik...), so a keyword
+hit alone never makes a topic. Deterministic, no AI, no network — every
+candidate's own title + snippet is classified as:
+- `property` — homes/villas, land, zoning, construction/yapılaşma, title
+  deed, rent, mortgage, market data, regional development (a region named
+  with a development term counts) → eligible.
+- `macro` — only rate/inflation/credit vocabulary or only a region name →
+  fills a short list only: at most one item (`MAX_MACRO_FILL = 1`), only
+  from an official/primary-data source.
+- `out` — anything else → never an opportunity.
+
+TKGM (`tkgm.gov.tr`) is a property-domain source but is NOT accepted
+unconditionally: it needs a property signal (shared stems, TKGM
+regulatory/registry vocabulary such as genelge/tebliğ/tescil/harç, or an
+amendment title on `/duyurular`); ceremonial/admin notices (bayram,
+kutlama) are `out`. The router's keyword filter is bypassed for TKGM
+(`keywordFilterExempt`) so this gate, not "Konu:" availability, decides.
+
+**Temporary diagnostics:** `retrieval/diagnostics.ts` emits count-only
+`[radar-diag]` log lines (adapter status/duration, TKGM per-phase
+timings, keyword-filter pass/drop, discover funnel, request start/end)
+from commits `9afa0b2` + `11c5030`. No behavior change, no secrets or
+article text — temporary, to be removed once the production-vs-local
+yield gap is diagnosed.
 
 **Current limitations (verified live):**
 - TÜİK: no adapter — `www.tuik.gov.tr`'s homepage server-renders a
@@ -51,7 +82,8 @@ why (its own TLS trust-chain fix).
 - Sarıyer Belediyesi (`sariyer.bel.tr`) still has no live adapter — full
   JS SPA, every route serves an identical shell, no server-rendered
   content reachable via fetch.
-- 4 live sources today (TCMB, TKGM, Resmî Gazete, ÇŞİDB). Real-world
+- 6 live feeds today (Layer 1: TCMB, TKGM, Resmî Gazete, ÇŞİDB; Layer 2:
+  AA Economy + Dünya RSS). Real-world
   per-run yield still varies day to day — some sources are official
   "mixed content" feeds that legitimately return zero relevant items on a
   quiet day, and Resmî Gazete in particular has shown intermittent
@@ -93,15 +125,37 @@ carousel work.
 
 ## F. Publishing
 
-`generated_posts.status`: `draft` → (explicit user approval) → `approved`
-→ `publishGeneratedPost.ts` → `publishing/router.ts` → provider →
-`posted`.
+`generated_posts.status`: `draft` → (explicit user approval, "Onayla")
+→ `approved` → (explicit "Seçili Platformlarda Yayınla") →
+`publishSelectedPlatforms.ts` → per platform → `posted` (Instagram).
 
-- Instagram: live via Meta Graph API (`publishing/providers/meta.ts`,
-  `publishing/connections/meta-graph.ts`).
-- Facebook: routed to the Meta provider but the actual post call
-  (`publishFacebookPagePost`) is an intentional stub that always throws —
-  not yet implemented.
+Approval never publishes. The single publish action
+(`publishing/publishSelectedPlatforms.ts`, dashboard `PublishPanel`)
+publishes only the platforms Suat ticks — nothing pre-selected, nothing
+inferred from connected accounts — each exactly once, independently, and
+returns one outcome per platform (one platform's failure never retries,
+skips, or triggers the other).
+
+- Instagram: live via Meta Graph API (Instagram API with Instagram Login;
+  `publishing/providers/meta.ts`, `publishing/connections/meta-graph.ts`).
+  `publishGeneratedPost.ts` writes `posted` only after Meta confirms. A
+  carousel is published as a real carousel (one child container per
+  slide, in order, then one CAROUSEL container), each container waited on
+  until `FINISHED`. The long-lived token is refreshed on use
+  (`connections/tokenLifecycle.ts`); reconnect only when needed.
+- Facebook Page: live (`publishing/publishFacebookPost.ts`,
+  `providers/meta.ts`'s `publishFacebookPagePost`,
+  `connections/facebook-graph.ts`). Facebook Login for Business
+  (`/api/facebook/connect` + `/callback`, own state cookie) → Page
+  selection → Page token in Vault (never the Instagram token). Every
+  image is uploaded unpublished, then attached to ONE Page post; a
+  carousel requires exactly slides 1..5 in order (never cover-only or
+  reduced) and a passed non-public multi-image check
+  (`facebookCapability.ts`). Copy comes from a deterministic Facebook
+  adapter (caption without the Instagram hashtag stack, max 2 tags) — no
+  model call, no new claims; editable in Draft Edit. Result tracked in
+  `metadata.publishResults.facebook` (publishing / published / failed);
+  `generated_posts.status` is never written by the Facebook path.
 - LinkedIn / Google Business: no provider assigned at all
   (`publishing/config.ts`) — `publishing/router.ts` returns an explicit
   "not yet configured" failure, never a silent fallback.

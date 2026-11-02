@@ -24,12 +24,30 @@ across every connected channel.
 - Future: video/Reels
 - Platform adaptation (same idea, correct shape per platform)
 - Explicit user approval before anything is published
-- Publishing (currently: Instagram live via Meta)
+- Publishing (currently: Instagram + Facebook Page live via Meta)
 
 ## Platform priority order
 
 Instagram → Facebook → LinkedIn → WhatsApp → Google Business Profile →
 (later) YouTube/video.
+
+Target publishing channels for the static pipeline: Instagram + Facebook
++ LinkedIn + Google Business Profile.
+
+## Current Content Radar — purpose (durable)
+
+The Radar's job is not to find news that matches a keyword. It selects
+current topics that are genuinely worth sharing with Suat Kılıç's
+real-estate audience.
+
+- Scope is the whole property field, never villas only: land, zoning
+  (imar), construction/development (yapılaşma), title deed (tapu),
+  homes/villas, rent, investment, market, and regional developments.
+- General macroeconomics (rates, inflation, credit) is supporting
+  material only, and only when it is meaningful for real estate.
+- No impact or fact the source does not state is ever invented.
+- Frozen systems are not changed without a proven reason.
+- Nothing is published without explicit user approval.
 
 ## User experience principle
 

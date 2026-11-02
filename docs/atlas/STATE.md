@@ -4,7 +4,23 @@ This document reflects VERIFIED current state as of the commit below. It
 changes often — keep it short and current, not a historical changelog
 (see ARCHITECTURE.md/PRODUCT.md for durable structure/decisions).
 
-**HEAD commit:** `de33c7cecb706265960b894345800c52cbf6be1c`
+**HEAD commit:** `0641ed0221b6c4e07b961945b17bdeb9abc8b1b5` (synced
+2026-11-02)
+
+## Snapshot
+
+- **Frozen:** Static Content V1, Carousel V1, Current Content Radar V1
+  (post-freeze targeted scope/source fixes below), Source-Grounding
+  Safety V1, ContentPackage Gold Standard V1, Hero v1.
+- **Publishing live in production:** Instagram + Facebook Page (Facebook
+  Static Publishing V1). Approval never publishes; only the explicit
+  "Seçili Platformlarda Yayınla" action does, per ticked platform.
+- **Target publishing channels:** Instagram + Facebook + LinkedIn +
+  Google Business Profile. LinkedIn and Google Business have NO provider
+  yet (`publishing/config.ts` — explicit "not yet configured" failure).
+- **Radar:** real-estate scope gate active; `[radar-diag]` logs are
+  TEMPORARY.
+- **Video/Reels:** infrastructure only (no route, no UI, no paid run).
 
 ## Completed
 
@@ -18,7 +34,7 @@ changes often — keep it short and current, not a historical changelog
   research workflow (find → select → generate content → generate visual
   → draft saved for approval).
 - Explicit approval → publish safety chain preserved throughout (Instagram
-  live via Meta; nothing auto-publishes).
+  + Facebook Page live via Meta; nothing auto-publishes).
 - **CAROUSEL V1 = FROZEN** (final validation task, no code changes
   required — validation-only was the successful outcome). Frozen scope:
   `src/lib/ai/image/templates/carousel.ts` (5-slide renderer),
@@ -280,7 +296,8 @@ changes often — keep it short and current, not a historical changelog
   - `tests/output-mode.test.mjs` ×2 — `isContentOpportunity is not a
     function` (stale mock map, missing several real imports from an
     earlier refactor).
-- Full test suite: 456/460 passing (the 4 above).
+- Full test suite: 456/460 passing (the 4 above) — last recorded count,
+  not re-run during the 2026-11-02 doc sync.
 - **"Actual change lost before writing" — ROOT CAUSE FIXED (2026-10-17,
   second pass).** `factContract.ts`: Sentence-Anchored Citation (Job 1
   cites `[S<n>]` segments; a current-topic fact whose own quote fails
@@ -363,6 +380,50 @@ changes often — keep it short and current, not a historical changelog
   Canva Pro+ plan, a Developer Portal integration + client secret, and a
   5-page Brand Template with named data fields.
 
+- **INSTAGRAM PUBLISHING — live in production** (`3270a70`, `0754562`):
+  carousels publish as real carousels (all slides, in order, never
+  cover-only), each Meta container waited on until `FINISHED`, Meta
+  errors logged without tokens; the long-lived Instagram token is
+  refreshed on use, reconnect only when needed. `status` goes
+  `approved → posted` only after Meta confirms.
+- **FACEBOOK STATIC PUBLISHING V1 — live in production** (`18914da`,
+  `092d820`): Facebook Login for Business → Page selection (Page token in
+  Vault, Instagram connection never touched) → non-public 5-image check
+  must pass before multi-image publishing → explicit publish. Exactly
+  slides 1..5 in order, one Page post; deterministic Facebook copy
+  adapter (no model call, no new claims), editable in Draft Edit. Result
+  in `metadata.publishResults.facebook`; `generated_posts.status` is
+  never written by the Facebook path; a published result blocks
+  duplicates, a failed one is retryable.
+  - **One publish action for both:** "Seçili Platformlarda Yayınla"
+    (`publishSelectedPlatforms.ts`) — nothing pre-selected, only ticked
+    platforms, each once and independently, one outcome per platform.
+    "Onayla" (approval) never publishes.
+- **LinkedIn / Google Business — no provider yet.** Both are target
+  channels; `publishing/config.ts` declares them with no `providerId`,
+  and the router returns an explicit "not yet configured" failure.
+- **CURRENT CONTENT RADAR — post-freeze targeted fixes** (`bd57d85`,
+  `32c1c42`, `0641ed0`; retrieval/ranking/dedupe architecture unchanged):
+  - Real-estate scope gate (`research/realEstateScope.ts`, see
+    ARCHITECTURE.md §B): `property` / `macro` / `out`. Shortlist is built
+    from property topics; at most one macro item (rate/inflation) from an
+    official/primary source fills a short list; out-of-scope never
+    enters. Whole property scope, never villa-only.
+  - TKGM is no longer accepted unconditionally — needs a property signal;
+    bayram/kutlama/admin noise is out; TKGM bypasses the router keyword
+    filter so the scope gate decides.
+  - Suffix-aware Turkish matching in `relevance.ts` ("yapı" stays exact);
+    "yapılaşma" and "yapı denetim" added to the vocabulary/query;
+    Resmî Gazete now fetch-first with the TLS fallback only on cert error.
+  - Expert content ("Instagram paylaşımı hazırla") brief and cover are
+    property-type-aware (konut/villa, arsa/arazi, imar/yatırım/inşaat,
+    piyasa/bölgesel), never villa-locked.
+  - **`[radar-diag]` logs are TEMPORARY** (`9afa0b2`, `11c5030`,
+    `retrieval/diagnostics.ts` + adapters/router/discover/route):
+    count-only, no secrets or article text, no behavior change. Added to
+    find why production returns fewer property topics than local. Remove
+    (revert those commits' logging) once diagnosed.
+
 ## Next work order (intentional — do not reorder without a genuine blocker)
 
 1. Claude Code persistent project memory — COMPLETE.
@@ -388,7 +449,8 @@ changes often — keep it short and current, not a historical changelog
 11. Canva Gold Standard PoC — not started (next, per CLAUDE.md's
     Current Development Order).
 12. External publishing PoC (Buffer first candidate) — not started.
-13. Video / Reels V1 — provider layer implemented, NOT yet live-tested
+13. Video / Reels V1 — INFRASTRUCTURE ONLY: provider layer +
+    `video/reelPlan.ts` implemented, nothing calls them, NOT yet live-tested
     (no paid generation run). fal.ai chosen over Higgsfield (already
     integrated; Higgsfield needs a new account/wallet/key/client for the
     same model families). `media/types.ts` gained one image-to-video job
