@@ -362,14 +362,16 @@ export default function CurrentOpportunities() {
                 </div>
               )}
 
-              {!visual && (
+              {/* After a failed visual, the same action stays available as "Tekrar Dene" — it
+                  re-runs only /api/generate-visual with the existing package. */}
+              {(!visual || visual.status === "error") && (
                 <button
                   type="button"
                   onClick={handleGenerateVisual}
                   className="mt-4 flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300"
                 >
                   <ImagePlus className="h-4 w-4 text-indigo-400" />
-                  Görsel Oluştur
+                  {visual?.status === "error" ? "Tekrar Dene" : "Görsel Oluştur"}
                 </button>
               )}
 

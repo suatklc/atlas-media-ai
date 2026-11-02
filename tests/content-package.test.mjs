@@ -3078,3 +3078,19 @@ test("dashboard package preview shows each slide's facts (slide 4 checklist), no
   assert.match(card, /slide\.facts\.length > 0 &&/);
   assert.match(card, /slide\.facts\.map\(\(fact, factIndex\) =>/);
 });
+
+// Production (2026-11-02): after a failed visual the "Görsel Oluştur" button
+// disappeared (rendered only when no visual state existed), so the user
+// could not retry. Retry re-runs only the visual step on the same package.
+test("dashboard: a failed visual keeps a retry action that re-runs only /api/generate-visual", () => {
+  const card = fs.readFileSync(path.join(projectRoot, "src/components/dashboard/CurrentOpportunities.tsx"), "utf8");
+  assert.match(card, /\{\(!visual \|\| visual\.status === "error"\) && \(/);
+  assert.match(card, /visual\?\.status === "error" \? "Tekrar Dene" : "Görsel Oluştur"/);
+  const retryStart = card.indexOf('(!visual || visual.status === "error")');
+  const retryButton = card.slice(retryStart, card.indexOf('"Tekrar Dene"', retryStart));
+  assert.match(retryButton, /onClick=\{handleGenerateVisual\}/);
+  const handler = card.slice(card.indexOf("async function handleGenerateVisual"), card.indexOf("const selectedOpportunity"));
+  assert.match(handler, /setVisual\(\{ status: "loading" \}\)/, "the error is cleared when the retry starts");
+  assert.match(handler, /fetch\("\/api\/generate-visual"/);
+  assert.doesNotMatch(handler, /\/api\/content-package/, "the package is not regenerated");
+});
