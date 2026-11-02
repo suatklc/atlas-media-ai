@@ -341,6 +341,8 @@ test("a discover.ts-built ContentOpportunity travels through buildSeedMessage ->
       url: "https://www.tcmb.gov.tr/x/duy2026-28",
       publishedAt: "2026-08-20T00:00:00.000Z",
       tier: "official-authority",
+      // The angle the editorial-value gate attaches (applyEditorialGate).
+      editorialAngle: "Konut kredisi kullanacak alıcılar açısından: Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)",
     }),
   ];
   const [built] = discover.buildContentOpportunities(results, now);

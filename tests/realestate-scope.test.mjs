@@ -137,11 +137,14 @@ test("discover: general news never enters the shortlist; property topics do", as
   assert.match(titles, /Konut Fiyat Endeksi/);
 });
 
+// A macro item's own evidence that links it to property (source-supported).
+const withPropertyLink = (item) => ({ ...item, evidenceText: "Kurul, konut kredisi faizlerindeki gelişmeleri de değerlendirdi." });
+
 test("discover: a macro item only fills a short list (max 1), only from an official/primary source — never ahead of property topics", async () => {
   const discover = loadDiscover([
-    result("Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)", "official-authority"),
-    result("Enflasyon Raporu 2026-IV", "primary-data"),
-    result("Kredi kartı harcamaları arttı", "financial-news"),
+    withPropertyLink(result("Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)", "official-authority")),
+    withPropertyLink(result("Enflasyon Raporu 2026-IV", "primary-data")),
+    withPropertyLink(result("Kredi kartı harcamaları arttı", "financial-news")),
     result("Kira artışında yeni dönem başladı", "financial-news"),
   ]);
   const list = await discover.discoverCurrentContentOpportunities({ now: NOW, limit: 5, maxAgeDays: 30 });
@@ -151,7 +154,7 @@ test("discover: a macro item only fills a short list (max 1), only from an offic
   assert.ok(!list.some((o) => /Kredi kartı/.test(o.topic)), "a news-tier macro item never fills");
 
   const full = loadDiscover([
-    result("Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)"),
+    withPropertyLink(result("Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)")),
     ...["Kira artışında yeni dönem", "Arsalarda hisseli satış kuralı", "Konut satışları Eylül", "İmar planı askıya çıktı", "Kentsel dönüşüm desteği"].map((t) => result(t)),
   ]);
   const fullList = await full.discoverCurrentContentOpportunities({ now: NOW, limit: 5, maxAgeDays: 30 });
@@ -199,18 +202,19 @@ const TKGM_DUYURU = "https://www.tkgm.gov.tr/duyurular/x";
 const TKGM_HABER = "https://www.tkgm.gov.tr/haberler/x";
 const tkgmScope = (text, url = TKGM_DUYURU) => scope.classifyRealEstateScope(text, REGIONS, url);
 
-test("TKGM: 'Vakıf Kültür Varlıklarının Tespiti' is in scope — with its Konu line and title-only", () => {
+test("TKGM: 'Vakıf Kültür Varlıklarının Tespiti' is in scope (TKGM regulatory vocabulary) — the editorial gate decides separately", () => {
   assert.equal(tkgmScope("Vakıf Kültür Varlıklarının Tespiti Konulu Duyuru — Konu: Vakıf kültür varlıklarının tespiti hk."), "property");
   assert.equal(tkgmScope("Vakıf Kültür Varlıklarının Tespiti Konulu Duyuru"), "property");
 });
 
-test("TKGM: 'Duyuru Değişikliği' is in scope — via its Konu line (yapılaşma) and, title-only, as a /duyurular amendment", () => {
+// Production (2026-11-02): a title-only "Duyuru Değişikliği" reached the shortlist.
+test("TKGM: an ambiguous amendment title is OUT title-only, PROPERTY only when its own subject line names property", () => {
+  assert.equal(tkgmScope("Duyuru Değişikliği"), "out");
+  assert.equal(tkgmScope("Duyuru Değişikliği", TKGM_HABER), "out");
   assert.equal(
     tkgmScope("Duyuru Değişikliği — Konu: 7452 sayılı Olağanüstü Hal Kapsamında Yerleşme ve Yapılaşmaya İlişkin Cumhurbaşkanlığı Kararnamesinin Kabul Edilmesine Dair Kanun’un Ek Madde 1 Uygulamaları Hk."),
     "property",
   );
-  assert.equal(tkgmScope("Duyuru Değişikliği"), "property");
-  assert.equal(tkgmScope("Duyuru Değişikliği", TKGM_HABER), "out", "the amendment rule is scoped to the announcements section");
 });
 
 test("TKGM: '29 Ekim Cumhuriyet Bayramı' and other ceremonial/administrative items are out — TKGM is not accepted unconditionally", () => {
@@ -257,24 +261,106 @@ test("discover: TKGM items skip the router keyword pre-filter (scope gate decide
   assert.equal(captured.keywordFilterExempt({ url: "https://www.aa.com.tr/tr/ekonomi/x" }), false);
 });
 
-test("discover: TKGM end to end — Vakıf + Duyuru Değişikliği shortlisted title-only, Bayram excluded, 30-day cutoff kept", async () => {
-  const tkgmItem = (title, path, daysAgo) => ({
-    ...result(title, "official-authority", daysAgo),
-    url: `https://www.tkgm.gov.tr/${path}/${encodeURIComponent(title)}`,
-    publisher: "TKGM",
-    snippet: title,
-  });
+const tkgmItem = (title, path, daysAgo, subject) => ({
+  ...result(title, "official-authority", daysAgo),
+  url: `https://www.tkgm.gov.tr/${path}/${encodeURIComponent(title)}`,
+  publisher: "TKGM",
+  snippet: subject ? `${title} — Konu: ${subject}` : title,
+  // Every TKGM PDF carries the institution's name — never a subject signal.
+  evidenceText: "T.C. TAPU VE KADASTRO GENEL MÜDÜRLÜĞÜ Tapu Dairesi Başkanlığı",
+});
+
+test("discover: TKGM end to end — production titles (Vakıf, title-only Duyuru Değişikliği) excluded, a verified subject kept, Bayram out, 30-day cutoff kept", async () => {
   const discover = loadDiscover([
-    tkgmItem("Vakıf Kültür Varlıklarının Tespiti Konulu Duyuru", "duyurular", 9),
+    tkgmItem("Vakıf Kültür Varlıklarının Tespiti Konulu Duyuru", "duyurular", 9, "Vakıf kültür varlıklarının tespiti hk."),
     tkgmItem("Duyuru Değişikliği", "duyurular", 10),
+    tkgmItem("Genelge Güncellemesi", "duyurular", 3, "Yabancıların Taşınmaz Edinimlerinde Kullanılacak Değerleme Raporlarına İlişkin Usul ve Esaslar"),
     tkgmItem("29 Ekim Cumhuriyet Bayramı", "haberler", 1),
-    tkgmItem("2024/4 Sayılı Genelge Değişikliği Hakkında Duyuru", "duyurular", 31),
+    tkgmItem("2024/4 Sayılı Genelge Değişikliği Hakkında Duyuru", "duyurular", 31, "Taşınmaz satışlarında değerleme raporu"),
   ]);
-  const titles = (await discover.discoverCurrentContentOpportunities({ now: NOW, limit: 5, maxAgeDays: 30 })).map((o) => o.topic).join(" | ");
-  assert.match(titles, /Vakıf Kültür/);
-  assert.match(titles, /Duyuru Değişikliği/);
-  assert.doesNotMatch(titles, /Bayram/);
-  assert.doesNotMatch(titles, /2024\/4/, "older than 30 days stays out");
+  const list = await discover.discoverCurrentContentOpportunities({ now: NOW, limit: 5, maxAgeDays: 30 });
+  const titles = list.map((o) => o.topic).join(" | ");
+  assert.equal(titles, "Genelge Güncellemesi", "only the item whose own subject names property survives");
+  assert.match(list[0].angle, /Yabancıların Taşınmaz Edinimlerinde/, "the angle carries the source's own subject, not the boilerplate title");
+});
+
+// ===== Editorial-value gate + topic-specific angle (production acceptance, 2026-11-02) =====
+
+const FORMER_FIXED_ANGLE = "Bu gelişmenin gayrimenkul alıcı ve yatırımcıları için pratik anlamı";
+const angleOf = (title, extra = {}) =>
+  scope.deriveEditorialAngle({ title, snippet: title, url: `https://example.gov.tr/${encodeURIComponent(title)}`, ...extra }, REGIONS);
+
+test("editorial gate: real land/zoning/construction/title-deed/rent/housing/market/regional topics keep a topic-specific angle (not villa-only)", () => {
+  const cases = [
+    ["Tarla ve araziler için hisseli tapu satışlarında yeni kural", /^Arsa ve arazi/],
+    ["Plan notlarında değişiklik: imarlı parsellerde yapılaşma", /^Arsa ve arazi|^İmar ve yapılaşma/],
+    ["İmar planı askıya çıktı", /^İmar ve yapılaşma/],
+    ["Yapı Sahipleri ile Yapı Denetimi Hizmet Sözleşmesi İmzalayacak Yapı Denetim Kuruluşlarının Belirlenmesine İlişkin Tebliğ", /^Yapı sahipleri/],
+    ["Kentsel dönüşümde yeni destek paketi", /^Yapı sahipleri/],
+    ["Tapu Sicili Tüzüğünde Değişiklik", /^Tapu ve kadastro/],
+    ["Kira artışında yeni dönem başladı", /^Ev sahipleri ve kiracılar/],
+    ["Konut kredisi faizleri yükseldi", /^Konut kredisi/],
+    ["Satış İşlemlerinde Zorunlu Deprem Sigortası Hakkında Duyuru", /^Konut sahipleri/],
+    ["Konut Fiyat Endeksi, Eylül 2026", /^Gayrimenkul piyasasını/],
+    ["Villa projelerinde talep kuzeye kaydı", /^Gayrimenkul piyasasını|^Konut alıcıları/],
+    ["Sarıyer'e yeni metro hattı için ihale tamamlandı", /^Bölgedeki mülk sahipleri/],
+  ];
+  const angles = cases.map(([title, pattern]) => {
+    const angle = angleOf(title);
+    assert.ok(angle, `${title} must keep an angle`);
+    assert.match(angle, pattern, title);
+    assert.ok(angle.endsWith(title), `${title}: the angle names the source's own subject`);
+    return angle;
+  });
+  assert.equal(new Set(angles).size, angles.length, "no two topics share one angle");
+});
+
+test("editorial gate: no safe angle -> no opportunity (boilerplate-only subject, bare 'property-related', TKGM vocabulary without a subject)", () => {
+  for (const title of [
+    "Duyuru Değişikliği",
+    "Genelge Güncellemesi",
+    "2024/4 Sayılı Genelge Değişikliği Hakkında Duyuru",
+    "Gayrimenkul sektörü yeni yıla hazırlanıyor",
+    "Vakıf Kültür Varlıklarının Tespiti Konulu Duyuru",
+  ]) {
+    assert.equal(angleOf(title, { url: "https://www.tkgm.gov.tr/duyurular/x" }), undefined, title);
+  }
+  assert.equal(angleOf("Sarıyer Belediyesi kültür festivali programı"), undefined, "region-only macro item");
+});
+
+test("editorial gate: a macro item needs a property link in its OWN source text — never filled as general economy news", () => {
+  assert.equal(angleOf("Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)"), undefined, "TCMB rate notice without a property link");
+  assert.equal(angleOf("Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)", { evidenceText: "Politika faizi yüzde 40 olarak sabit tutuldu." }), undefined);
+  assert.match(
+    angleOf("Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)", { evidenceText: "Kurul, konut kredisi faizlerindeki gelişmeleri de değerlendirdi." }),
+    /^Konut kredisi kullanacak alıcılar açısından: Faiz Oranlarına/,
+  );
+});
+
+test("discover: a macro item with no source-supported property link never fills the list, even when the list is short", async () => {
+  const discover = loadDiscover([
+    result("Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)", "official-authority"),
+    result("Kira artışında yeni dönem başladı", "financial-news"),
+  ]);
+  const titles = (await discover.discoverCurrentContentOpportunities({ now: NOW, limit: 5, maxAgeDays: 30 })).map((o) => o.topic);
+  assert.equal(titles.join(" | "), "Kira artışında yeni dönem başladı");
+});
+
+test("the former hard-coded angle is gone from every opportunity and from discover.ts", async () => {
+  const discover = loadDiscover([
+    result("Satış İşlemlerinde Zorunlu Deprem Sigortası Hakkında Duyuru"),
+    result("Arsaların değerlemesinde yeni dönem", "financial-news"),
+    result("Konut Fiyat Endeksi, Eylül 2026", "primary-data"),
+    withPropertyLink(result("Faiz Oranlarına İlişkin Basın Duyurusu (2026-28)")),
+  ]);
+  const list = await discover.discoverCurrentContentOpportunities({ now: NOW, limit: 5, maxAgeDays: 30 });
+  assert.equal(list.length, 4);
+  for (const opportunity of list) {
+    assert.notEqual(opportunity.angle, FORMER_FIXED_ANGLE);
+    assert.ok(opportunity.angle.includes(opportunity.topic), opportunity.topic);
+  }
+  const source = fs.readFileSync(path.join(projectRoot, "src/lib/ai/research/discover.ts"), "utf8");
+  assert.ok(!source.includes(FORMER_FIXED_ANGLE));
 });
 
 test("discover: the retrieval query includes 'yapı denetim' and still never bare 'yapı'", () => {

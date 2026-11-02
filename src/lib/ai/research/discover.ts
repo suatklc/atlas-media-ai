@@ -5,7 +5,7 @@ import type { ContentOpportunityFreshness, ResearchSource, SourceTier } from "./
 import type { NormalizedResearchResult, RankedContentOpportunity, RetrievalQuery, TopicFamily } from "./retrieval/types";
 import { retrieveCurrentInformation } from "./retrieval/router";
 import { toTurkeyCalendarDate } from "./retrieval/turkishDate";
-import { classifyRealEstateScope, isPropertyDomainSource } from "./realEstateScope";
+import { classifyRealEstateScope, deriveEditorialAngle, isPropertyDomainSource } from "./realEstateScope";
 import { radarDiag, tally } from "./retrieval/diagnostics";
 
 // Phase 2/3 (Current Content Engine — live research foundation +
@@ -111,10 +111,10 @@ function normalizeEventKey(title: string): string {
 // the time it ran, so this exact scenario is exercised by a synthetic
 // fixture (tests/research-retrieval.test.mjs), not by observed live
 // duplication.
-function dedupeByUrlOrTitle(results: NormalizedResearchResult[]): NormalizedResearchResult[] {
+function dedupeByUrlOrTitle<T extends NormalizedResearchResult>(results: T[]): T[] {
   const seenUrls = new Set<string>();
   const seenTitleKeys = new Set<string>();
-  const deduped: NormalizedResearchResult[] = [];
+  const deduped: T[] = [];
 
   for (const result of results) {
     const titleKey = normalizeEventKey(result.title);
@@ -290,8 +290,21 @@ function toTurkeyIsoDate(publishedAt: string): string {
   return date ? `${date.year}-${date.month}-${date.day}` : publishedAt.slice(0, 10);
 }
 
+// Editorial-value gate (realEstateScope.ts deriveEditorialAngle): a result
+// with no source-supported, topic-specific angle is dropped here — never
+// given a generic filler angle. Its angle travels with the result into
+// buildContentOpportunities.
+export type EditorialResult = NormalizedResearchResult & { editorialAngle: string };
+
+export function applyEditorialGate(results: NormalizedResearchResult[], regionNames: string[] = []): EditorialResult[] {
+  return results.flatMap((result) => {
+    const editorialAngle = deriveEditorialAngle(result, regionNames);
+    return editorialAngle ? [{ ...result, editorialAngle }] : [];
+  });
+}
+
 export function buildContentOpportunities(
-  results: NormalizedResearchResult[],
+  results: EditorialResult[],
   now: Date = new Date(),
 ): RankedContentOpportunity[] {
   const deduped = dedupeByUrlOrTitle(results);
@@ -311,7 +324,7 @@ export function buildContentOpportunities(
 
     return {
       topic: result.title,
-      angle: "Bu gelişmenin gayrimenkul alıcı ve yatırımcıları için pratik anlamı",
+      angle: result.editorialAngle,
       // No trailing period: opportunity.ts's buildSeedMessage renders this
       // as "Güncellik nedeni: ${whyNow}." — appending its own period.
       // Turkey-local calendar day, never the UTC prefix (a Turkey-midnight
@@ -355,8 +368,14 @@ const FRESHNESS_SCORE: Record<ContentOpportunityFreshness, number> = {
 // fixed lookup exactly like the two tables above it.
 const PRACTICAL_VALUE_TYPES = new Set<ContentIntent>(["educational", "market-stats"]);
 
+// The angle used to be one fixed sentence for every opportunity, which
+// contributed exactly these two keyword hits to every score. Now that the
+// angle is topic-specific it is kept out of scoring, and this constant
+// keeps every relevance score identical to before.
+const FORMER_FIXED_ANGLE_TERMS = "gayrimenkul yatırım";
+
 function relevanceKeywordScore(opportunity: RankedContentOpportunity, keywords: string[]): number {
-  const haystack = `${opportunity.topic} ${opportunity.angle} ${opportunity.keyFacts.join(" ")}`.toLocaleLowerCase(
+  const haystack = `${opportunity.topic} ${FORMER_FIXED_ANGLE_TERMS} ${opportunity.keyFacts.join(" ")}`.toLocaleLowerCase(
     "tr-TR",
   );
   return keywords.reduce(
@@ -818,11 +837,15 @@ export async function discoverCurrentContentOpportunities(
   const property = ageFiltered.filter((result) => scopeOf(result) === "property");
   const macro = ageFiltered.filter((result) => scopeOf(result) === "macro" && MACRO_FILL_TIERS.has(result.tier));
 
-  const ranked = rankContentOpportunities(buildContentOpportunities(property, now), query.keywords, limit);
+  // Editorial-value gate: no source-supported angle -> not an opportunity.
+  // A macro item passes only when its own evidence links it to property.
+  const propertyCandidates = applyEditorialGate(property, regionNames);
+  const macroCandidates = applyEditorialGate(macro, regionNames);
+  const ranked = rankContentOpportunities(buildContentOpportunities(propertyCandidates, now), query.keywords, limit);
   const fill =
-    ranked.length >= limit || macro.length === 0
+    ranked.length >= limit || macroCandidates.length === 0
       ? []
-      : rankContentOpportunities(buildContentOpportunities(macro, now), query.keywords, Math.min(MAX_MACRO_FILL, limit - ranked.length));
+      : rankContentOpportunities(buildContentOpportunities(macroCandidates, now), query.keywords, Math.min(MAX_MACRO_FILL, limit - ranked.length));
   logDiscoverFunnel(results, ageFiltered, scopeOf, [...ranked, ...fill], options.maxAgeDays, limit);
   return [...ranked, ...fill];
 }
