@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { isRejectedDraft } from "@/lib/automation/review";
 import { runFacebookMultiPhotoCheck } from "@/lib/publishing/facebookCapability";
 import { selectFacebookPage } from "@/lib/publishing/connections/query";
 import {
@@ -60,6 +61,17 @@ export async function updatePostStatus(
     return { error: "Bu işlem için giriş yapmanız gerekiyor." };
   }
 
+  // A rejected draft (rejectPostAction) can never be approved.
+  const { data: current } = await supabase
+    .from("generated_posts")
+    .select("metadata")
+    .eq("id", postId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (isRejectedDraft(current?.metadata)) {
+    return { error: "Reddedilen taslak onaylanamaz." };
+  }
+
   const { data, error } = await supabase
     .from("generated_posts")
     .update({ status: nextStatus })
@@ -78,6 +90,51 @@ export async function updatePostStatus(
     // safe message for both cases; nothing about the generated post/image
     // itself is touched or affected by this failing.
     return { error: "Gönderi bulunamadı." };
+  }
+
+  revalidatePath("/dashboard");
+  return { error: null };
+}
+
+// ===== Reject a draft (Automation V1) =====
+// See lib/automation/review.ts: status stays "draft", metadata.review marks
+// it rejected; it can no longer be approved (updatePostStatus above).
+export async function rejectPostAction(postId: string, _prevState: StatusActionState, _formData: FormData): Promise<StatusActionState> {
+  if (typeof postId !== "string" || !postId) {
+    return { error: "Geçersiz gönderi." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { error: "Bu işlem için giriş yapmanız gerekiyor." };
+  }
+
+  const { data: post } = await supabase
+    .from("generated_posts")
+    .select("metadata")
+    .eq("id", postId)
+    .eq("user_id", user.id)
+    .eq("status", "draft")
+    .maybeSingle();
+  if (!post) {
+    return { error: "Yalnızca taslaklar reddedilebilir." };
+  }
+
+  const metadata = post.metadata && typeof post.metadata === "object" ? (post.metadata as Record<string, unknown>) : {};
+  const { data, error } = await supabase
+    .from("generated_posts")
+    .update({ metadata: { ...metadata, review: { state: "rejected", at: new Date().toISOString() } } })
+    .eq("id", postId)
+    .eq("user_id", user.id)
+    .eq("status", "draft")
+    .select("id");
+
+  if (error || !data || data.length === 0) {
+    if (error) console.error("Post reject error:", error.message);
+    return { error: "Taslak reddedilemedi. Lütfen tekrar deneyin." };
   }
 
   revalidatePath("/dashboard");

@@ -1,6 +1,8 @@
 {
   "functions": {
     "src/app/api/research/discover/route.ts": { "regions": ["fra1"] },
-    "src/app/api/content-plan/route.ts": { "regions": ["fra1"] }
-  }
+    "src/app/api/content-plan/route.ts": { "regions": ["fra1"] },
+    "src/app/api/cron/daily-content/route.ts": { "regions": ["fra1"] }
+  },
+  "crons": [{ "path": "/api/cron/daily-content", "schedule": "0 4 * * 1,2,4,6" }]
 }

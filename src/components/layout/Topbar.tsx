@@ -1,4 +1,5 @@
-import { Bell, Menu, Search } from "lucide-react";
+import { Menu, Search } from "lucide-react";
+import NotificationBell from "./NotificationBell";
 import { getInitials } from "@/lib/format";
 import type { AuthUser } from "@/lib/types";
 
@@ -29,14 +30,7 @@ export default function Topbar({ onMenuClick, user }: TopbarProps) {
       </div>
 
       <div className="ml-auto flex items-center gap-3">
-        <button
-          type="button"
-          className="relative rounded-md p-2 text-zinc-400 hover:bg-zinc-800 hover:text-white"
-          aria-label="Bildirimler"
-        >
-          <Bell className="h-5 w-5" />
-          <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-indigo-500" />
-        </button>
+        <NotificationBell />
 
         <div className="hidden h-6 w-px bg-zinc-800 sm:block" />
 

@@ -182,10 +182,12 @@ test("/api/content-plan is read-only: no insert/update, no publishing, no status
 
 test("vercel.json: Radar-calling routes run in fra1; nothing else is pinned", () => {
   const config = JSON.parse(fs.readFileSync(path.join(projectRoot, "vercel.json"), "utf8"));
-  assert.deepEqual(Object.keys(config), ["functions"]);
+  assert.deepEqual(Object.keys(config), ["functions", "crons"]);
+  // The automation cron builds the weekly plan (Radar) too.
   assert.deepEqual(config.functions, {
     "src/app/api/research/discover/route.ts": { regions: ["fra1"] },
     "src/app/api/content-plan/route.ts": { regions: ["fra1"] },
+    "src/app/api/cron/daily-content/route.ts": { regions: ["fra1"] },
   });
 });
 

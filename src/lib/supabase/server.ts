@@ -1,9 +1,33 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createServerClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
-export async function createClient() {
-  const cookieStore = await cookies();
+// Automation V1: the scheduled run (/api/cron/daily-content) reuses the
+// existing content-plan / content-package / generate-visual handlers
+// unchanged. Inside runAsAutomationUser — entered only by that cron route
+// after its CRON_SECRET check — createClient() returns the given
+// server-side client acting as that one user instead of reading the
+// (absent) browser session. Every other request is unaffected.
+// `client` must be a client created for this run only (createAdminClient):
+// its auth.getUser is pinned to the automation user.
+const automationSession = new AsyncLocalStorage<SupabaseClient>();
 
+export function runAsAutomationUser<T>(client: SupabaseClient, userId: string, fn: () => Promise<T>): Promise<T> {
+  const user = { id: userId };
+  client.auth.getUser = (async () => ({ data: { user }, error: null })) as unknown as typeof client.auth.getUser;
+  return automationSession.run(client, fn);
+}
+
+export async function createClient(): Promise<ReturnType<typeof createCookieClient>> {
+  const automationClient = automationSession.getStore();
+  if (automationClient) {
+    return automationClient as unknown as ReturnType<typeof createCookieClient>;
+  }
+  return createCookieClient(await cookies());
+}
+
+function createCookieClient(cookieStore: Awaited<ReturnType<typeof cookies>>) {
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,

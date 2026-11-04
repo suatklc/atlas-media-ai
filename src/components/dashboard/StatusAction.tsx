@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { updatePostStatus, type StatusActionState } from "@/app/dashboard/actions";
+import { rejectPostAction, updatePostStatus, type StatusActionState } from "@/app/dashboard/actions";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Taslak",
@@ -26,6 +26,11 @@ export default function StatusAction({ postId, status }: { postId: string; statu
     status === "draft" ? updatePostStatus.bind(null, postId, "approved") : async (prev: StatusActionState) => prev,
     initialState,
   );
+  // "Reddet" (Automation V1): marks the draft rejected; never publishes.
+  const [rejectState, rejectAction, isRejecting] = useActionState(
+    status === "draft" ? rejectPostAction.bind(null, postId) : async (prev: StatusActionState) => prev,
+    initialState,
+  );
 
   return (
     <div className="mt-2 space-y-1.5">
@@ -47,7 +52,20 @@ export default function StatusAction({ postId, status }: { postId: string; statu
         </form>
       )}
 
+      {status === "draft" && (
+        <form action={rejectAction}>
+          <button
+            type="submit"
+            disabled={isRejecting || isPending}
+            className="block w-full rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-zinc-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isRejecting ? "..." : "Reddet"}
+          </button>
+        </form>
+      )}
+
       {state.error && <span className="text-xs text-red-400">{state.error}</span>}
+      {rejectState.error && <span className="text-xs text-red-400">{rejectState.error}</span>}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { readFacebookPublishState, requireFacebookSlides, selectedFacebookPage }
 import { resolveFacebookText } from "@/lib/ai/content/facebookText";
 import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "@/lib/ai/context/businessProfile";
 import PublishPanel, { type PlatformPanelInfo } from "./PublishPanel";
+import { isRejectedDraft } from "@/lib/automation/review";
 
 type GeneratedPost = {
   id: string;
@@ -70,7 +71,8 @@ export default async function GenerationHistory() {
         console.error("Generation history select error:", error);
         loadError = true;
       } else {
-        posts = data;
+        // Rejected drafts (lib/automation/review.ts) leave the list.
+        posts = (data ?? []).filter((post) => !isRejectedDraft(post.metadata));
       }
       const accounts = await listConnectedMetaAccounts(supabase, user.id);
       facebookPage = selectedFacebookPage(accounts);
@@ -100,9 +102,12 @@ export default async function GenerationHistory() {
             // an <a> — the previous version wrapped the whole card in one
             // anchor. Minimal structural change: the anchor now wraps only
             // the image; everything else is unchanged.
+            // id + target: a notification link (/dashboard#draft-<id>) scrolls
+            // to and highlights this card.
             <div
               key={post.id}
-              className="group overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 transition-colors hover:border-indigo-500/40"
+              id={`draft-${post.id}`}
+              className="group scroll-mt-20 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 transition-colors hover:border-indigo-500/40 target:border-indigo-400 target:ring-2 target:ring-indigo-500/60"
             >
               <a href={post.final_image_url} target="_blank" rel="noopener noreferrer" className="block">
                 {/* eslint-disable-next-line @next/next/no-img-element -- dynamic external Supabase Storage URL, same pattern as AIAssistantPanel.tsx */}
