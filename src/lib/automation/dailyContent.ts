@@ -179,3 +179,94 @@ export async function runDailyContent(now: Date, deps: DailyContentDeps): Promis
     return { status: "failed", runKey, error: message };
   }
 }
+
+// ============================================================
+// Compose test (production verification without paid generation). The
+// cron route runs this INSTEAD of the daily run only while the server env
+// AUTOMATION_TEST_BASE_IMAGE_URL is set; it sends a fixed TEST package
+// through the real generate-visual handler, whose generateImage call is
+// served from that already-stored image (media/router withReusedBaseImage).
+// One fixed run_key per image: repeating the test cannot create a second
+// draft. Never approves or publishes; no Telegram message.
+// ============================================================
+
+const TEST_MARK = "TEST — YAYINLAMAYIN";
+const testSlide = (index: number, role: string, headline: string, body: string, facts: string[] = []) => ({
+  index,
+  role,
+  headline,
+  body,
+  facts,
+  visualBrief: "TEST",
+});
+
+export const COMPOSE_TEST_PACKAGE = {
+  topic: `${TEST_MARK}: carousel birleştirme testi`,
+  source: { name: "Suat Kılıç — uzman değerlendirmesi", url: "atlas:expert-content", publishedAt: "" },
+  contentMode: "expert",
+  hook: `${TEST_MARK}`,
+  caption: `${TEST_MARK}. Bu taslak yalnızca carousel birleştirme testidir; gerçek içerik değildir.\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı`,
+  hashtags: ["#TEST"],
+  format: "carousel",
+  facts: [],
+  slides: [
+    testSlide(1, "hook", "TEST: Satışa çıkmadan önce stratejiniz hazır mı?", "TEST METNİ — gerçek içerik değildir."),
+    testSlide(2, "what-happened", "TEST: Fiyat tek başına satış planı değildir", "TEST METNİ. Sunum, hedef alıcı ve zamanlama birlikte değerlendirilir."),
+    testSlide(3, "why-it-matters", "TEST: Asıl mesele doğru alıcıya ulaşmak", "TEST METNİ. Mikro konum ve mülkün güçlü yanları doğru anlatılmalı."),
+    testSlide(4, "what-to-do", "TEST: Satıştan önce kontrol edin", "TEST METNİ.", [
+      "TEST: Tapu ve imar belgelerini hazırlayın.",
+      "TEST: Fotoğraf ve ilan metnini gözden geçirin.",
+      "TEST: Hedef alıcı profilini netleştirin.",
+    ]),
+    testSlide(5, "cta", "TEST: Benim görüşüm", "TEST METNİ. Mülkünüzün satış planını birlikte değerlendirmek isterseniz bana yazabilirsiniz."),
+  ],
+};
+
+export function composeTestRunKey(baseImageUrl: string): string {
+  const file = baseImageUrl.split("/").pop() ?? "image";
+  return `test-compose:${file}`;
+}
+
+export async function runComposeTest(baseImageUrl: string, deps: DailyContentDeps): Promise<DailyContentOutcome> {
+  const runKey = composeTestRunKey(baseImageUrl);
+  if (!(await claimRun(deps, runKey, new Date()))) return { status: "already-handled", runKey };
+  try {
+    const visualResult = await deps.generateVisual({
+      message: COMPOSE_TEST_PACKAGE.topic,
+      visualFormat: "carousel",
+      contentPackage: COMPOSE_TEST_PACKAGE,
+    });
+    const images = visualResult.data?.images as { imageUrl?: string }[] | undefined;
+    const coverUrl = images?.[0]?.imageUrl;
+    if (visualResult.status !== 200 || !coverUrl || images?.length !== 5) throw handlerError("görsel", visualResult);
+
+    const { data: post } = await deps.admin
+      .from("generated_posts")
+      .select("id")
+      .eq("user_id", deps.userId)
+      .eq("final_image_url", coverUrl)
+      .maybeSingle();
+    if (!post?.id) throw new Error("taslak kaydı bulunamadı");
+
+    await deps.admin
+      .from("automation_runs")
+      .update({ status: "succeeded", post_id: post.id, slot_label: "TEST", topic: COMPOSE_TEST_PACKAGE.topic, finished_at: new Date().toISOString() })
+      .eq("user_id", deps.userId)
+      .eq("run_key", runKey);
+    await notify(
+      deps,
+      { kind: "draft_ready", title: "TEST taslağı hazır", body: "Carousel birleştirme testi — yayınlamayın.", link: `/dashboard#draft-${post.id}`, postId: post.id },
+      "",
+    );
+    return { status: "succeeded", runKey, postId: post.id };
+  } catch (error) {
+    const message = shortError(error);
+    console.error("Compose test failed:", message);
+    await deps.admin
+      .from("automation_runs")
+      .update({ status: "failed", error: message, slot_label: "TEST", finished_at: new Date().toISOString() })
+      .eq("user_id", deps.userId)
+      .eq("run_key", runKey);
+    return { status: "failed", runKey, error: message };
+  }
+}

@@ -34,6 +34,9 @@ const nextConfig: NextConfig = {
     // from this function and carousel composition failed after the paid
     // base image had already been generated.
     "/api/cron/daily-content": RENDER_ASSETS,
+    // Draft Edit re-renders the 5 slides too; its traced bundle had the
+    // fonts and logo but not the wasm (same gap, found 2026-11-05).
+    "/api/drafts/edit": RENDER_ASSETS,
   },
 };
 

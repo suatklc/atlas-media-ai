@@ -244,7 +244,7 @@ test("Telegram: the bot token never appears in a returned error", async () => {
 // ===== Cron route =====
 
 function loadCron(env, overrides = {}) {
-  const state = { ran: 0, adminCreated: 0 };
+  const state = { ran: 0, adminCreated: 0, composeTests: [] };
   const route = loadTypeScriptModule(
     "src/app/api/cron/daily-content/route.ts",
     (specifier) => {
@@ -252,7 +252,13 @@ function loadCron(env, overrides = {}) {
       if (specifier === "@/lib/supabase/admin") return { createAdminClient: () => { state.adminCreated += 1; return { auth: {} }; } };
       if (specifier === "@/lib/supabase/server") return { runAsAutomationUser: (_client, _userId, fn) => fn() };
       if (specifier === "@/lib/automation/dailyContent") {
-        return { runDailyContent: async () => { state.ran += 1; return overrides.outcome ?? { status: "succeeded", runKey: "2026-11-02", postId: "p" }; } };
+        return {
+          runDailyContent: async () => { state.ran += 1; return overrides.outcome ?? { status: "succeeded", runKey: "2026-11-02", postId: "p" }; },
+          runComposeTest: async (url) => { state.composeTests.push(url); return { status: "succeeded", runKey: "test-compose:x.png", postId: "p" }; },
+        };
+      }
+      if (specifier === "@/lib/ai/media/reusedBaseImage") {
+        return { isOwnGeneratedVisualUrl: (url) => url.startsWith("https://proj.supabase.co/storage/v1/object/public/generated-visuals/"), withReusedBaseImage: (_url, fn) => fn() };
       }
       return { POST: async () => new Response("{}"), sendTelegramMessage: async () => ({ ok: true }) };
     },
@@ -388,4 +394,89 @@ test("the cron route's bundle includes every file the carousel renderer reads at
   for (const asset of ["index_bg.wasm", "Inter.ttf", "PlayfairDisplay-Bold.ttf", "suat-kilic-logo.png"]) {
     assert.ok(config.slice(0, config.indexOf("const nextConfig")).includes(asset), asset);
   }
+});
+
+// ===== Compose test mode (production verification without paid generation) =====
+
+const TEST_IMAGE = "https://proj.supabase.co/storage/v1/object/public/generated-visuals/user-1/1793854372373-abc.png";
+
+test("compose test: the fixed TEST package passes the real ContentPackage validator and is clearly marked", () => {
+  const contentPackage = loadTypeScriptModule("src/lib/ai/content/contentPackage.ts");
+  const result = contentPackage.validateContentPackage(automation.COMPOSE_TEST_PACKAGE);
+  assert.equal(result.ok, true, result.reason);
+  assert.match(automation.COMPOSE_TEST_PACKAGE.caption, /TEST — YAYINLAMAYIN/);
+  for (const slide of automation.COMPOSE_TEST_PACKAGE.slides) assert.match(`${slide.headline} ${slide.body}`, /TEST/);
+});
+
+test("compose test: one draft through generate-visual, recorded and notified in-app, no Telegram; a repeat makes no second draft", async () => {
+  const d = deps({ visual: { status: 200, data: { images: [1, 2, 3, 4, 5].map((n) => ({ slide: n, imageUrl: n === 1 ? "https://cdn/cover.png" : `https://cdn/${n}.png` })) } } });
+  const outcome = await automation.runComposeTest(TEST_IMAGE, d.value);
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.runKey, "test-compose:1793854372373-abc.png");
+  assert.equal(d.calls.pkg.length, 0, "no text generation");
+  assert.equal(d.calls.plan, 0, "no weekly plan / Radar");
+  assert.equal(d.calls.visual.length, 1);
+  assert.equal(d.calls.visual[0].contentPackage, automation.COMPOSE_TEST_PACKAGE);
+  const notification = d.admin.log.find((q) => q.table === "notifications" && q.op === "insert");
+  assert.equal(notification.payload.title, "TEST taslağı hazır");
+  assert.equal(notification.payload.link, "/dashboard#draft-post-1");
+
+  const repeat = deps({ admin: fakeAdmin({ claimConflict: true, reclaimRows: [] }) });
+  assert.equal((await automation.runComposeTest(TEST_IMAGE, repeat.value)).status, "already-handled");
+  assert.equal(repeat.calls.visual.length, 0, "a repeated test never composes or saves again");
+});
+
+test("compose test: fewer than 5 slides is a failure, not a success", async () => {
+  const d = deps({ visual: { status: 200, data: { images: [{ slide: 1, imageUrl: "https://cdn/cover.png" }] } } });
+  const outcome = await automation.runComposeTest(TEST_IMAGE, d.value);
+  assert.equal(outcome.status, "failed");
+});
+
+test("generateImage: inside withReusedBaseImage the stored image is returned and no provider is called; only own Storage PNGs", async () => {
+  const calls = { openai: 0, fetched: [] };
+  const reuse = loadTypeScriptModule(
+    "src/lib/ai/media/reusedBaseImage.ts",
+    (specifier) => (specifier === "node:async_hooks" ? nodeRequire("node:async_hooks") : {}),
+    {
+      process: { env: { NEXT_PUBLIC_SUPABASE_URL: "https://proj.supabase.co" } },
+      fetch: async (url) => { calls.fetched.push(url); return { ok: true, arrayBuffer: async () => new TextEncoder().encode("stored").buffer }; },
+      AbortSignal,
+      Buffer,
+    },
+  );
+  const router = loadTypeScriptModule("src/lib/ai/media/router.ts", (specifier) => {
+    if (specifier === "./reusedBaseImage") return reuse;
+    if (specifier === "./providers/openai") return { generateOpenAIImage: async () => { calls.openai += 1; return { bytes: Buffer.from("paid"), contentType: "image/png" }; } };
+    return { generateFalImage: async () => ({}), generateFalVideo: async () => ({}), estimateVideoCostUsd: () => 0, MAX_VIDEO_COST_PER_REQUEST_USD: 1 };
+  });
+  const request = { provider: "openai", model: "m", prompt: "p", aspectRatio: "4:5" };
+  const reused = await reuse.withReusedBaseImage(TEST_IMAGE, () => router.generateImage(request));
+  assert.equal(reused.bytes.toString(), "stored");
+  assert.equal(calls.openai, 0, "no paid provider call");
+  assert.deepEqual([...calls.fetched], [TEST_IMAGE]);
+  await router.generateImage(request);
+  assert.equal(calls.openai, 1, "outside the test context the provider is used as before");
+  await assert.rejects(reuse.withReusedBaseImage("https://evil.example/x.png", () => router.generateImage(request)));
+  assert.equal(reuse.isOwnGeneratedVisualUrl("https://proj.supabase.co/storage/v1/object/public/other-bucket/x.png"), false);
+});
+
+test("cron: test mode runs only after CRON_SECRET, ignores AUTOMATION_ENABLED, never starts the daily run, and rejects a foreign URL", async () => {
+  const unauthorized = loadCron({ ...ENV, AUTOMATION_ENABLED: "", AUTOMATION_TEST_BASE_IMAGE_URL: TEST_IMAGE });
+  assert.equal((await unauthorized.route.GET(cronRequest("Bearer wrong"))).status, 401);
+  assert.equal(unauthorized.state.composeTests.length, 0);
+
+  const ok = loadCron({ ...ENV, AUTOMATION_ENABLED: "", AUTOMATION_TEST_BASE_IMAGE_URL: TEST_IMAGE });
+  const response = await ok.route.GET(cronRequest("Bearer cron-secret-1"));
+  assert.equal(response.status, 200);
+  assert.deepEqual([...ok.state.composeTests], [TEST_IMAGE]);
+  assert.equal(ok.state.ran, 0, "the paid daily run never starts in test mode");
+
+  const foreign = loadCron({ ...ENV, AUTOMATION_TEST_BASE_IMAGE_URL: "https://evil.example/x.png" });
+  assert.equal((await foreign.route.GET(cronRequest("Bearer cron-secret-1"))).status, 400);
+  assert.equal(foreign.state.composeTests.length, 0);
+  assert.equal(foreign.state.adminCreated, 0);
+});
+
+test("Draft Edit's bundle gets the same render assets (its traced bundle lacked the wasm)", () => {
+  assert.match(read("next.config.ts"), /"\/api\/drafts\/edit": RENDER_ASSETS,/);
 });

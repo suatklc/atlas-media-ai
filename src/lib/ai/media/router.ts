@@ -2,6 +2,7 @@ import type { GeneratedImage, GeneratedVideo, ImageGenerationRequest, VideoGener
 import { estimateVideoCostUsd, MAX_VIDEO_COST_PER_REQUEST_USD } from "./config";
 import { generateOpenAIImage } from "./providers/openai";
 import { generateFalImage, generateFalVideo } from "./providers/fal";
+import { currentReusedBaseImageUrl, fetchReusedBaseImage } from "./reusedBaseImage";
 
 // Pure routing by request.provider — no automatic/AI-based provider
 // selection, no fallback between providers. The switch is exhaustive over
@@ -9,6 +10,9 @@ import { generateFalImage, generateFalVideo } from "./providers/fal";
 // (e.g. a value that reached here via an `as` cast or an unvalidated
 // external source), never expected to fire for a type-checked caller.
 export async function generateImage(request: ImageGenerationRequest): Promise<GeneratedImage> {
+  // Automation compose test only (see reusedBaseImage.ts): no paid call.
+  const reusedUrl = currentReusedBaseImageUrl();
+  if (reusedUrl) return fetchReusedBaseImage(reusedUrl);
   switch (request.provider) {
     case "openai":
       return generateOpenAIImage(request);

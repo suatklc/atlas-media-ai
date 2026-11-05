@@ -2,7 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runAsAutomationUser } from "@/lib/supabase/server";
-import { runDailyContent, type HandlerResult } from "@/lib/automation/dailyContent";
+import { runComposeTest, runDailyContent, type HandlerResult } from "@/lib/automation/dailyContent";
+import { isOwnGeneratedVisualUrl, withReusedBaseImage } from "@/lib/ai/media/reusedBaseImage";
 import { sendTelegramMessage } from "@/lib/notifications/telegram";
 import { POST as buildContentPlan } from "@/app/api/content-plan/route";
 import { POST as generateContentPackage } from "@/app/api/content-package/route";
@@ -40,6 +41,13 @@ export async function GET(request: Request) {
   if (!isAuthorized(request)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  // Compose test mode (server env only, never request input): verifies the
+  // real composition + Storage + draft path with an already-stored image
+  // instead of the daily run. Remove the env var after the test.
+  const testBaseImageUrl = process.env.AUTOMATION_TEST_BASE_IMAGE_URL;
+  if (testBaseImageUrl) {
+    return runComposeTestRequest(request, testBaseImageUrl);
+  }
   if (process.env.AUTOMATION_ENABLED !== "true") {
     return Response.json({ status: "disabled" });
   }
@@ -72,5 +80,38 @@ export async function GET(request: Request) {
   );
 
   console.log(`Automation run: ${outcome.status} ${outcome.runKey}`);
+  return Response.json(outcome, { status: outcome.status === "failed" ? 500 : 200 });
+}
+
+async function runComposeTestRequest(request: Request, baseImageUrl: string): Promise<Response> {
+  if (!isOwnGeneratedVisualUrl(baseImageUrl)) {
+    return Response.json({ error: "Invalid test base image." }, { status: 400 });
+  }
+  const userId = process.env.ATLAS_AUTOMATION_USER_ID;
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch {
+    admin = null;
+  }
+  if (!userId || !admin) {
+    return Response.json({ error: "Automation is not configured." }, { status: 500 });
+  }
+  const origin = new URL(request.url).origin;
+  const client = admin;
+  const outcome = await runAsAutomationUser(client, userId, () =>
+    withReusedBaseImage(baseImageUrl, () =>
+      runComposeTest(baseImageUrl, {
+        admin: client,
+        userId,
+        siteUrl: (process.env.NEXT_PUBLIC_SITE_URL ?? origin).replace(/\/+$/, ""),
+        buildPlan: async () => ({ status: 500, data: null }),
+        generatePackage: async () => ({ status: 500, data: null }),
+        generateVisual: async (body) => toResult(await generateVisual(postRequest(origin, "/api/generate-visual", body))),
+        sendTelegram: async () => ({ ok: false, skipped: true, error: "Compose test: no Telegram message." }),
+      }),
+    ),
+  );
+  console.log(`Automation compose test: ${outcome.status} ${outcome.runKey}`);
   return Response.json(outcome, { status: outcome.status === "failed" ? 500 : 200 });
 }
