@@ -378,3 +378,14 @@ test("privilege boundary: only the cron route can create the service-role client
   assert.ok(get.indexOf("isAuthorized(request)") < get.indexOf("createAdminClient()"), "authorization before the service-role client");
   assert.ok(get.indexOf("AUTOMATION_ENABLED") < get.indexOf("createAdminClient()"), "kill switch before the service-role client");
 });
+
+// 2026-11-05 first scheduled run: the cron function's bundle lacked the
+// resvg wasm (read at runtime via fs), so carousel composition failed.
+test("the cron route's bundle includes every file the carousel renderer reads at runtime, same as generate-visual", () => {
+  const config = read("next.config.ts");
+  assert.match(config, /"\/api\/generate-visual": RENDER_ASSETS,/);
+  assert.match(config, /"\/api\/cron\/daily-content": RENDER_ASSETS,/);
+  for (const asset of ["index_bg.wasm", "Inter.ttf", "PlayfairDisplay-Bold.ttf", "suat-kilic-logo.png"]) {
+    assert.ok(config.slice(0, config.indexOf("const nextConfig")).includes(asset), asset);
+  }
+});
