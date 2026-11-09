@@ -27,9 +27,10 @@ function loadTypeScriptModule(relativePath, dependencyLoader = () => ({}), globa
 const read = (relativePath) => fs.readFileSync(path.join(projectRoot, relativePath), "utf8");
 
 const review = loadTypeScriptModule("src/lib/automation/review.ts");
+const uncertainty = loadTypeScriptModule("src/lib/publishing/publishUncertainty.ts");
 const flow = loadTypeScriptModule(
   "src/lib/automation/telegramReview.ts",
-  (specifier) => (specifier === "./review" ? review : {}),
+  (specifier) => (specifier === "./review" ? review : specifier === "../publishing/publishUncertainty" ? uncertainty : {}),
   { console: { log() {}, error() {} }, Date, Number, String, Boolean, JSON, Error },
 );
 
@@ -90,7 +91,8 @@ function harness(overrides = {}) {
     admin: db,
     userId: "user-1",
     authorizedChatId: CHAT,
-    actionsEnabled: overrides.actionsEnabled ?? true,
+    generationEnabled: overrides.generationEnabled ?? overrides.actionsEnabled ?? true,
+    reviewEnabled: overrides.reviewEnabled ?? overrides.actionsEnabled ?? true,
     generatePackage: async (body) => {
       calls.pkg.push(body);
       return overrides.pkg ?? { status: 200, data: { contentPackage: { caption: "Örnek caption", hashtags: ["#Zekeriyaköy"] } } };
@@ -204,7 +206,7 @@ test("Onayla only approves; publishing needs the separate platform choice; a sec
   await h.press(`a:${job.id}:1`);
   assert.equal(h.db.tables.generated_posts[0].status, "approved");
   assert.equal(h.calls.publish.length, 0, "approval never publishes");
-  assert.deepEqual(h.lastButtons(), [`p:${job.id}:1:both`, `p:${job.id}:1:ig`, `p:${job.id}:1:fb`, `d:${job.id}:1`]);
+  assert.deepEqual(h.lastButtons(), [`p:${job.id}:1:both`, `p:${job.id}:1:ig`, `p:${job.id}:1:fb`, `d:${job.id}:1`, `r:${job.id}:1`]);
 
   await h.press(`a:${job.id}:1`);
   assert.equal(h.calls.answers.at(-1), "Bu taslak zaten işlendi.");
@@ -517,6 +519,210 @@ test("a message delivered late (queued before the webhook existed) never starts 
   assert.equal(h.db.tables.telegram_jobs.length, 0);
 });
 
-test("the webhook enables actions only when TELEGRAM_ACTIONS_ENABLED is exactly 'true'", () => {
-  assert.match(read("src/app/api/telegram/webhook/route.ts"), /actionsEnabled: process\.env\.TELEGRAM_ACTIONS_ENABLED === "true",/);
+test("the webhook enables each permission only when its env var is exactly 'true' (generation and review are separate)", () => {
+  const route = read("src/app/api/telegram/webhook/route.ts");
+  assert.match(route, /generationEnabled: process\.env\.TELEGRAM_ACTIONS_ENABLED === "true",/);
+  assert.match(route, /reviewEnabled: process\.env\.TELEGRAM_REVIEW_ENABLED === "true",/);
+});
+
+// ===== /taslaklar: existing drafts, review/publish without any AI call =====
+
+const SLIDE_URLS = (tag) => [1, 2, 3, 4, 5].map((s) => `https://cdn/${tag}/slide${s}.png`);
+const draftRow = (id, extra = {}) => ({
+  id,
+  user_id: "user-1",
+  status: "draft",
+  content: `Gerçek caption ${id}\n\n#Zekeriyaköy`,
+  visual_headline: `Başlık ${id}`,
+  final_image_url: SLIDE_URLS(id)[0],
+  created_at: "2026-11-08T09:00:00.000Z",
+  metadata: { outputMode: "carousel", carouselImages: SLIDE_URLS(id).map((imageUrl, i) => ({ slide: i + 1, imageUrl })).reverse(), contentPackage: { topic: `Konu ${id}` } },
+  ...extra,
+});
+
+// Review on, AI generation off — the intended first configuration.
+function reviewOnly(rows = []) {
+  const h = harness({ generationEnabled: false, reviewEnabled: true });
+  h.db.tables.generated_posts.push(...rows);
+  const assertNoAi = () => {
+    assert.equal(h.calls.pkg.length, 0, "no content API call");
+    assert.equal(h.calls.visual.length, 0, "no image API call");
+    assert.equal(h.calls.transcribed, 0, "no transcription API call");
+  };
+  return { ...h, assertNoAi };
+}
+
+test("/taslaklar lists only the user's real, unpublished drafts — TEST, rejected, posted, other users' and image-less drafts are excluded", async () => {
+  const h = reviewOnly([
+    draftRow("real-1", { created_at: "2026-11-08T09:00:00.000Z" }),
+    draftRow("approved-1", { status: "approved", created_at: "2026-11-07T09:00:00.000Z" }),
+    draftRow("test-1", { content: "TEST — YAYINLAMAYIN. Bu taslak yalnızca testtir." }),
+    draftRow("test-2", { metadata: { outputMode: "carousel", carouselImages: [], contentPackage: { topic: "TEST — YAYINLAMAYIN: carousel" } }, final_image_url: "https://cdn/t2.png" }),
+    draftRow("rejected-1", { metadata: { ...draftRow("x").metadata, review: { state: "rejected" } } }),
+    draftRow("posted-1", { status: "posted" }),
+    draftRow("other-user", { user_id: "user-2" }),
+    draftRow("no-image", { final_image_url: null, metadata: {} }),
+  ]);
+  assert.equal(await h.send("/taslaklar"), "drafts-listed");
+  const listed = h.lastButtons();
+  assert.deepEqual(listed, ["s:real-1", "s:approved-1"]);
+  assert.match(h.calls.sent.at(-1).text, /\[Onaylı\] Konu approved-1/);
+  assert.match(h.calls.sent.at(-1).text, /08\.11\.2026/);
+  h.assertNoAi();
+  assert.equal(h.db.tables.telegram_jobs.length, 0, "listing creates nothing");
+});
+
+test("/taslaklar with nothing reviewable says so", async () => {
+  const h = reviewOnly([draftRow("test-1", { content: "TEST — YAYINLAMAYIN" })]);
+  assert.equal(await h.send("/taslaklar"), "drafts-listed");
+  assert.match(h.calls.sent.at(-1).text, /taslak yok/);
+});
+
+test("selecting a draft previews the STORED slides (in slide order) and caption with Onayla/Reddet only — no Düzelt while AI generation is off, no AI call", async () => {
+  const h = reviewOnly([draftRow("real-1")]);
+  assert.equal(await h.press("s:real-1"), "callback");
+  assert.equal(h.calls.photos.length, 1);
+  assert.equal(h.calls.photos[0].urls.join(" "), SLIDE_URLS("real-1").join(" "), "stored images, slide 1→5");
+  const job = h.job();
+  assert.equal(job.post_id, "real-1");
+  assert.equal(job.state, "awaiting_review");
+  assert.match(h.calls.sent.at(-1).text, /Gerçek caption real-1/);
+  assert.deepEqual(h.lastButtons(), [`a:${job.id}:1`, `r:${job.id}:1`]);
+  h.assertNoAi();
+});
+
+test("existing draft: approve -> platform choice -> publish through the shared publisher, with no AI call on the whole path", async () => {
+  const h = reviewOnly([draftRow("real-1")]);
+  await h.press("s:real-1");
+  const job = h.job();
+  await h.press(`a:${job.id}:1`);
+  assert.equal(h.db.tables.generated_posts[0].status, "approved");
+  assert.equal(h.calls.publish.length, 0, "approval never publishes");
+  assert.deepEqual(h.lastButtons(), [`p:${job.id}:1:both`, `p:${job.id}:1:ig`, `p:${job.id}:1:fb`, `r:${job.id}:1`]);
+  await h.press(`p:${job.id}:1:ig`);
+  assert.equal(h.calls.publish.length, 1);
+  assert.deepEqual([...h.calls.publish[0].platforms], ["instagram"]);
+  assert.equal(h.calls.publish[0].postId, "real-1");
+  h.assertNoAi();
+});
+
+test("existing draft: Reddet rejects it (hidden from /taslaklar afterwards); an approved draft can be rejected back to draft", async () => {
+  const h = reviewOnly([draftRow("real-1"), draftRow("approved-1", { status: "approved" })]);
+  await h.press("s:real-1");
+  await h.press(`r:${h.job().id}:1`);
+  assert.equal(h.db.tables.generated_posts[0].metadata.review.state, "rejected");
+
+  await h.press("s:approved-1");
+  const job = h.job();
+  assert.equal(job.state, "approved", "an approved post goes straight to the platform choice");
+  assert.ok(h.lastButtons().includes(`r:${job.id}:1`));
+  await h.press(`r:${job.id}:1`);
+  const approved = h.db.tables.generated_posts[1];
+  assert.equal(approved.status, "draft", "the approval no longer applies");
+  assert.equal(approved.metadata.review.state, "rejected");
+
+  await h.send("/taslaklar");
+  assert.match(h.calls.sent.at(-1).text, /taslak yok/);
+  assert.equal(h.calls.publish.length, 0);
+  h.assertNoAi();
+});
+
+test("selecting a TEST, rejected, posted or another user's draft is refused even with a hand-crafted button", async () => {
+  const h = reviewOnly([
+    draftRow("test-1", { content: "TEST — YAYINLAMAYIN" }),
+    draftRow("rejected-1", { metadata: { ...draftRow("x").metadata, review: { state: "rejected" } } }),
+    draftRow("posted-1", { status: "posted" }),
+    draftRow("other-user", { user_id: "user-2" }),
+  ]);
+  for (const id of ["test-1", "rejected-1", "posted-1", "other-user", "missing"]) {
+    assert.equal(await h.press(`s:${id}`), "callback");
+    assert.match(h.calls.answers.at(-1), /incelenemez/);
+  }
+  assert.equal(h.db.tables.telegram_jobs.length, 0);
+  assert.equal(h.calls.photos.length, 0);
+});
+
+test("re-selecting the same draft reuses its open job (no duplicate jobs); the old buttons stay valid", async () => {
+  const h = reviewOnly([draftRow("real-1")]);
+  await h.press("s:real-1");
+  await h.press("s:real-1");
+  assert.equal(h.db.tables.telegram_jobs.length, 1);
+});
+
+test("AI generation off: instructions, voice and Düzelt are refused before any AI call — even for a job waiting for a correction", async () => {
+  const h = reviewOnly([draftRow("real-1")]);
+  h.db.tables.telegram_jobs.push({ id: "j-corr", user_id: "user-1", instruction: "x", post_id: "real-1", state: "awaiting_correction", revision: 1, updated_at: new Date().toISOString() });
+  assert.equal(await h.send(INSTRUCTION), "disabled");
+  assert.match(h.calls.sent.at(-1).text, /\/taslaklar/);
+  const voice = { update_id: ++updateSeq, message: { message_id: 2, from: { id: Number(CHAT) }, chat: { id: Number(CHAT), type: "private" }, voice: { file_id: "f1" } } };
+  assert.equal(await flow.handleTelegramUpdate(voice, h.deps), "disabled");
+  h.db.tables.telegram_jobs.push({ id: "j-rev", user_id: "user-1", instruction: "x", post_id: "real-1", state: "awaiting_review", revision: 1, updated_at: new Date().toISOString() });
+  assert.equal(await h.press("d:j-rev:1"), "disabled");
+  assert.equal(h.db.tables.telegram_jobs.find((j) => j.id === "j-rev").state, "awaiting_review");
+  assert.equal(h.db.tables.telegram_jobs.find((j) => j.id === "j-corr").state, "awaiting_correction");
+  h.assertNoAi();
+});
+
+test("review off, generation on: /taslaklar, approve and publish are refused; the generated preview carries only Düzelt", async () => {
+  const h = harness({ generationEnabled: true, reviewEnabled: false });
+  h.db.tables.generated_posts.push(draftRow("real-1"));
+  assert.equal(await h.send("/taslaklar"), "disabled");
+  assert.equal(await h.press("s:real-1"), "disabled");
+  await h.send(INSTRUCTION);
+  const job = h.job();
+  assert.deepEqual(h.lastButtons(), [`d:${job.id}:1`]);
+  assert.equal(await h.press(`a:${job.id}:1`), "disabled");
+  assert.equal(h.job().state, "awaiting_review");
+  assert.equal(h.calls.publish.length, 0);
+});
+
+test("both off (current production): /start answers; /taslaklar and draft buttons do nothing", async () => {
+  const h = harness({ generationEnabled: false, reviewEnabled: false });
+  h.db.tables.generated_posts.push(draftRow("real-1"));
+  assert.equal(await h.send("/start"), "help");
+  assert.match(h.calls.sent.at(-1).text, /yalnız bu komut etkin/);
+  assert.equal(await h.send("/taslaklar"), "disabled");
+  assert.equal(await h.press("s:real-1"), "disabled");
+  assert.equal(h.db.tables.telegram_jobs.length, 0);
+  assert.equal(h.calls.photos.length, 0);
+});
+
+test("an unauthorized user cannot list or select drafts", async () => {
+  const h = reviewOnly([draftRow("real-1")]);
+  assert.equal(await h.send("/taslaklar", "999"), "ignored-unauthorized");
+  assert.equal(await h.press("s:real-1", "999"), "ignored-unauthorized");
+  assert.equal(h.calls.sent.length, 0);
+  assert.equal(h.calls.photos.length, 0);
+});
+
+test("shared uncertainty: a platform with an unfinished/uncertain dashboard attempt is not offered and a hand-crafted publish is refused", async () => {
+  const h = reviewOnly([
+    draftRow("approved-1", {
+      status: "approved",
+      metadata: { ...draftRow("approved-1").metadata, publishResults: { instagram: { state: "uncertain", at: new Date().toISOString() } } },
+    }),
+  ]);
+  await h.press("s:approved-1");
+  const job = h.job();
+  assert.deepEqual(h.lastButtons(), [`p:${job.id}:1:fb`], "only Facebook offered; no reject once a platform may have it");
+  assert.match(h.calls.sent.at(-1).text, /Instagram: önceki yayın denemesinin sonucu belirsiz/);
+  assert.equal(await h.press(`p:${job.id}:1:ig`), "callback");
+  assert.equal(await h.press(`p:${job.id}:1:both`), "callback");
+  assert.equal(h.calls.publish.length, 0);
+  assert.match(h.calls.answers.at(-1), /belirsiz/);
+  assert.equal(await h.press(`r:${job.id}:1`), "callback");
+  assert.equal(h.db.tables.generated_posts[0].status, "approved", "never rejected while a platform may have it");
+});
+
+test("isTestDraft recognizes the compose-test package; real drafts are not flagged", () => {
+  const daily = read("src/lib/automation/dailyContent.ts");
+  assert.ok(daily.includes(`const TEST_MARK = "${review.TEST_DRAFT_MARK}";`), "same mark as the compose test");
+  assert.equal(review.isTestDraft(`${review.TEST_DRAFT_MARK}. Bu taslak yalnızca testtir.`, {}), true);
+  assert.equal(review.isTestDraft("caption", { contentPackage: { topic: `${review.TEST_DRAFT_MARK}: carousel` } }), true);
+  assert.equal(review.isTestDraft("Gerçek caption", { contentPackage: { topic: "Tapuda nitelik" } }), false);
+});
+
+test("telegram helper: one image uses sendPhoto (sendMediaGroup needs 2–10)", () => {
+  const source = read("src/lib/notifications/telegram.ts");
+  assert.match(source, /if \(urls\.length === 1\) \{\s*return telegramCall\("sendPhoto"/);
 });

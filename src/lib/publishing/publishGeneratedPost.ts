@@ -5,6 +5,7 @@ import { listConnectedMetaAccounts } from "./connections/query";
 import { getConnectedAccountCredential } from "./connections/credentials";
 import { ensureFreshInstagramToken } from "./connections/tokenLifecycle";
 import { resolvePlatformFromMetadata } from "../ai/platform/config";
+import { publishBlockReason, readPublishMarker } from "./publishUncertainty";
 
 export type PublishGeneratedPostResult = { success: true } | { success: false; error: string };
 
@@ -117,6 +118,34 @@ export async function publishGeneratedPost(
     return { success: false, error: "Carousel görselleri eksik veya geçersiz; gönderi paylaşılmadı." };
   }
 
+  // metadata already carries { platform, ... } (see generate-visual/route.ts)
+  // — merged, never overwritten, so the publish result doesn't erase it.
+  const existingMetadata =
+    post.metadata && typeof post.metadata === "object" && !Array.isArray(post.metadata)
+      ? (post.metadata as Record<string, unknown>)
+      : {};
+  const existingResults =
+    existingMetadata.publishResults && typeof existingMetadata.publishResults === "object"
+      ? (existingMetadata.publishResults as Record<string, unknown>)
+      : {};
+  const withInstagramMarker = (marker: Record<string, unknown>) => ({
+    ...existingMetadata,
+    publishResults: { ...existingResults, instagram: marker },
+  });
+
+  // Uncertain-publish rule (publishUncertainty.ts): an unfinished earlier
+  // attempt blocks a resend; a marker is written right before the Meta call.
+  const blocked = publishBlockReason(readPublishMarker(post.metadata, "instagram"), Date.now(), "Instagram");
+  if (blocked) return { success: false, error: blocked };
+  const { error: markerError } = await supabase
+    .from("generated_posts")
+    .update({ metadata: withInstagramMarker({ state: "publishing", at: new Date().toISOString() }) })
+    .eq("id", postId)
+    .eq("user_id", userId);
+  if (markerError) {
+    return { success: false, error: "Instagram paylaşımı başlatılamadı. Lütfen tekrar deneyin." };
+  }
+
   const result = await publishPost({
     platform: eligibility.platform,
     caption: post.content,
@@ -127,21 +156,23 @@ export async function publishGeneratedPost(
   });
 
   if (!result.success) {
+    // Meta reported the failure: nothing was published, a retry is safe.
+    await supabase
+      .from("generated_posts")
+      .update({ metadata: withInstagramMarker({ state: "failed", at: new Date().toISOString(), error: result.error }) })
+      .eq("id", postId)
+      .eq("user_id", userId);
     return { success: false, error: result.error };
   }
-
-  // metadata already carries { platform, ... } (see generate-visual/route.ts)
-  // — merged, never overwritten, so the publish result doesn't erase it.
-  const existingMetadata =
-    post.metadata && typeof post.metadata === "object" && !Array.isArray(post.metadata)
-      ? (post.metadata as Record<string, unknown>)
-      : {};
 
   const { error: updateError } = await supabase
     .from("generated_posts")
     .update({
       status: "posted",
-      metadata: { ...existingMetadata, instagramMediaId: result.externalPostId ?? null },
+      metadata: {
+        ...withInstagramMarker({ state: "published", at: new Date().toISOString(), mediaId: result.externalPostId ?? null }),
+        instagramMediaId: result.externalPostId ?? null,
+      },
     })
     .eq("id", postId)
     .eq("user_id", userId);

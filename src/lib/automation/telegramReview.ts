@@ -1,11 +1,20 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TelegramButton, TelegramCallResult } from "../notifications/telegram";
 import type { PublishPlatform, PublishSelectedResult } from "../publishing/publishSelectedPlatforms";
-import { isRejectedDraft } from "./review";
+import { publishBlockReason, readPublishMarker } from "../publishing/publishUncertainty";
+import { isRejectedDraft, isTestDraft } from "./review";
 
 // Telegram review flow: instruction (text or voice) -> existing content
 // pipeline -> draft -> preview in Telegram -> Onayla / Düzelt / Reddet ->
 // an explicit platform choice -> the existing publishToSelectedPlatforms.
+// /taslaklar: an EXISTING real draft -> the same preview/approve/publish
+// steps, with no AI call at all (no text, image or voice API).
+//
+// Two separate permissions:
+// - generationEnabled (TELEGRAM_ACTIONS_ENABLED): new instructions, voice
+//   transcription, Düzelt/corrections — everything that calls an AI API.
+// - reviewEnabled (TELEGRAM_REVIEW_ENABLED): /taslaklar, Onayla, Reddet and
+//   the platform choice — reviewing and publishing existing drafts only.
 //
 // Safety model:
 // - Only the one authorized chat/user is served; everything else is ignored.
@@ -29,9 +38,12 @@ export type TelegramReviewDeps = {
   admin: SupabaseClient;
   userId: string;
   authorizedChatId: string;
-  // TELEGRAM_ACTIONS_ENABLED. Off: only /start answers; no generation,
-  // approval or publishing from Telegram.
-  actionsEnabled: boolean;
+  // TELEGRAM_ACTIONS_ENABLED: AI generation from Telegram (instructions,
+  // voice, corrections). Off: no AI API is ever called from Telegram.
+  generationEnabled: boolean;
+  // TELEGRAM_REVIEW_ENABLED: /taslaklar, approve, reject, platform choice.
+  // Both off: only /start answers.
+  reviewEnabled: boolean;
   generatePackage: (body: Record<string, unknown>) => Promise<HandlerResult>;
   // reuseBaseImageUrl: a correction re-renders on the same photo (no new image cost).
   generateVisual: (body: Record<string, unknown>, reuseBaseImageUrl?: string) => Promise<HandlerResult>;
@@ -66,7 +78,8 @@ export type UpdateOutcome =
   | "callback"
   | "rejected-input"
   | "disabled"
-  | "stale-message";
+  | "stale-message"
+  | "drafts-listed";
 
 type Job = { id: string; instruction: string; post_id: string | null; state: string; revision: number; publish_results?: unknown };
 
@@ -93,8 +106,22 @@ function availablePlatforms(states: PlatformStates): PublishPlatform[] {
 const MAX_MESSAGE_AGE_MS = 10 * 60 * 1000;
 const JOB_COLUMNS = "id, instruction, post_id, state, revision, publish_results";
 
-const HELP_TEXT =
-  "Atlas içerik asistanı\n\nBir içerik talimatı yazın veya sesli gönderin (ör. \"Zekeriyaköy'de villasını satmak isteyenlere doğru fiyatlandırmayı anlatan bir paylaşım hazırla\").\n\nAtlas taslağı hazırlar ve önizlemeyi gönderir: Onayla / Düzelt / Reddet. Onay yayın değildir; yayın için ayrıca platform seçersiniz.";
+const GENERATION_HELP =
+  "Bir içerik talimatı yazın veya sesli gönderin (ör. \"Zekeriyaköy'de villasını satmak isteyenlere doğru fiyatlandırmayı anlatan bir paylaşım hazırla\"). Atlas taslağı hazırlar ve önizlemeyi gönderir.";
+const REVIEW_HELP = "/taslaklar — Atlas'taki yayınlanmamış taslakları listeler; birini seçip önizleyebilir, onaylayabilir veya reddedebilirsiniz.";
+const PUBLISH_NOTE = "Onay yayın değildir; yayın için ayrıca platform seçersiniz.";
+const DRAFT_LIST_LIMIT = 8;
+const DRAFT_SCAN_LIMIT = 40;
+
+function helpText(deps: TelegramReviewDeps): string {
+  const parts = ["Atlas içerik asistanı"];
+  if (deps.generationEnabled) parts.push(GENERATION_HELP);
+  if (deps.reviewEnabled) parts.push(REVIEW_HELP);
+  if (deps.generationEnabled || deps.reviewEnabled) parts.push(PUBLISH_NOTE);
+  if (!deps.generationEnabled && !deps.reviewEnabled) parts.push("(Şu an yalnız bu komut etkin; içerik üretimi, taslak inceleme ve yayın henüz açık değil.)");
+  else if (!deps.generationEnabled) parts.push("(Telegram'dan yeni içerik üretimi şu an kapalı.)");
+  return parts.join("\n\n");
+}
 
 function shortError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, MAX_ERROR_LENGTH);
@@ -120,25 +147,39 @@ function isAuthorized(update: TelegramUpdate, chatId: string): boolean {
   );
 }
 
-const reviewButtons = (jobId: string, revision: number): TelegramButton[][] => [
-  [
-    { text: "✅ Onayla", data: `a:${jobId}:${revision}` },
-    { text: "✏️ Düzelt", data: `d:${jobId}:${revision}` },
-    { text: "🗑 Reddet", data: `r:${jobId}:${revision}` },
-  ],
-];
+// Buttons only for what is permitted: Onayla/Reddet need review permission,
+// Düzelt (an AI regeneration) needs generation permission.
+const reviewButtons = (jobId: string, revision: number, deps: TelegramReviewDeps): TelegramButton[][] => {
+  const row: TelegramButton[] = [];
+  if (deps.reviewEnabled) row.push({ text: "✅ Onayla", data: `a:${jobId}:${revision}` });
+  if (deps.generationEnabled) row.push({ text: "✏️ Düzelt", data: `d:${jobId}:${revision}` });
+  if (deps.reviewEnabled) row.push({ text: "🗑 Reddet", data: `r:${jobId}:${revision}` });
+  return row.length ? [row] : [];
+};
 
 // Only platforms that are neither published nor uncertain get a button.
-const publishButtons = (jobId: string, revision: number, available: PublishPlatform[] = ALL_PLATFORMS): TelegramButton[][] => {
+// withReject: an approved, not-yet-published draft can still be rejected.
+const publishButtons = (
+  jobId: string,
+  revision: number,
+  available: PublishPlatform[],
+  deps: TelegramReviewDeps,
+  withReject = false,
+): TelegramButton[][] => {
   const rows: TelegramButton[][] = [];
-  if (available.includes("instagram") && available.includes("facebook")) {
-    rows.push([{ text: "Instagram + Facebook'ta yayınla", data: `p:${jobId}:${revision}:both` }]);
+  if (deps.reviewEnabled) {
+    if (available.includes("instagram") && available.includes("facebook")) {
+      rows.push([{ text: "Instagram + Facebook'ta yayınla", data: `p:${jobId}:${revision}:both` }]);
+    }
+    const singles: TelegramButton[] = [];
+    if (available.includes("instagram")) singles.push({ text: "Yalnız Instagram", data: `p:${jobId}:${revision}:ig` });
+    if (available.includes("facebook")) singles.push({ text: "Yalnız Facebook", data: `p:${jobId}:${revision}:fb` });
+    if (singles.length) rows.push(singles);
   }
-  const singles: TelegramButton[] = [];
-  if (available.includes("instagram")) singles.push({ text: "Yalnız Instagram", data: `p:${jobId}:${revision}:ig` });
-  if (available.includes("facebook")) singles.push({ text: "Yalnız Facebook", data: `p:${jobId}:${revision}:fb` });
-  if (singles.length) rows.push(singles);
-  rows.push([{ text: "✏️ Düzelt", data: `d:${jobId}:${revision}` }]);
+  const last: TelegramButton[] = [];
+  if (deps.generationEnabled) last.push({ text: "✏️ Düzelt", data: `d:${jobId}:${revision}` });
+  if (withReject && deps.reviewEnabled) last.push({ text: "🗑 Reddet", data: `r:${jobId}:${revision}` });
+  if (last.length) rows.push(last);
   return rows;
 };
 
@@ -165,14 +206,48 @@ export async function handleTelegramUpdate(update: TelegramUpdate, deps: Telegra
 // What Atlas's own record says about a post on each platform: Instagram is
 // confirmed when the post is "posted", Facebook when publishResults says
 // "published" (both written only after Meta reported success).
-async function confirmedPlatforms(postId: string | null, deps: TelegramReviewDeps): Promise<Set<PublishPlatform>> {
+// blocked: the shared publish layer (dashboard included) has an unfinished
+// or uncertain attempt for that platform (publishUncertainty.ts) — never
+// offered from Telegram either.
+type PostPublishView = { confirmed: Set<PublishPlatform>; blocked: Set<PublishPlatform> };
+
+function publishViewOf(post: { status?: unknown; metadata?: unknown } | null | undefined): PostPublishView {
   const confirmed = new Set<PublishPlatform>();
-  if (!postId) return confirmed;
+  const blocked = new Set<PublishPlatform>();
+  if (!post) return { confirmed, blocked };
+  if (post.status === "posted") confirmed.add("instagram");
+  if (readPublishMarker(post.metadata, "facebook")?.state === "published") confirmed.add("facebook");
+  const now = Date.now();
+  for (const platform of ALL_PLATFORMS) {
+    if (!confirmed.has(platform) && publishBlockReason(readPublishMarker(post.metadata, platform), now, PLATFORM_LABELS[platform])) blocked.add(platform);
+  }
+  return { confirmed, blocked };
+}
+
+async function postPublishView(postId: string | null, deps: TelegramReviewDeps): Promise<PostPublishView> {
+  if (!postId) return publishViewOf(null);
   const { data: post } = await deps.admin.from("generated_posts").select("status, metadata").eq("id", postId).eq("user_id", deps.userId).maybeSingle();
-  if (post?.status === "posted") confirmed.add("instagram");
-  const facebook = (post?.metadata as { publishResults?: { facebook?: { state?: unknown } } } | null)?.publishResults?.facebook;
-  if (facebook?.state === "published") confirmed.add("facebook");
-  return confirmed;
+  return publishViewOf(post);
+}
+
+async function confirmedPlatforms(postId: string | null, deps: TelegramReviewDeps): Promise<Set<PublishPlatform>> {
+  return (await postPublishView(postId, deps)).confirmed;
+}
+
+// Rejecting is allowed only while no platform has (or may have) the post.
+function canReject(view: PostPublishView, states: PlatformStates): boolean {
+  return !view.confirmed.size && !view.blocked.size && !ALL_PLATFORMS.some((p) => states[p] === "published" || states[p] === "uncertain");
+}
+
+// What can be offered now: the job's own record AND the post's shared record.
+function offerablePlatforms(states: PlatformStates, view: PostPublishView): PublishPlatform[] {
+  return availablePlatforms(states).filter((p) => !view.confirmed.has(p) && !view.blocked.has(p));
+}
+
+function blockedLines(view: PostPublishView, states: PlatformStates = {}): string[] {
+  return ALL_PLATFORMS.filter((p) => view.blocked.has(p) && states[p] !== "uncertain").map(
+    (p) => `⚠️ ${PLATFORM_LABELS[p]}: önceki yayın denemesinin sonucu belirsiz veya sürüyor; Atlas tekrar göndermez. Lütfen ${PLATFORM_LABELS[p]}'da kontrol edin.`,
+  );
 }
 
 function describeStates(states: PlatformStates): string[] {
@@ -231,29 +306,43 @@ async function recoverStaleJobs(deps: TelegramReviewDeps): Promise<void> {
       .eq("revision", job.revision)
       .select("id");
     if (!recovered?.length) continue;
-    const available = availablePlatforms(states);
-    await deps.telegram.sendText(
-      `Önceki yayın yarıda kaldı.\n${describeStates(states).join("\n")}`,
-      available.length ? publishButtons(job.id, job.revision, available) : undefined,
-    );
+    const available = offerablePlatforms(states, await postPublishView(job.post_id, deps));
+    const buttons = available.length ? publishButtons(job.id, job.revision, available, deps) : [];
+    await deps.telegram.sendText(`Önceki yayın yarıda kaldı.\n${describeStates(states).join("\n")}`, buttons.length ? buttons : undefined);
   }
 }
 
 async function handleMessage(message: NonNullable<TelegramUpdate["message"]>, deps: TelegramReviewDeps): Promise<UpdateOutcome> {
   const text = message.text?.trim();
   if (text && /^\/(start|yardim|yardım|help)\b/i.test(text)) {
-    await deps.telegram.sendText(deps.actionsEnabled ? HELP_TEXT : `${HELP_TEXT}\n\n(Şu an yalnız bu komut etkin; içerik üretimi ve yayın henüz açık değil.)`);
+    await deps.telegram.sendText(helpText(deps));
     return "help";
   }
-  if (!deps.actionsEnabled) {
-    await deps.telegram.sendText("Atlas'ın Telegram üzerinden içerik üretimi henüz etkin değil; şimdilik yalnız /start çalışıyor.");
+  if (!deps.generationEnabled && !deps.reviewEnabled) {
+    await deps.telegram.sendText("Atlas'ın Telegram işlemleri henüz etkin değil; şimdilik yalnız /start çalışıyor.");
     return "disabled";
   }
   if (typeof message.date === "number" && Date.now() - message.date * 1000 > MAX_MESSAGE_AGE_MS) {
-    await deps.telegram.sendText("Bu mesaj gecikmeli ulaştığı için işlenmedi. Talimatı istiyorsanız yeniden gönderin.");
+    await deps.telegram.sendText("Bu mesaj gecikmeli ulaştığı için işlenmedi. İstiyorsanız yeniden gönderin.");
     return "stale-message";
   }
   await recoverStaleJobs(deps);
+
+  if (text && /^\/taslaklar\b/i.test(text)) {
+    if (!deps.reviewEnabled) {
+      await deps.telegram.sendText("Telegram'dan taslak inceleme şu an kapalı.");
+      return "disabled";
+    }
+    return listDrafts(deps);
+  }
+
+  // Everything below can call an AI API (transcription, content, image).
+  if (!deps.generationEnabled) {
+    await deps.telegram.sendText(
+      `Telegram'dan yeni içerik üretimi şu an kapalı; bu mesaj işlenmedi.${deps.reviewEnabled ? " Mevcut taslaklar için /taslaklar yazın." : ""}`,
+    );
+    return "disabled";
+  }
 
   let instruction = text ?? "";
   if (!instruction && message.voice?.file_id) {
@@ -379,7 +468,9 @@ async function produceDraft(job: Job, instruction: string, revision: number, reu
     const caption = typeof contentPackage.caption === "string" ? contentPackage.caption : "";
     const hashtags = Array.isArray(contentPackage.hashtags) ? contentPackage.hashtags.join(" ") : "";
     await deps.telegram.sendPhotos(urls, `Taslak önizleme (revizyon ${revision})`);
-    await deps.telegram.sendText(`${caption}\n\n${hashtags}`.trim(), reviewButtons(job.id, revision));
+    const buttons = reviewButtons(job.id, revision, deps);
+    const note = deps.reviewEnabled ? "" : "\n\n(Telegram'dan onay şu an kapalı; taslağı Atlas panelinden inceleyin.)";
+    await deps.telegram.sendText(`${`${caption}\n\n${hashtags}`.trim()}${note}`, buttons.length ? buttons : undefined);
   } catch (error) {
     const message = shortError(error);
     console.error("Telegram draft failed:", message);
@@ -393,16 +484,159 @@ async function produceDraft(job: Job, instruction: string, revision: number, reu
   }
 }
 
+// ===== /taslaklar: existing drafts (no AI call anywhere on this path) =====
+
+type DraftRow = { id: string; status: string; content: string | null; visual_headline: string | null; final_image_url: string | null; metadata: unknown; created_at: string };
+const DRAFT_COLUMNS = "id, status, content, visual_headline, final_image_url, metadata, created_at";
+const TURKEY_OFFSET_MS = 3 * 60 * 60 * 1000;
+const MAX_PREVIEW_TEXT = 3500;
+
+// The stored slides in slide order (carousel), else the single image.
+function previewImages(post: DraftRow): string[] {
+  const meta = post.metadata && typeof post.metadata === "object" ? (post.metadata as { outputMode?: unknown; carouselImages?: unknown }) : {};
+  if (meta.outputMode === "carousel" && Array.isArray(meta.carouselImages)) {
+    return (meta.carouselImages as { slide?: unknown; imageUrl?: unknown }[])
+      .filter((item): item is { slide: number; imageUrl: string } => typeof item?.slide === "number" && typeof item.imageUrl === "string" && item.imageUrl.startsWith("https://"))
+      .sort((a, b) => a.slide - b.slide)
+      .map((item) => item.imageUrl);
+  }
+  return typeof post.final_image_url === "string" && post.final_image_url.startsWith("https://") ? [post.final_image_url] : [];
+}
+
+// A real, unpublished, reviewable draft: draft or approved (never posted),
+// not rejected, not a TEST draft, with stored images to preview.
+function isReviewableDraft(post: DraftRow | null | undefined): post is DraftRow {
+  return Boolean(
+    post &&
+      (post.status === "draft" || post.status === "approved") &&
+      !isRejectedDraft(post.metadata) &&
+      !isTestDraft(post.content, post.metadata) &&
+      previewImages(post).length > 0,
+  );
+}
+
+function draftLabel(post: DraftRow): string {
+  const topic = (post.metadata as { contentPackage?: { topic?: unknown } } | null)?.contentPackage?.topic;
+  const raw = typeof topic === "string" && topic.trim() ? topic : post.visual_headline?.trim() || post.content?.split("\n")[0] || "Başlıksız taslak";
+  const label = raw.replace(/\s+/g, " ").trim();
+  return label.length > 48 ? `${label.slice(0, 47)}…` : label;
+}
+
+function draftDate(post: DraftRow): string {
+  const time = Date.parse(post.created_at);
+  if (!Number.isFinite(time)) return "";
+  const [year, month, day] = new Date(time + TURKEY_OFFSET_MS).toISOString().slice(0, 10).split("-");
+  return `${day}.${month}.${year}`;
+}
+
+async function listDrafts(deps: TelegramReviewDeps): Promise<UpdateOutcome> {
+  const { data } = await deps.admin
+    .from("generated_posts")
+    .select(DRAFT_COLUMNS)
+    .eq("user_id", deps.userId)
+    .in("status", ["draft", "approved"])
+    .order("created_at", { ascending: false })
+    .limit(DRAFT_SCAN_LIMIT);
+  const drafts = ((data ?? []) as DraftRow[]).filter(isReviewableDraft).slice(0, DRAFT_LIST_LIMIT);
+  if (!drafts.length) {
+    await deps.telegram.sendText("İncelenecek yayınlanmamış taslak yok.");
+    return "drafts-listed";
+  }
+  const lines = drafts.map((post, i) => `${i + 1}. ${post.status === "approved" ? "[Onaylı] " : ""}${draftLabel(post)} — ${draftDate(post)}`);
+  const buttons = drafts.map((post, i) => [{ text: `${i + 1}. ${draftLabel(post)}`, data: `s:${post.id}` }]);
+  await deps.telegram.sendText(`Yayınlanmamış taslaklar (en yeni ${drafts.length}):\n\n${lines.join("\n")}\n\nÖnizlemek için birini seçin.`, buttons);
+  return "drafts-listed";
+}
+
+const OPEN_JOB_STATES = ["awaiting_review", "approved", "awaiting_correction", "generating", "publishing"];
+
+// Shows a stored draft exactly as saved (images + caption) and attaches it
+// to a review job: draft -> awaiting_review (Onayla/Reddet), approved ->
+// approved (platform choice). An open job for the same post is reused.
+async function selectDraft(postId: string, callbackId: string, deps: TelegramReviewDeps): Promise<UpdateOutcome> {
+  if (!/^[0-9A-Za-z-]{1,60}$/.test(postId)) {
+    await deps.telegram.answerCallback(callbackId, "Geçersiz işlem.");
+    return "ignored-invalid";
+  }
+  const { data } = await deps.admin.from("generated_posts").select(DRAFT_COLUMNS).eq("id", postId).eq("user_id", deps.userId).maybeSingle();
+  const post = data as DraftRow | null;
+  if (!isReviewableDraft(post)) {
+    await deps.telegram.answerCallback(callbackId, "Bu taslak artık incelenemez (yayınlanmış, reddedilmiş veya silinmiş).");
+    return "callback";
+  }
+
+  const target = post.status === "approved" ? "approved" : "awaiting_review";
+  const { data: openJobs } = await deps.admin
+    .from("telegram_jobs")
+    .select(JOB_COLUMNS)
+    .eq("user_id", deps.userId)
+    .eq("post_id", post.id)
+    .in("state", OPEN_JOB_STATES)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+  let job = ((openJobs ?? []) as Job[])[0] ?? null;
+  if (job && (job.state === "generating" || job.state === "publishing")) {
+    await deps.telegram.answerCallback(callbackId, "Bu taslakta bir işlem sürüyor; biraz sonra tekrar deneyin.");
+    return "callback";
+  }
+  if (job && job.state !== target) {
+    const { data: moved } = await deps.admin
+      .from("telegram_jobs")
+      .update({ state: target, updated_at: new Date().toISOString() })
+      .eq("id", job.id)
+      .eq("user_id", deps.userId)
+      .eq("state", job.state)
+      .eq("revision", job.revision)
+      .select("id");
+    if (!moved?.length) {
+      await deps.telegram.answerCallback(callbackId, "Taslak durumu değişti; lütfen /taslaklar ile tekrar deneyin.");
+      return "callback";
+    }
+    job = { ...job, state: target };
+  }
+  if (!job) {
+    const { data: inserted, error } = await deps.admin
+      .from("telegram_jobs")
+      .insert({ user_id: deps.userId, instruction: draftLabel(post), post_id: post.id, state: target, revision: 1 })
+      .select(JOB_COLUMNS)
+      .single();
+    if (error || !inserted) throw new Error(`job insert failed: ${error?.message ?? "no row"}`);
+    job = inserted as Job;
+  }
+
+  await deps.telegram.answerCallback(callbackId, "Önizleme gönderiliyor");
+  await deps.telegram.sendPhotos(previewImages(post), `Taslak önizleme — ${draftLabel(post)}`);
+  const caption = (post.content ?? "").slice(0, MAX_PREVIEW_TEXT);
+  const view = publishViewOf(post);
+  const notes = blockedLines(view);
+  if (target === "approved") {
+    const available = offerablePlatforms(platformStates(job), view);
+    const buttons = publishButtons(job.id, job.revision, available, deps, canReject(view, platformStates(job)));
+    await deps.telegram.sendText(
+      [caption, "Bu taslak onaylı. Onay yayın değildir — hangi platformlarda yayınlansın?", ...notes].filter(Boolean).join("\n\n"),
+      buttons.length ? buttons : undefined,
+    );
+  } else {
+    await deps.telegram.sendText([caption, ...notes].filter(Boolean).join("\n\n"), reviewButtons(job.id, job.revision, deps));
+  }
+  return "callback";
+}
+
 // ===== Buttons =====
 
 async function handleCallback(query: NonNullable<TelegramUpdate["callback_query"]>, deps: TelegramReviewDeps): Promise<UpdateOutcome> {
   const callbackId = query.id ?? "";
   const messageId = query.message?.message_id;
-  if (!deps.actionsEnabled) {
-    await deps.telegram.answerCallback(callbackId, "Telegram işlemleri henüz etkin değil.");
+  const [action, jobId, revisionText, platformKey] = (query.data ?? "").split(":");
+  // Düzelt regenerates with AI; everything else only reviews/publishes.
+  if (!(action === "d" ? deps.generationEnabled : deps.reviewEnabled)) {
+    await deps.telegram.answerCallback(
+      callbackId,
+      action === "d" ? "Telegram'dan yeni içerik üretimi şu an kapalı." : "Telegram'dan taslak inceleme şu an kapalı.",
+    );
     return "disabled";
   }
-  const [action, jobId, revisionText, platformKey] = (query.data ?? "").split(":");
+  if (action === "s") return selectDraft(jobId ?? "", callbackId, deps);
   const revision = Number(revisionText);
   if (!jobId || !Number.isInteger(revision)) {
     await deps.telegram.answerCallback(callbackId, "Geçersiz işlem.");
@@ -440,6 +674,8 @@ async function handleCallback(query: NonNullable<TelegramUpdate["callback_query"
       return "callback";
     }
     const { data: current } = await deps.admin.from("generated_posts").select("metadata").eq("id", job.post_id).eq("user_id", deps.userId).maybeSingle();
+    // "approved" already (e.g. approved in the dashboard meanwhile) is kept;
+    // a rejected or posted post is never (re)approved.
     const { data: approved } = isRejectedDraft(current?.metadata)
       ? { data: [] }
       : await deps.admin
@@ -447,7 +683,7 @@ async function handleCallback(query: NonNullable<TelegramUpdate["callback_query"
           .update({ status: "approved" })
           .eq("id", job.post_id)
           .eq("user_id", deps.userId)
-          .eq("status", "draft")
+          .in("status", ["draft", "approved"])
           .select("id");
     if (!approved?.length) {
       await transition(["approved"], "awaiting_review");
@@ -456,9 +692,11 @@ async function handleCallback(query: NonNullable<TelegramUpdate["callback_query"
     }
     await deps.telegram.answerCallback(callbackId, "Onaylandı");
     if (messageId) await deps.telegram.clearButtons(messageId);
+    const view = await postPublishView(job.post_id, deps);
+    const buttons = publishButtons(job.id, revision, offerablePlatforms(platformStates(job), view), deps, canReject(view, platformStates(job)));
     await deps.telegram.sendText(
-      "Onaylandı. Onay yayın değildir — hangi platformlarda yayınlansın?",
-      publishButtons(job.id, revision, availablePlatforms(platformStates(job))),
+      ["Onaylandı. Onay yayın değildir — hangi platformlarda yayınlansın?", ...blockedLines(view)].join("\n\n"),
+      buttons.length ? buttons : undefined,
     );
     return "callback";
   }
@@ -475,19 +713,28 @@ async function handleCallback(query: NonNullable<TelegramUpdate["callback_query"
   }
 
   if (action === "r") {
-    if (!(await transition(["awaiting_review", "awaiting_correction"], "rejected"))) {
+    // An approved draft may still be rejected — but never once any platform
+    // has it (published) or may have it (uncertain/in progress).
+    const states = platformStates(job);
+    const view = await postPublishView(job.post_id, deps);
+    if (!canReject(view, states)) {
+      await deps.telegram.answerCallback(callbackId, "Bu gönderi bir platformda yayınlanmış olabilir; reddedilemez.");
+      return "callback";
+    }
+    if (!(await transition(["awaiting_review", "awaiting_correction", "approved"], "rejected"))) {
       await deps.telegram.answerCallback(callbackId, "Bu taslak zaten işlendi.");
       return "callback";
     }
     if (job.post_id) {
       const { data: post } = await deps.admin.from("generated_posts").select("metadata").eq("id", job.post_id).eq("user_id", deps.userId).maybeSingle();
       const metadata = post?.metadata && typeof post.metadata === "object" ? (post.metadata as Record<string, unknown>) : {};
+      // Back to draft (an approval no longer applies) and marked rejected.
       await deps.admin
         .from("generated_posts")
-        .update({ metadata: { ...metadata, review: { state: "rejected", at: new Date().toISOString() } } })
+        .update({ status: "draft", metadata: { ...metadata, review: { state: "rejected", at: new Date().toISOString() } } })
         .eq("id", job.post_id)
         .eq("user_id", deps.userId)
-        .eq("status", "draft");
+        .in("status", ["draft", "approved"]);
     }
     await deps.telegram.answerCallback(callbackId, "Reddedildi");
     if (messageId) await deps.telegram.clearButtons(messageId);
@@ -498,12 +745,13 @@ async function handleCallback(query: NonNullable<TelegramUpdate["callback_query"
   if (action === "p") {
     const platforms = PLATFORM_CHOICES[platformKey ?? ""];
     const states = platformStates(job);
-    const uncertain = (platforms ?? []).filter((p) => states[p] === "uncertain");
+    const view = await postPublishView(job.post_id, deps);
+    const uncertain = (platforms ?? []).filter((p) => states[p] === "uncertain" || view.blocked.has(p));
     if (uncertain.length) {
       await deps.telegram.answerCallback(callbackId, `${uncertain.map((p) => PLATFORM_LABELS[p]).join(", ")} yayın durumu belirsiz; Telegram'dan tekrar yayınlanmaz.`);
       return "callback";
     }
-    if (platforms?.length && platforms.every((p) => states[p] === "published")) {
+    if (platforms?.length && platforms.every((p) => states[p] === "published" || view.confirmed.has(p))) {
       await deps.telegram.answerCallback(callbackId, "Seçilen platformda zaten yayında.");
       return "callback";
     }
@@ -540,11 +788,10 @@ async function handleCallback(query: NonNullable<TelegramUpdate["callback_query"
     const allDone = ALL_PLATFORMS.filter((p) => platforms.includes(p)).every((p) => states[p] === "published");
     await deps.admin.from("telegram_jobs").update({ publish_results: states }).eq("id", job.id).eq("user_id", deps.userId);
     await transition(["publishing"], allDone ? "published" : "approved");
-    const available = availablePlatforms(states);
-    await deps.telegram.sendText(
-      `Yayın sonucu:\n${[...lines, ...uncertainLines].join("\n")}`,
-      allDone || !available.length ? undefined : publishButtons(job.id, revision, available),
-    );
+    const after = await postPublishView(job.post_id, deps);
+    const available = offerablePlatforms(states, after);
+    const buttons = allDone || !available.length ? [] : publishButtons(job.id, revision, available, deps);
+    await deps.telegram.sendText(`Yayın sonucu:\n${[...lines, ...uncertainLines, ...blockedLines(after, states)].join("\n")}`, buttons.length ? buttons : undefined);
     return "callback";
   }
 

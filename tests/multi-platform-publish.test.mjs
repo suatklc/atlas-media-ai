@@ -126,6 +126,7 @@ function loadFacebook({ accounts, credential = PAGE_TOKEN, publishResult = { suc
     "src/lib/publishing/publishFacebookPost.ts",
     (s) =>
       ({
+        "./publishUncertainty": loadTypeScriptModule("src/lib/publishing/publishUncertainty.ts"),
         "./router": { publishPost: async (request) => (calls.publish.push(request), publishResult) },
         "./connections/query": { listConnectedMetaAccounts: async () => accounts },
         "./connections/credentials": { getConnectedAccountCredential: async () => credential },

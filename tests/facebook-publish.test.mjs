@@ -264,6 +264,7 @@ function loadFacebookPublisher({ accounts, publishResult = { success: true, plat
     "src/lib/publishing/publishFacebookPost.ts",
     (s) =>
       ({
+        "./publishUncertainty": loadTypeScriptModule("src/lib/publishing/publishUncertainty.ts"),
         "./router": {
           publishPost: async (request) => {
             calls.publish.push(request);
@@ -335,7 +336,7 @@ test("Facebook publish: an already-published post is never published again; a fr
   }
 });
 
-test("Facebook publish: a failure is recorded as 'failed' (never success) and is retryable; a stale lock does not block retry", async () => {
+test("Facebook publish: a failure is recorded as 'failed' (never success) and is retryable; a stale lock or 'uncertain' blocks a resend", async () => {
   const failing = loadFacebookPublisher({ accounts: [FB_PAGE({ ok: true, count: 5 })], publishResult: { success: false, platform: "facebook", error: "Meta üzerinden yayınlama başarısız oldu." } });
   const db = fakeSupabase(carouselPost("approved"));
   const first = await failing.mod.publishGeneratedPostToFacebook(db.client, "u", "post-1");
@@ -346,9 +347,18 @@ test("Facebook publish: a failure is recorded as 'failed' (never success) and is
   const second = await retry.mod.publishGeneratedPostToFacebook(db.client, "u", "post-1");
   assert.equal(second.success, true);
 
-  const stale = loadFacebookPublisher({ accounts: [FB_PAGE({ ok: true, count: 5 })] });
-  const staleDb = fakeSupabase(carouselPost("approved", { publishResults: { facebook: { state: "publishing", at: new Date(Date.now() - 10 * 60 * 1000).toISOString() } } }));
-  assert.equal((await stale.mod.publishGeneratedPostToFacebook(staleDb.client, "u", "post-1")).success, true);
+  // A marker that was never replaced = outcome unknown: never auto-resent.
+  for (const marker of [
+    { state: "publishing", at: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
+    { state: "uncertain", at: new Date().toISOString() },
+  ]) {
+    const stale = loadFacebookPublisher({ accounts: [FB_PAGE({ ok: true, count: 5 })] });
+    const staleDb = fakeSupabase(carouselPost("approved", { publishResults: { facebook: marker } }));
+    const blocked = await stale.mod.publishGeneratedPostToFacebook(staleDb.client, "u", "post-1");
+    assert.equal(blocked.success, false);
+    assert.match(blocked.error, /belirsiz/);
+    assert.equal(stale.calls.publish.length, 0);
+  }
 });
 
 test("Facebook publish: a 5-image post is blocked until the non-public multi-photo check passed for >= 5 photos — never reduced to fewer images", async () => {

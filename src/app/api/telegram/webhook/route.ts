@@ -70,8 +70,11 @@ export async function POST(request: Request) {
           admin,
           userId,
           authorizedChatId: chatId,
-          // Off unless exactly "true": then only /start answers.
-          actionsEnabled: process.env.TELEGRAM_ACTIONS_ENABLED === "true",
+          // Each off unless exactly "true"; both off: only /start answers.
+          // AI generation (instructions, voice, corrections):
+          generationEnabled: process.env.TELEGRAM_ACTIONS_ENABLED === "true",
+          // Reviewing/publishing existing drafts (/taslaklar, approve, reject, platform choice):
+          reviewEnabled: process.env.TELEGRAM_REVIEW_ENABLED === "true",
           generatePackage: async (body) => toResult(await generateContentPackage(postRequest(origin, "/api/content-package", body))),
           generateVisual: async (body, reuseBaseImageUrl) => {
             const run = async () => toResult(await generateVisual(postRequest(origin, "/api/generate-visual", body)));

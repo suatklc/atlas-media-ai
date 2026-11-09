@@ -5,6 +5,7 @@ import { getConnectedAccountCredential } from "./connections/credentials";
 import { resolveFacebookText } from "../ai/content/facebookText";
 import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "../ai/context/businessProfile";
 import type { ConnectedAccountSummary } from "./connections/types";
+import { PUBLISHING_MARKER_TTL_MS, publishBlockReason } from "./publishUncertainty";
 
 // Facebook Page publishing for an approved Atlas post. Server-only.
 //
@@ -15,12 +16,14 @@ import type { ConnectedAccountSummary } from "./connections/types";
 //   { state: "publishing" | "published" | "failed", at, postId?, error? }
 // - "published" blocks any further Facebook publish of the same post (no
 //   duplicates); "failed" is retryable; a "publishing" marker younger than
-//   PUBLISHING_LOCK_MS blocks a concurrent double click.
+//   PUBLISHING_LOCK_MS blocks a concurrent double click, and an older one
+//   (or "uncertain") means the outcome was never recorded — blocked until
+//   a person checks the Page (publishUncertainty.ts), never auto-resent.
 // - A multi-image post requires the Page's non-public multi-photo check
 //   (facebookCapability.ts) to have passed for at least that many photos —
 //   never silently reduced to fewer images.
 
-export const PUBLISHING_LOCK_MS = 5 * 60 * 1000;
+export const PUBLISHING_LOCK_MS = PUBLISHING_MARKER_TTL_MS;
 export const FACEBOOK_REQUIRED_SLIDES = 5;
 
 // Facebook V1 publishes exactly the approved 5-slide carousel: slides 1..5,
@@ -46,7 +49,7 @@ export function requireFacebookSlides(metadata: unknown): string[] | null {
   return ordered;
 }
 
-export type FacebookPublishState = { state: "publishing" | "published" | "failed"; at: string; postId?: string; error?: string };
+export type FacebookPublishState = { state: "publishing" | "published" | "failed" | "uncertain"; at: string; postId?: string; error?: string };
 
 export type FacebookPublishResult = { success: true; postId: string } | { success: false; error: string };
 
@@ -102,9 +105,8 @@ export async function publishGeneratedPostToFacebook(
 
   const previous = readFacebookPublishState(post.metadata);
   if (previous?.state === "published") return { success: false, error: "Bu gönderi Facebook'ta zaten paylaşıldı." };
-  if (previous?.state === "publishing" && now - Date.parse(previous.at) < PUBLISHING_LOCK_MS) {
-    return { success: false, error: "Facebook paylaşımı zaten sürüyor. Lütfen birkaç dakika sonra tekrar kontrol edin." };
-  }
+  const blocked = publishBlockReason(previous, now, "Facebook");
+  if (blocked) return { success: false, error: blocked };
 
   const slides = requireFacebookSlides(post.metadata);
   if (!slides) {

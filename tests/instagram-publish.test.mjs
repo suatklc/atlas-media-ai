@@ -340,6 +340,7 @@ function loadPublishGeneratedPost({
       ({
         "./eligibility": eligibilityModule,
         "./router": routerMock,
+        "./publishUncertainty": loadTypeScriptModule("src/lib/publishing/publishUncertainty.ts"),
         "./connections/query": queryMock,
         "./connections/credentials": credentialsMock,
         "./connections/tokenLifecycle": tokenLifecycleModule,
@@ -436,7 +437,48 @@ test("publishGeneratedPost: a FAILED Meta publish never updates generated_posts 
   const result = await mod.publishGeneratedPost(supabase, "user-1", "post-1");
 
   assert.equal(result.success, false);
-  assert.equal(trackers.updateCalls.length, 0, "a failed Meta publish must never write status:'posted'");
+  assert.ok(trackers.updateCalls.every((patch) => !("status" in patch)), "a failed Meta publish must never write status:'posted'");
+  assert.equal(trackers.updateCalls[0].metadata.publishResults.instagram.state, "publishing", "marker written before the Meta call");
+  assert.equal(trackers.updateCalls.at(-1).metadata.publishResults.instagram.state, "failed", "a reported Meta failure is retryable");
+});
+
+test("publishGeneratedPost (dashboard + Telegram): an uncertain or unfinished Instagram attempt is never re-sent", async () => {
+  const account = { id: "conn-1", provider: "meta", platform: "instagram", externalAccountId: "id", externalAccountName: null, tokenExpiresAt: null, hasCredential: true };
+  const markers = [
+    { state: "uncertain", at: new Date().toISOString() },
+    { state: "publishing", at: new Date().toISOString() },
+    { state: "publishing", at: new Date(Date.now() - 60 * 60 * 1000).toISOString() },
+  ];
+  for (const marker of markers) {
+    const { mod, supabase, trackers } = loadPublishGeneratedPost({
+      post: { id: "post-1", content: "caption", final_image_url: SECRET_IMAGE_URL, status: "approved", metadata: { platform: "instagram", publishResults: { instagram: marker } } },
+      connectedAccounts: [account],
+    });
+    const result = await mod.publishGeneratedPost(supabase, "user-1", "post-1");
+    assert.equal(result.success, false);
+    assert.equal(trackers.publishPostCalls.length, 0, `${marker.state} must block a resend`);
+    assert.equal(trackers.updateCalls.length, 0);
+  }
+  // A previously FAILED attempt (Meta reported the failure) stays retryable.
+  const { mod, supabase, trackers } = loadPublishGeneratedPost({
+    post: { id: "post-1", content: "caption", final_image_url: SECRET_IMAGE_URL, status: "approved", metadata: { platform: "instagram", publishResults: { instagram: { state: "failed", at: new Date().toISOString() } } } },
+    connectedAccounts: [account],
+  });
+  assert.equal((await mod.publishGeneratedPost(supabase, "user-1", "post-1")).success, true);
+  assert.equal(trackers.publishPostCalls.length, 1);
+});
+
+test("publishGeneratedPost: if the pre-call marker cannot be written, Meta is never called", async () => {
+  const { mod, supabase, trackers } = loadPublishGeneratedPost({
+    post: { id: "post-1", content: "caption", final_image_url: SECRET_IMAGE_URL, status: "approved", metadata: { platform: "instagram" } },
+    connectedAccounts: [
+      { id: "conn-1", provider: "meta", platform: "instagram", externalAccountId: "id", externalAccountName: null, tokenExpiresAt: null, hasCredential: true },
+    ],
+    updateResult: { error: { message: "db down" } },
+  });
+  const result = await mod.publishGeneratedPost(supabase, "user-1", "post-1");
+  assert.equal(result.success, false);
+  assert.equal(trackers.publishPostCalls.length, 0);
 });
 
 test("publishGeneratedPost: a SUCCESSFUL Meta publish marks the post posted and stores the real media id in metadata, preserving existing metadata keys", async () => {
@@ -451,11 +493,14 @@ test("publishGeneratedPost: a SUCCESSFUL Meta publish marks the post posted and 
   const result = await mod.publishGeneratedPost(supabase, "user-1", "post-1");
 
   assert.equal(result.success, true);
-  assert.equal(trackers.updateCalls.length, 1);
-  assert.equal(trackers.updateCalls[0].status, "posted");
-  assert.equal(trackers.updateCalls[0].metadata.instagramMediaId, "17900000000000000");
-  assert.equal(trackers.updateCalls[0].metadata.platform, "instagram", "existing metadata must be preserved, not overwritten");
-  assert.equal(trackers.updateCalls[0].metadata.other, "kept");
+  assert.equal(trackers.updateCalls.length, 2, "pre-call marker, then the posted result");
+  assert.ok(!("status" in trackers.updateCalls[0]), "the marker never changes status");
+  const posted = trackers.updateCalls[1];
+  assert.equal(posted.status, "posted");
+  assert.equal(posted.metadata.instagramMediaId, "17900000000000000");
+  assert.equal(posted.metadata.publishResults.instagram.state, "published");
+  assert.equal(posted.metadata.platform, "instagram", "existing metadata must be preserved, not overwritten");
+  assert.equal(posted.metadata.other, "kept");
 });
 
 test("publishGeneratedPost: a missing/not-owned post row is a safe, generic failure", async () => {

@@ -11,6 +11,7 @@ import { resolveFacebookText } from "@/lib/ai/content/facebookText";
 import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "@/lib/ai/context/businessProfile";
 import PublishPanel, { type PlatformPanelInfo } from "./PublishPanel";
 import { isRejectedDraft } from "@/lib/automation/review";
+import { publishBlockReason, readPublishMarker } from "@/lib/publishing/publishUncertainty";
 
 type GeneratedPost = {
   id: string;
@@ -166,10 +167,22 @@ function PostPublishPanel({
 }) {
   if (post.status !== "approved" && post.status !== "posted") return null;
 
+  // Server-rendered per request: an unfinished/uncertain attempt is shown as
+  // not selectable (the publish layer refuses it anyway).
+  const now = Date.now();
+  const instagramBlocked = publishBlockReason(readPublishMarker(post.metadata, "instagram"), now, "Instagram");
+  const facebookBlocked = publishBlockReason(readPublishMarker(post.metadata, "facebook"), now, "Facebook");
+
   const instagramPublished = post.status === "posted";
   const instagramInfo: PlatformPanelInfo = {
     status: instagramPublished ? "published" : "pending",
-    unavailable: instagramPublished ? "Instagram'da paylaşıldı." : !instagram ? "Instagram hesabı bağlı değil." : null,
+    unavailable: instagramPublished
+      ? "Instagram'da paylaşıldı."
+      : instagramBlocked
+        ? instagramBlocked
+        : !instagram
+          ? "Instagram hesabı bağlı değil."
+          : null,
     preview: post.content,
     account: instagram?.externalAccountName ?? undefined,
   };
@@ -182,7 +195,9 @@ function PostPublishPanel({
     failureMessage: facebookState?.state === "failed" ? facebookState.error : undefined,
     unavailable: facebookPublished
       ? "Facebook'ta paylaşıldı."
-      : !facebook
+      : facebookBlocked
+        ? facebookBlocked
+        : !facebook
         ? "Facebook Sayfası bağlı değil."
         : !requireFacebookSlides(post.metadata)
           ? "Facebook için 5 carousel görselinin tamamı gerekli."

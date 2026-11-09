@@ -81,7 +81,11 @@ export function sendTelegramText(text: string, buttons?: TelegramButton[][]): Pr
 }
 
 // Up to 10 photos as one album, by public URL (Telegram fetches them).
+// sendMediaGroup needs 2–10 items; a single image goes through sendPhoto.
 export function sendTelegramPhotos(urls: string[], caption?: string): Promise<TelegramCallResult> {
+  if (urls.length === 1) {
+    return telegramCall("sendPhoto", { chat_id: authorizedChatId(), photo: urls[0], ...(caption ? { caption: caption.slice(0, 1024) } : {}) });
+  }
   return telegramCall("sendMediaGroup", {
     chat_id: authorizedChatId(),
     media: urls.slice(0, 10).map((url, i) => ({ type: "photo", media: url, ...(i === 0 && caption ? { caption: caption.slice(0, 1024) } : {}) })),
