@@ -366,7 +366,7 @@ test("bell: the unread dot shows only when there are unread notifications", () =
   assert.match(read("src/components/layout/Topbar.tsx"), /<NotificationBell \/>/);
 });
 
-test("privilege boundary: only the cron route can create the service-role client or enter the automation session", () => {
+test("privilege boundary: only the cron route and the Telegram webhook can create the service-role client or enter the automation session", () => {
   const files = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(path.join(projectRoot, dir), { withFileTypes: true })) {
@@ -377,7 +377,18 @@ test("privilege boundary: only the cron route can create the service-role client
   };
   walk("src");
   const users = files.filter((file) => /createAdminClient|runAsAutomationUser|SUPABASE_SERVICE_ROLE_KEY/.test(read(file)));
-  assert.deepEqual(users.sort(), ["src/app/api/cron/daily-content/route.ts", "src/lib/supabase/admin.ts", "src/lib/supabase/server.ts"]);
+  assert.deepEqual(users.sort(), [
+    "src/app/api/cron/daily-content/route.ts",
+    "src/app/api/telegram/webhook/route.ts",
+    "src/lib/supabase/admin.ts",
+    "src/lib/supabase/server.ts",
+  ]);
+  // The webhook checks Telegram's secret header before it schedules any work
+  // (and the service-role client is only created inside that work).
+  const webhook = read("src/app/api/telegram/webhook/route.ts");
+  const post = webhook.slice(webhook.indexOf("export async function POST"));
+  assert.ok(post.indexOf("hasValidSecret(request)") < post.indexOf("after("), "secret before any work");
+  assert.ok(post.indexOf("after(") < post.indexOf("createAdminClient()"), "service-role client only inside the authorized work");
   assert.match(read("src/lib/supabase/admin.ts"), /^import "server-only";/, "never bundled for the browser");
   const route = read("src/app/api/cron/daily-content/route.ts");
   const get = route.slice(route.indexOf("export async function GET"));

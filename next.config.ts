@@ -37,6 +37,8 @@ const nextConfig: NextConfig = {
     // Draft Edit re-renders the 5 slides too; its traced bundle had the
     // fonts and logo but not the wasm (same gap, found 2026-11-05).
     "/api/drafts/edit": RENDER_ASSETS,
+    // Telegram review flow runs generate-visual in-process as well.
+    "/api/telegram/webhook": RENDER_ASSETS,
   },
 };
 

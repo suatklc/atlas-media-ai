@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { currentAutomationUserId } from "../../supabase/server";
 
 // Server-only. NEVER import this from a "use client" component, and never
 // serialize its return value into any response a browser can read.
@@ -25,9 +26,19 @@ export async function getConnectedAccountCredential(
   supabase: SupabaseClient,
   connectedAccountId: string,
 ): Promise<string | null> {
-  const { data, error } = await supabase.rpc("get_connected_account_credential", {
-    p_connected_account_id: connectedAccountId,
-  });
+  // Inside the authorized automation context (Telegram webhook / cron) the
+  // server client has no auth.uid(); the service-role-only variant
+  // (0005_telegram_review.sql) checks the owner id explicitly instead.
+  // Browser-session requests always take the original path.
+  const automationUserId = currentAutomationUserId();
+  const { data, error } = automationUserId
+    ? await supabase.rpc("get_connected_account_credential_for_user", {
+        p_connected_account_id: connectedAccountId,
+        p_user_id: automationUserId,
+      })
+    : await supabase.rpc("get_connected_account_credential", {
+        p_connected_account_id: connectedAccountId,
+      });
 
   if (error) {
     // Never logs connectedAccountId's associated secret (it was never
