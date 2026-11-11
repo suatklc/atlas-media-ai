@@ -4,8 +4,8 @@ This document reflects VERIFIED current state as of the commit below. It
 changes often — keep it short and current, not a historical changelog
 (see ARCHITECTURE.md/PRODUCT.md for durable structure/decisions).
 
-**HEAD commit:** `0641ed0221b6c4e07b961945b17bdeb9abc8b1b5` (synced
-2026-11-02)
+**HEAD commit:** `edc61ea` (deployed to production 2026-11-09; this
+file synced 2026-11-11)
 
 ## Snapshot
 
@@ -14,7 +14,17 @@ changes often — keep it short and current, not a historical changelog
   Safety V1, ContentPackage Gold Standard V1, Hero v1.
 - **Publishing live in production:** Instagram + Facebook Page (Facebook
   Static Publishing V1). Approval never publishes; only the explicit
-  "Seçili Platformlarda Yayınla" action does, per ticked platform.
+  "Seçili Platformlarda Yayınla" action does, per ticked platform. Real
+  dashboard publishing to BOTH Instagram and Facebook was verified by
+  Suat on 2026-11-09.
+- **Telegram review (production):** /start, the generation-off reply,
+  /taslaklar, the 5-slide preview and the platform buttons were verified
+  live. NO real publish from Telegram has been tested yet (see
+  "Automation + Telegram" below).
+- **Production flags (last REPORTED by Suat, 2026-11-09 — not readable
+  by the agent, Vercel stores them as Secret; treat as unverified):**
+  `TELEGRAM_ACTIONS_ENABLED=false`, `TELEGRAM_REVIEW_ENABLED=true`,
+  `AUTOMATION_ENABLED` last known off (scheduled automation disabled).
 - **Target publishing channels:** Instagram + Facebook + LinkedIn +
   Google Business Profile. LinkedIn and Google Business have NO provider
   yet (`publishing/config.ts` — explicit "not yet configured" failure).
@@ -296,8 +306,12 @@ changes often — keep it short and current, not a historical changelog
   - `tests/output-mode.test.mjs` ×2 — `isContentOpportunity is not a
     function` (stale mock map, missing several real imports from an
     earlier refactor).
-- Full test suite: 456/460 passing (the 4 above) — last recorded count,
-  not re-run during the 2026-11-02 doc sync.
+- Full test suite: 663/667 passing (only the 4 above fail) — last run
+  2026-11-09 on the `edc61ea` changes, together with `tsc --noEmit`,
+  ESLint and `next build` (all clean). Not re-run for this doc sync.
+- **Uncertain publish has no UI to resolve.** A platform whose marker is
+  `uncertain` (or a stale `publishing`) stays blocked everywhere until a
+  person checks Meta and the marker is cleared directly in the database.
 - **"Actual change lost before writing" — ROOT CAUSE FIXED (2026-10-17,
   second pass).** `factContract.ts`: Sentence-Anchored Citation (Job 1
   cites `[S<n>]` segments; a current-topic fact whose own quote fails
@@ -423,6 +437,69 @@ changes often — keep it short and current, not a historical changelog
     count-only, no secrets or article text, no behavior change. Added to
     find why production returns fewer property topics than local. Remove
     (revert those commits' logging) once diagnosed.
+  - Production 0-result recovery (`809c133`): ÇŞİDB blocks US IPs and
+    TKGM's linked PDFs are Turkey/EU-reachable only, so discover,
+    content-plan and the cron route run in `fra1` (`vercel.json`
+    `functions.regions` — route-level `preferredRegion` did not apply on
+    the Hobby plan). Editorial gate tightened (`f7962fa`).
+- **Weekly content plan + expert copy gate** (`84b6664`) and image model
+  switch to `gpt-image-2.5-sunburst` (`273faf6`; `gpt-image-1` was shut
+  down by OpenAI and failed in production). Failed visual generation keeps
+  a "Tekrar Dene" action (`aabf53c`).
+
+## Automation + Telegram (2026-11)
+
+- **Automation V1** (`8f29ca8`, `031dcc0`, `e24a515`; migration
+  `0004_automation.sql`): Vercel Cron `0 4 * * 1,2,4,6` (07:00 Turkey,
+  Mon/Tue/Thu/Sat) → `/api/cron/daily-content` creates a DRAFT only
+  (never approves/publishes), with in-app + Telegram notification. Runs
+  only when `AUTOMATION_ENABLED === "true"` — last known OFF. The cron
+  bundle needed the resvg wasm/fonts/logo (`next.config.ts`
+  RENDER_ASSETS). A free compose-test mode (env
+  `AUTOMATION_TEST_BASE_IMAGE_URL`, since removed) verified carousel +
+  draft creation in production without paid generation; it left a
+  "TEST — YAYINLAMAYIN" draft, which every Telegram list excludes.
+- **Telegram review flow** (`c196e3c`, `edc61ea`; migration
+  `0005_telegram_review.sql`, applied by Suat): webhook
+  `/api/telegram/webhook` (secret header → 401 otherwise; verified 401
+  for missing/wrong secret after the `edc61ea` deploy), one authorized
+  private chat, update_id dedupe, `(state, revision)`-guarded job state
+  machine, publishing only via the shared `publishToSelectedPlatforms`.
+  Two separate permissions:
+  - `TELEGRAM_ACTIONS_ENABLED` — AI generation: instructions, voice
+    transcription, Düzelt/corrections. Off = no AI API call from Telegram.
+  - `TELEGRAM_REVIEW_ENABLED` — `/taslaklar`, Onayla, Reddet, platform
+    choice. Lists the user's real unpublished drafts (no TEST, rejected,
+    posted or image-less drafts), previews the STORED slides + caption;
+    no text/image/voice API call on this path.
+  - Live-verified: /start, generation-off reply, /taslaklar, 5-slide
+    preview, platform buttons. **Not verified: a real publish from
+    Telegram.** The arsa (land) draft opened in that session was NOT
+    published then; its current status is unknown — check before
+    assuming.
+- **Shared uncertain-publish lock** (`edc61ea`,
+  `publishing/publishUncertainty.ts`, used by dashboard AND Telegram):
+  Instagram and Facebook each write `metadata.publishResults.<platform>
+  = publishing` right before the Meta call, then `published`/`failed`.
+  A `publishing` marker younger than 5 min = "in progress"; older, or
+  `uncertain` = outcome unknown → that platform is never re-sent
+  automatically. A Meta-reported `failed` stays retryable. If the marker
+  can't be written, Meta is not called.
+
+## Agent tooling — installed vs planned (checked 2026-11-11)
+
+- Installed: project skills `real-estate-content-strategist`,
+  `atlas-editorial-quality-gate` (+ read-only subagent),
+  `fact-source-grounding`, `atlas-ui-designer`, `find-skills`; user-level
+  `higgsfield-generate` + `higgsfield` CLI (never run on Atlas — paid);
+  claude.ai connectors Canva and Higgsfield reachable but unused for
+  Atlas. Codex desktop app is installed with Atlas registered; Codex
+  mirrors live in untracked `AGENTS.md`, `.agents/skills/`, `.codex/`.
+- NOT installed: any hook, any project MCP (`.mcp.json` — no Supabase/
+  Vercel/GitHub MCP), a Claude↔Codex bridge (no Codex MCP, no `codex` CLI
+  on PATH), `gh` CLI. ElevenLabs and plugin connectors are unauthorized.
+- Planned/proposed only: read-only Supabase access for verifying
+  production rows, pre-commit/secret-guard hooks.
 
 ## Next work order (intentional — do not reorder without a genuine blocker)
 
@@ -463,3 +540,11 @@ changes often — keep it short and current, not a historical changelog
     No API route/UI yet — next: one approved paid test clip, then wire a
     route that reuses `ContentOpportunity` → `ContentPlan` →
     `CreativeBrief` (per GUARDRAILS.md, no parallel planning layer).
+14. Automation V1 + Telegram review — IMPLEMENTED and deployed (see
+    "Automation + Telegram"). Remaining, each needing Suat's explicit
+    go-ahead: (a) first real publish from Telegram on a real approved
+    draft; (b) a way to resolve an `uncertain` publish marker after a
+    manual Meta check; (c) re-enabling scheduled automation
+    (`AUTOMATION_ENABLED`) and, separately, Telegram AI generation
+    (`TELEGRAM_ACTIONS_ENABLED`); (d) remove the temporary `[radar-diag]`
+    logs once diagnosed.
