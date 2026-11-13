@@ -4,9 +4,11 @@ This document reflects VERIFIED current state as of the commit below. It
 changes often — keep it short and current, not a historical changelog
 (see ARCHITECTURE.md/PRODUCT.md for durable structure/decisions).
 
-**HEAD commit:** `0baf20b` (local; `f98594c` + `0baf20b` not pushed —
-production still runs `edc61ea`, deployed 2026-11-09; this file synced
-2026-11-13)
+**Production commit:** `18a03a8` (deployed 2026-11-13 to
+https://atlas-media-ai.vercel.app — deployment
+`atlas-media-q0wtn9igo-atlas-ai12.vercel.app`, READY + promoted; the
+production alias was confirmed to serve that commit). This file synced
+2026-11-13; a later docs-only commit may sit on top of it.
 
 ## Snapshot
 
@@ -547,7 +549,7 @@ production still runs `edc61ea`, deployed 2026-11-09; this file synced
   (immediate); full removal `supabase/ops/0006_rollback.sql`, then delete
   the pgpass line.
 
-## Daily-use UI pass — desktop + mobile (2026-11-13, NOT committed/deployed)
+## Daily-use UI pass — desktop + mobile (2026-11-13, deployed in `18a03a8`)
 
 - **Menu:** the sidebar's only working item was "Pano"; six others were
   disabled "Yakında" stubs. The dashboard is ONE page, so the menu now
@@ -582,15 +584,34 @@ production still runs `edc61ea`, deployed 2026-11-09; this file synced
   Register page "Kullanım Şartları"/"Gizlilik Politikası" links go to
   `#` (no legal pages exist); Google sign-in's Supabase provider setup is
   unverified; the account/sign-out is only in the sidebar.
+- **Deploy check (2026-11-13, read-only):** pushed `f98594c`, `0baf20b`,
+  `18a03a8` together. The 4 failing tests fail identically on the
+  pre-change HEAD `0baf20b` (checked in a clean worktree), so they are not
+  regressions. Live: `/login` 200 with the new markup (no GitHub / "Beni
+  hatırla"), 16px inputs and no horizontal overflow at 390px, no console
+  errors; `/forgot-password` 200; unauthenticated `/dashboard` → 307
+  `/login`, `/` → 307 `/dashboard`. Not checked live: anything behind
+  login (needs Suat's session). No content generated, nothing published,
+  no form submitted, no env/DB permission change.
+- **Phone check for Suat (real session):** log in; open the menu (☰) and
+  tap each of the 5 items — each should land on its section and close
+  the menu; the highlighted item follows scrolling; open a draft →
+  "Düzenle" (sheet scrolls, "Kapat"/save stay visible — do not save
+  unless intended); approve/reject buttons are easy to tap; an approved
+  post's platform checkboxes are tappable (do NOT press "Seçili
+  Platformlarda Yayınla" unless you mean to publish); a notification
+  opens its draft; typing in fields does not zoom the page.
 
 ## Next work order (intentional — do not reorder without a genuine blocker)
 
 1. Claude Code persistent project memory — COMPLETE.
 2. Final Carousel quality validation — COMPLETE.
 3. Freeze Carousel V1 — COMPLETE (see above).
-4. Live domain + responsive mobile/PWA usage — COMPLETE (audited, no
-   code changes required; verified reachable/healthy on the live Vercel
-   production URL, including from a phone).
+4. Live Vercel URL + responsive mobile use — reachable/healthy on
+   `atlas-media-ai.vercel.app`, including from a phone; mobile usability
+   reworked in item 16. CORRECTED 2026-11-13: PWA was never implemented
+   (no manifest/service worker) and there is no own domain — both remain
+   OPEN, not complete.
 5. Real usage test — COMPLETE for Current Content Radar V1 (see above);
    Carousel/Hero already covered by their own freezes.
 6. Gold Standard V1 (`ContentPackage` pipeline, `/api/content-package`)
@@ -633,6 +654,8 @@ production still runs `edc61ea`, deployed 2026-11-09; this file synced
 15. Production read-only ops access (`atlas_ops_reader`, migration 0006)
     — COMPLETE and verified 2026-11-13 (see "Production read-only ops
     access").
-16. Daily-use UI pass (desktop + mobile) — IMPLEMENTED locally, checks
-    green, NOT committed/deployed; needs a real phone check by Suat after
-    deploy (see "Daily-use UI pass").
+16. Daily-use UI pass (desktop + mobile) — DEPLOYED (`18a03a8`); still
+    needs Suat's real-phone check behind login (see "Daily-use UI pass").
+    NOT done and not to be marked done: PWA (no manifest, icons or
+    service worker), an own domain for Atlas (only
+    `atlas-media-ai.vercel.app`), sales/multi-customer readiness.
