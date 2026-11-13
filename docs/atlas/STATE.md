@@ -312,6 +312,8 @@ file synced 2026-11-11)
 - **Uncertain publish has no UI to resolve.** A platform whose marker is
   `uncertain` (or a stale `publishing`) stays blocked everywhere until a
   person checks Meta and the marker is cleared directly in the database.
+  (It is now VISIBLE read-only via `ops.post_publish_status`; clearing it
+  still needs a privileged write.)
 - **"Actual change lost before writing" — ROOT CAUSE FIXED (2026-10-17,
   second pass).** `factContract.ts`: Sentence-Anchored Citation (Job 1
   cites `[S<n>]` segments; a current-topic fact whose own quote fails
@@ -498,8 +500,51 @@ file synced 2026-11-11)
 - NOT installed: any hook, any project MCP (`.mcp.json` — no Supabase/
   Vercel/GitHub MCP), a Claude↔Codex bridge (no Codex MCP, no `codex` CLI
   on PATH), `gh` CLI. ElevenLabs and plugin connectors are unauthorized.
-- Planned/proposed only: read-only Supabase access for verifying
-  production rows, pre-commit/secret-guard hooks.
+- Planned/proposed only: pre-commit/secret-guard hooks.
+
+## Production read-only ops access (verified 2026-11-13)
+
+- **What:** Postgres role `atlas_ops_reader` (migration
+  `supabase/migrations/0006_ops_reader.sql`, applied by Suat) can read
+  ONLY three views in schema `ops` (not exposed by the Data API), scoped
+  to one Atlas user via `ops.reader_scope`:
+  - `ops.post_publish_status` — post id/status/created_at, output mode,
+    is_test, review_rejected, per-platform publish state + time + has-
+    error, media/post-id-recorded booleans.
+  - `ops.telegram_job_status` — job id, post id, state, revision,
+    per-platform state, has_error, timestamps.
+  - `ops.automation_run_status` — run id, kind (test/scheduled), run
+    date, status, post id, has_error, timestamps.
+  No content, captions, instructions, topics, image URLs, raw
+  publish_results, error text, tokens, Vault, auth or connected accounts.
+- **Verified:** admin check (`supabase/ops/0006_verify_admin.sql`, as
+  postgres) — usable access is exactly the three views, SELECT only;
+  `extensions.pg_stat_statements(_info)` carry object privileges via
+  PUBLIC but their schema is closed (not usable). Reader check
+  (`supabase/ops/0006_verify_reader.sql`, run as the role on 2026-11-13):
+  25 PASS / 1 SKIP / 0 FAIL, ROLLBACK — base tables, auth, vault, storage,
+  reader_scope, all four credential functions and every DDL probe
+  denied; view writes have no privilege in metadata (Postgres reports
+  55000 "not updatable" before the privilege check); SKIP =
+  `public.profiles` does not exist in production (present in
+  `0001_init.sql`, absent live — not investigated). Counts at that time:
+  posts 40, telegram_jobs 1, automation_runs 2.
+- **Known limits (not enforceable without changing PUBLIC):** the role
+  can create TEMP objects in its own session, read system catalogs
+  (object names, function source), and override its own session
+  defaults (read-only, timeouts) — the GRANTs are the real boundary.
+  Role LOGIN is enabled; connection limit 3.
+- **How to use (local machine only):** psql 17.12 command-line tools
+  (EDB, no server) at `C:\Program Files\PostgreSQL\17\bin\psql.exe`, not
+  on PATH. The password exists only in `%APPDATA%\postgresql\pgpass.conf`
+  (generated locally by `scripts/ops-reader-password.mjs`; only its SCRAM
+  verifier was sent to Supabase). Run queries through
+  `node scripts/ops-psql.mjs -c "<sql>"` or `-f <file.sql>` — it takes
+  host/port/user from the pgpass entry, never prints them or the
+  password, forces `sslmode=require` and `-w` (no prompt).
+- **Kill switch / removal:** `alter role atlas_ops_reader nologin;`
+  (immediate); full removal `supabase/ops/0006_rollback.sql`, then delete
+  the pgpass line.
 
 ## Next work order (intentional — do not reorder without a genuine blocker)
 
@@ -548,3 +593,6 @@ file synced 2026-11-11)
     (`AUTOMATION_ENABLED`) and, separately, Telegram AI generation
     (`TELEGRAM_ACTIONS_ENABLED`); (d) remove the temporary `[radar-diag]`
     logs once diagnosed.
+15. Production read-only ops access (`atlas_ops_reader`, migration 0006)
+    — COMPLETE and verified 2026-11-13 (see "Production read-only ops
+    access").
