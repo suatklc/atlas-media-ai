@@ -273,9 +273,14 @@ export default function AIAssistantPanel() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Follow the conversation only once it has started: scrolling on mount
+  // pulled the whole dashboard down to this panel on page load (and broke
+  // menu / notification anchors such as #taslaklar or #draft-<id>).
+  const conversationStarted = messages.length > 1 || isWaitingFirstChunk;
   useEffect(() => {
+    if (!conversationStarted) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, isWaitingFirstChunk]);
+  }, [messages, isWaitingFirstChunk, conversationStarted]);
 
   useEffect(() => {
     return () => {
@@ -551,7 +556,7 @@ export default function AIAssistantPanel() {
                         type="button"
                         onClick={() => handleCopy(message.id, message.text)}
                         aria-label={copiedId === message.id ? "Kopyalandı" : "Yanıtı kopyala"}
-                        className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-zinc-300"
+                        className="flex min-h-9 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-zinc-400 transition-colors hover:bg-zinc-900 hover:text-zinc-200"
                       >
                         {copiedId === message.id ? (
                           <>
@@ -573,7 +578,7 @@ export default function AIAssistantPanel() {
                               type="button"
                               onClick={() => sendMessage(action.prompt)}
                               disabled={isSending}
-                              className="flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="flex min-h-11 items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <action.icon className="h-3.5 w-3.5 text-indigo-400" />
                               {action.label}
@@ -595,7 +600,7 @@ export default function AIAssistantPanel() {
                               )
                             }
                             disabled={message.image?.status === "loading"}
-                            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="mt-2 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {message.image?.status === "loading" ? (
                               <>
@@ -734,7 +739,7 @@ export default function AIAssistantPanel() {
                 type="button"
                 onClick={() => sendMessage(action.prompt)}
                 disabled={isSending}
-                className="flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex min-h-11 items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
                 {action.label}
@@ -757,7 +762,7 @@ export default function AIAssistantPanel() {
             value={selectedPlatform}
             onChange={(event) => setSelectedPlatform(event.target.value as PlatformId)}
             disabled={isSending}
-            className="rounded-full border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-11 rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-base font-medium text-zinc-200 transition-colors hover:border-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm"
           >
             {PLATFORM_OPTIONS.map((platform) => (
               <option key={platform.id} value={platform.id}>

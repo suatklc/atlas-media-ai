@@ -1,47 +1,33 @@
-import { Menu, Search } from "lucide-react";
+import Link from "next/link";
+import { Menu } from "lucide-react";
 import NotificationBell from "./NotificationBell";
-import { getInitials } from "@/lib/format";
-import type { AuthUser } from "@/lib/types";
 
 type TopbarProps = {
   onMenuClick: () => void;
-  user: AuthUser;
 };
 
-export default function Topbar({ onMenuClick, user }: TopbarProps) {
+// The previous search box and avatar button had no function behind them and
+// were removed rather than shown as working controls; the account/sign-out
+// lives at the bottom of the sidebar.
+export default function Topbar({ onMenuClick }: TopbarProps) {
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b border-zinc-800 bg-zinc-950/80 px-4 backdrop-blur sm:px-6 lg:px-8">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-zinc-800 bg-zinc-950/90 px-2 backdrop-blur sm:px-6 lg:h-16 lg:px-8">
       <button
         type="button"
         onClick={onMenuClick}
-        className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white lg:hidden"
+        className="flex h-11 w-11 items-center justify-center rounded-lg text-zinc-200 hover:bg-zinc-800 hover:text-white lg:hidden"
         aria-label="Menüyü aç"
       >
-        <Menu className="h-5 w-5" />
+        <Menu className="h-6 w-6" />
       </button>
 
-      <div className="relative hidden max-w-md flex-1 sm:block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-        <input
-          type="text"
-          placeholder="Ara..."
-          className="w-full rounded-lg border border-zinc-800 bg-zinc-900 py-2.5 pl-9 pr-3 text-base text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-        />
-      </div>
+      <Link href="#pano" className="flex min-h-11 items-center gap-2 lg:hidden">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-500 text-sm font-bold text-white">A</span>
+        <span className="text-base font-semibold tracking-tight text-white">Atlas AI</span>
+      </Link>
 
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex items-center">
         <NotificationBell />
-
-        <div className="hidden h-6 w-px bg-zinc-800 sm:block" />
-
-        <button
-          type="button"
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 text-sm font-semibold text-white transition-colors hover:bg-indigo-400"
-          aria-label={`${user.name} hesap menüsü`}
-          title={user.name}
-        >
-          {getInitials(user.name)}
-        </button>
       </div>
     </header>
   );

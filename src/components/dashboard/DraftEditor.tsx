@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ContentPackage } from "@/lib/ai/content/contentPackage";
 
@@ -16,7 +16,7 @@ const EXPERT_SLIDE_TITLES = ["Kapak", "Teşhis", "Asıl Mesele", "Ne Değişir?"
 const NEWS_SLIDE_TITLES = ["Kapak", "Ne Oldu?", "Neden Önemli?", "Nelere Dikkat Etmeli?", "Kapanış"];
 
 const fieldClass =
-  "mt-1 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500/60";
+  "mt-1 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-base text-white outline-none focus:border-indigo-500/60 sm:text-sm";
 
 function toForm(pkg: ContentPackage): { slides: SlideForm[]; caption: string; hashtags: string } {
   return {
@@ -46,7 +46,7 @@ function Field({
   rows?: number;
 }) {
   return (
-    <label className="block text-xs font-medium text-zinc-300">
+    <label className="block text-sm font-medium text-zinc-300">
       {label}
       {hint && <span className="ml-1 font-normal text-zinc-500">— {hint}</span>}
       <textarea rows={rows} value={value} onChange={(event) => onChange(event.target.value)} className={fieldClass} />
@@ -77,6 +77,22 @@ export default function DraftEditor({
   const [facebookBaseline, setFacebookBaseline] = useState(facebookText);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+
+  // Full-screen sheet on phones: Escape closes it and the page behind it
+  // does not scroll.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   const setSlide = (index: number, key: keyof SlideForm, value: string) =>
     setForm((current) => ({
@@ -132,18 +148,23 @@ export default function DraftEditor({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-1.5 block w-full rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-zinc-200 transition-colors hover:border-indigo-500/40"
+        className="mt-1.5 block min-h-11 w-full rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm font-medium text-zinc-200 transition-colors hover:border-indigo-500/40"
       >
         Düzenle
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/75 p-0 sm:p-6">
-          <div className="w-full max-w-3xl rounded-none border border-zinc-800 bg-zinc-900 p-4 sm:rounded-xl sm:p-6">
-            <div className="flex items-start justify-between gap-4">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Taslağı Düzenle"
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/75 p-0 sm:p-6"
+        >
+          <div className="min-h-full w-full max-w-3xl rounded-none border-zinc-800 bg-zinc-900 px-4 pb-6 sm:min-h-0 sm:rounded-xl sm:border sm:p-6">
+            <div className="sticky top-0 z-10 -mx-4 flex items-start justify-between gap-4 border-b border-zinc-800 bg-zinc-900 px-4 py-3 sm:static sm:mx-0 sm:border-0 sm:p-0">
               <div>
                 <h3 className="text-base font-semibold text-white">Taslağı Düzenle</h3>
-                <p className="mt-1 text-xs text-zinc-400">
+                <p className="mt-1 text-sm text-zinc-400">
                   Kaydetmek gönderiyi onaylamaz veya paylaşmaz — taslak olarak kalır. Onay için kartta
                   &quot;Onayla&quot;yı ayrıca kullanın.
                 </p>
@@ -151,7 +172,7 @@ export default function DraftEditor({
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="rounded-full border border-zinc-800 px-3 py-1 text-xs text-zinc-300 hover:border-zinc-600"
+                className="min-h-11 shrink-0 rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 hover:border-zinc-500"
               >
                 Kapat
               </button>
@@ -169,7 +190,7 @@ export default function DraftEditor({
             <div className="mt-4 space-y-5">
               {form.slides.map((slide, index) => (
                 <fieldset key={index} className="space-y-2 rounded-lg border border-zinc-800 p-3">
-                  <legend className="px-1 text-xs font-semibold text-indigo-300">
+                  <legend className="px-1 text-sm font-semibold text-indigo-300">
                     Slayt {index + 1} · {titles[index]}
                   </legend>
                   <Field label="Başlık" value={slide.headline} onChange={(v) => setSlide(index, "headline", v)} />
@@ -232,17 +253,17 @@ export default function DraftEditor({
               />
             </div>
 
-            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="sticky bottom-0 -mx-4 mt-5 flex flex-col gap-2 border-t border-zinc-800 bg-zinc-900 px-4 py-3 sm:static sm:mx-0 sm:flex-row sm:items-center sm:border-0 sm:p-0">
               <button
                 type="button"
                 onClick={save}
                 disabled={pending}
-                className="rounded-full bg-indigo-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-11 rounded-full bg-indigo-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {pending ? "Görseller güncelleniyor…" : "Kaydet ve Görselleri Güncelle"}
               </button>
               {message && (
-                <span className={`text-xs ${message.kind === "ok" ? "text-emerald-400" : "text-red-400"}`}>{message.text}</span>
+                <span className={`text-sm ${message.kind === "ok" ? "text-emerald-400" : "text-red-400"}`}>{message.text}</span>
               )}
             </div>
           </div>

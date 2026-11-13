@@ -41,3 +41,11 @@ body {
     animation: none;
   }
 }
+
+/* Sidebar menu items jump to dashboard sections — glide there unless the
+   user prefers reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}

@@ -90,17 +90,10 @@ export default function LoginForm({ resetSuccess = false }: LoginFormProps) {
           error={errors.password}
         />
 
-        <div className="flex items-center justify-between text-sm">
-          <label className="flex items-center gap-2 text-zinc-400">
-            <input
-              type="checkbox"
-              className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:ring-offset-0"
-            />
-            Beni hatırla
-          </label>
+        <div className="flex justify-end text-sm">
           <Link
             href="/forgot-password"
-            className="font-medium text-indigo-400 hover:text-indigo-300"
+            className="inline-flex min-h-11 items-center font-medium text-indigo-400 hover:text-indigo-300"
           >
             Şifremi unuttum
           </Link>
@@ -109,7 +102,7 @@ export default function LoginForm({ resetSuccess = false }: LoginFormProps) {
         <button
           type="submit"
           disabled={isPending}
-          className="w-full rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+          className="min-h-12 w-full rounded-lg bg-indigo-500 px-4 py-3 text-base font-semibold text-white transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isPending ? "Giriş yapılıyor..." : "Giriş Yap"}
         </button>

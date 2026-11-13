@@ -74,13 +74,25 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   return (
     <DashboardShell user={authUser}>
+      {/* Section ids are the targets of the sidebar menu (lib/mock-data.ts
+          navItems); scroll-mt keeps them clear of the sticky top bar. */}
       <div className="mx-auto max-w-5xl">
-        <WelcomeSection name={authUser.name} />
+        <div id="pano" className="scroll-mt-24">
+          <WelcomeSection name={authUser.name} />
+        </div>
         <div className="space-y-6">
-          <CurrentOpportunities />
-          <AIAssistantPanel />
-          <SocialAccounts connectionStatus={metaConnection} facebookStatus={facebookConnection} />
-          <GenerationHistory />
+          <div id="icerik-plani" className="scroll-mt-20 lg:scroll-mt-24">
+            <CurrentOpportunities />
+          </div>
+          <div id="icerik-hazirla" className="scroll-mt-20 lg:scroll-mt-24">
+            <AIAssistantPanel />
+          </div>
+          <div id="hesaplar" className="scroll-mt-20 lg:scroll-mt-24">
+            <SocialAccounts connectionStatus={metaConnection} facebookStatus={facebookConnection} />
+          </div>
+          <div id="taslaklar" className="scroll-mt-20 lg:scroll-mt-24">
+            <GenerationHistory />
+          </div>
         </div>
       </div>
     </DashboardShell>

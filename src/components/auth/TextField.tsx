@@ -47,7 +47,7 @@ export default function TextField({
         onChange={(event) => onChange(event.target.value)}
         aria-invalid={Boolean(error)}
         aria-describedby={error ? errorId : undefined}
-        className={`w-full rounded-lg border px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-1 ${
+        className={`w-full rounded-lg border px-3.5 py-3 text-base text-zinc-100 sm:text-sm placeholder:text-zinc-500 focus:outline-none focus:ring-1 ${
           error
             ? "border-red-500/60 bg-zinc-900 focus:border-red-500 focus:ring-red-500"
             : "border-zinc-800 bg-zinc-900 focus:border-indigo-500 focus:ring-indigo-500"

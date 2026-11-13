@@ -63,12 +63,12 @@ export default function NotificationBell() {
       <button
         type="button"
         onClick={toggle}
-        className="relative rounded-md p-2 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+        className="relative flex h-11 w-11 items-center justify-center rounded-lg text-zinc-300 hover:bg-zinc-800 hover:text-white"
         aria-label={unread > 0 ? `Bildirimler (${unread} okunmamış)` : "Bildirimler"}
         aria-expanded={open}
       >
         <Bell className="h-5 w-5" />
-        {unread > 0 && <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-indigo-500" />}
+        {unread > 0 && <span className="absolute right-2.5 top-2.5 h-2.5 w-2.5 rounded-full bg-indigo-400 ring-2 ring-zinc-950" />}
       </button>
 
       {open && (
@@ -85,7 +85,7 @@ export default function NotificationBell() {
                   <a href={item.link ?? "/dashboard"} onClick={() => setOpen(false)} className="block px-4 py-3 hover:bg-zinc-900">
                     <p className={`text-sm font-medium ${item.kind === "run_failed" ? "text-red-300" : "text-white"}`}>{item.title}</p>
                     {item.body && <p className="mt-0.5 line-clamp-2 text-xs text-zinc-400">{item.body}</p>}
-                    <p className="mt-1 text-[11px] text-zinc-500">
+                    <p className="mt-1 text-xs text-zinc-500">
                       {new Date(item.created_at).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                     </p>
                   </a>

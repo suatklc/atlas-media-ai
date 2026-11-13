@@ -78,7 +78,7 @@ export default function ExportActions({ postId, content, finalImageUrl }: Export
       <button
         type="button"
         onClick={handleCopy}
-        className="rounded-full border border-zinc-800 bg-zinc-950 px-2.5 py-1 text-[10px] font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300"
+        className="min-h-10 flex-1 rounded-full border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300"
       >
         {copyState === "copied" ? "Kopyalandı" : copyState === "error" ? "Kopyalanamadı" : "Caption'ı Kopyala"}
       </button>
@@ -87,7 +87,7 @@ export default function ExportActions({ postId, content, finalImageUrl }: Export
         type="button"
         onClick={handleDownload}
         disabled={downloadState === "downloading"}
-        className="rounded-full border border-zinc-800 bg-zinc-950 px-2.5 py-1 text-[10px] font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
+        className="min-h-10 flex-1 rounded-full border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-medium text-zinc-300 transition-colors hover:border-indigo-500/40 hover:text-indigo-300 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {downloadState === "downloading"
           ? "İndiriliyor…"

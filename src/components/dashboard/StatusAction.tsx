@@ -45,9 +45,9 @@ export default function StatusAction({ postId, status }: { postId: string; statu
           <button
             type="submit"
             disabled={isPending}
-            className="block w-full rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-indigo-300 transition-colors hover:border-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+            className="block min-h-11 w-full rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3.5 py-2 text-sm font-medium text-indigo-200 transition-colors hover:border-indigo-500/70 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isPending ? "..." : "Onayla"}
+            {isPending ? "Onaylanıyor…" : "Onayla"}
           </button>
         </form>
       )}
@@ -57,15 +57,15 @@ export default function StatusAction({ postId, status }: { postId: string; statu
           <button
             type="submit"
             disabled={isRejecting || isPending}
-            className="block w-full rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-zinc-400 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+            className="block min-h-11 w-full rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-sm font-medium text-zinc-300 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isRejecting ? "..." : "Reddet"}
+            {isRejecting ? "Reddediliyor…" : "Reddet"}
           </button>
         </form>
       )}
 
-      {state.error && <span className="text-xs text-red-400">{state.error}</span>}
-      {rejectState.error && <span className="text-xs text-red-400">{rejectState.error}</span>}
+      {state.error && <span className="block text-sm text-red-400">{state.error}</span>}
+      {rejectState.error && <span className="block text-sm text-red-400">{rejectState.error}</span>}
     </div>
   );
 }

@@ -48,12 +48,12 @@ export default async function SocialAccounts({ connectionStatus, facebookStatus 
   }
 
   return (
-    <section className="animate-fade-up rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
+    <section className="animate-fade-up rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-white">Bağlı Hesaplar</h2>
         <a
           href="/api/meta/connect"
-          className="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-300 transition-colors hover:border-indigo-500/70 hover:bg-indigo-500/20"
+          className="inline-flex min-h-11 items-center rounded-full border border-indigo-500/40 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-300 transition-colors hover:border-indigo-500/70 hover:bg-indigo-500/20"
         >
           Instagram Bağla
         </a>
@@ -89,7 +89,7 @@ export default async function SocialAccounts({ connectionStatus, facebookStatus 
                 {account.platform === "instagram" && needsInstagramReconnect(account.tokenExpiresAt) ? (
                   <a
                     href="/api/meta/connect"
-                    className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-amber-300 hover:border-amber-500/70"
+                    className="inline-flex min-h-11 items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-3.5 py-2 text-sm text-amber-300 hover:border-amber-500/70"
                   >
                     {classifyInstagramToken(account.tokenExpiresAt) === "expired"
                       ? "Bağlantı süresi doldu — Yeniden Bağla"
@@ -137,7 +137,7 @@ function FacebookPageBlock({ accounts, status }: { accounts: ConnectedAccountSum
   const check = selected?.multiPhotoCheck;
 
   return (
-    <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-3">
+    <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="inline-block rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[11px] font-medium text-indigo-300">
@@ -147,14 +147,14 @@ function FacebookPageBlock({ accounts, status }: { accounts: ConnectedAccountSum
         </div>
         <a
           href="/api/facebook/connect"
-          className="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3.5 py-1.5 text-xs font-medium text-indigo-300 hover:border-indigo-500/70"
+          className="inline-flex min-h-11 items-center rounded-full border border-indigo-500/40 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-300 hover:border-indigo-500/70"
         >
           {pages.length > 0 ? "Facebook'u Yeniden Bağla" : "Facebook Bağla"}
         </a>
       </div>
 
       {message && (
-        <p className={`mt-3 text-xs ${message.tone === "ok" ? "text-emerald-300" : "text-red-400"}`}>{message.text}</p>
+        <p className={`mt-3 text-sm ${message.tone === "ok" ? "text-emerald-300" : "text-red-400"}`}>{message.text}</p>
       )}
 
       {!selected && pages.length > 0 && (
@@ -165,7 +165,7 @@ function FacebookPageBlock({ accounts, status }: { accounts: ConnectedAccountSum
               {page.hasCredential ? (
                 <FacebookSelectPageButton accountId={page.id} />
               ) : (
-                <span className="text-xs text-amber-400">Kimlik bilgisi eksik — yeniden bağlayın</span>
+                <span className="text-sm text-amber-400">Kimlik bilgisi eksik — yeniden bağlayın</span>
               )}
             </li>
           ))}
@@ -173,7 +173,7 @@ function FacebookPageBlock({ accounts, status }: { accounts: ConnectedAccountSum
       )}
 
       {selected && (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
           <span className={check?.ok ? "text-emerald-400" : check ? "text-amber-400" : "text-zinc-400"}>
             {check?.ok
               ? `Çoklu görsel testi geçti (${check.count} görsel, sıra korunuyor)`

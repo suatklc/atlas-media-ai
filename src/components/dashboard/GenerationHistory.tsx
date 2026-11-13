@@ -85,8 +85,11 @@ export default async function GenerationHistory() {
   }
 
   return (
-    <section className="animate-fade-up rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-      <h2 className="text-base font-semibold text-white">Oluşturulan Gönderiler</h2>
+    <section className="animate-fade-up rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 sm:p-5">
+      <h2 className="text-base font-semibold text-white">Taslaklar ve Yayın</h2>
+      <p className="mt-1 text-sm text-zinc-400">
+        Taslağı inceleyin, onaylayın; ardından yayınlanacak platformları kendiniz seçin. Onay tek başına yayınlamaz.
+      </p>
 
       {loadError ? (
         <p className="mt-4 text-sm text-zinc-400">Geçmiş şu anda yüklenemedi. Lütfen daha sonra tekrar deneyin.</p>
@@ -95,7 +98,9 @@ export default async function GenerationHistory() {
           Henüz oluşturulmuş bir gönderi yok. Bir görsel oluşturduğunuzda burada görünecek.
         </p>
       ) : (
-        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        // One card per row on phones: each card carries the approve/edit/
+        // publish controls, which need the full width to stay tappable.
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {posts.map((post) => {
             const draft = editableDraft(post);
             return (
@@ -119,7 +124,7 @@ export default async function GenerationHistory() {
                 />
               </a>
               <div className="p-3">
-                <span className="inline-block rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-[11px] font-medium text-indigo-300">
+                <span className="inline-block rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-xs font-medium text-indigo-300">
                   {PLATFORM_CONFIGS[resolvePlatformFromMetadata(post.metadata)].label}
                 </span>
                 <p className="mt-1.5 line-clamp-2 text-sm font-medium text-white">{post.visual_headline}</p>

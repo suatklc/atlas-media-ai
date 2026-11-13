@@ -402,7 +402,7 @@ export default function CurrentOpportunities() {
                             alt={`Slayt ${slide.slide}`}
                             className="aspect-[4/5] w-full object-cover"
                           />
-                          <p className="px-1.5 py-1 text-center text-[11px] text-zinc-400">
+                          <p className="px-1.5 py-1 text-center text-xs text-zinc-400">
                             Slayt {slide.slide}/5
                           </p>
                         </div>
@@ -412,7 +412,10 @@ export default function CurrentOpportunities() {
                     <p className="mt-1 text-xs text-zinc-500">{visual.disclaimer}</p>
                   )}
                   <p className="mt-2 text-xs text-zinc-500">
-                    Bu içerik taslak olarak kaydedildi. Yayınlamak için aşağıdaki “Oluşturulan Gönderiler”
+                    Bu içerik taslak olarak kaydedildi. Yayınlamak için aşağıdaki{" "}
+                    <a href="#taslaklar" className="font-medium text-indigo-300 underline underline-offset-2">
+                      Taslaklar ve Yayın
+                    </a>{" "}
                     bölümünden onaylamanız gerekir.
                   </p>
                 </div>
@@ -430,7 +433,10 @@ export default function CurrentOpportunities() {
                     <p className="mt-1 text-xs text-zinc-500">{visual.disclaimer}</p>
                   )}
                   <p className="mt-2 text-xs text-zinc-500">
-                    Bu içerik taslak olarak kaydedildi. Yayınlamak için aşağıdaki “Oluşturulan Gönderiler”
+                    Bu içerik taslak olarak kaydedildi. Yayınlamak için aşağıdaki{" "}
+                    <a href="#taslaklar" className="font-medium text-indigo-300 underline underline-offset-2">
+                      Taslaklar ve Yayın
+                    </a>{" "}
                     bölümünden onaylamanız gerekir.
                   </p>
                 </div>
@@ -535,7 +541,7 @@ export default function CurrentOpportunities() {
           rows={3}
           maxLength={1000}
           placeholder="Örn. Zekeriyaköy'de villasını satmayı düşünen mülk sahiplerine doğru fiyatlandırmanın önemini anlatan bir paylaşım hazırla."
-          className="mt-3 w-full resize-y rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500/60 focus:outline-none"
+          className="mt-3 w-full resize-y rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-base text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500/60 focus:outline-none sm:text-sm"
         />
         <button
           type="button"

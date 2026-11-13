@@ -38,13 +38,13 @@ export default function PublishPanel({ postId, platforms }: { postId: string; pl
     setSelected((current) => (on ? [...current.filter((p) => p !== platform), platform] : current.filter((p) => p !== platform)));
 
   return (
-    <form action={formAction} className="mt-2 space-y-2 rounded-lg border border-zinc-800 p-2">
-      <p className="text-[11px] font-medium text-zinc-300">Yayınlanacak platformlar</p>
+    <form action={formAction} className="mt-2 space-y-2 rounded-lg border border-zinc-800 p-2.5">
+      <p className="text-xs font-semibold text-zinc-200">Yayınlanacak platformlar</p>
       {(Object.keys(LABELS) as Platform[]).map((platform) => {
         const info = platforms[platform];
         return (
           <div key={platform} className="space-y-1">
-            <label className={`flex items-center gap-2 text-xs ${info.unavailable ? "text-zinc-500" : "text-zinc-200"}`}>
+            <label className={`flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm ${info.unavailable ? "cursor-not-allowed text-zinc-500" : "cursor-pointer text-zinc-100"}`}>
               <input
                 type="checkbox"
                 name="platform"
@@ -52,41 +52,42 @@ export default function PublishPanel({ postId, platforms }: { postId: string; pl
                 disabled={Boolean(info.unavailable) || isPending}
                 checked={selected.includes(platform)}
                 onChange={(event) => toggle(platform, event.target.checked)}
+                className="h-5 w-5 shrink-0 accent-indigo-500"
               />
               <span className="font-medium">{LABELS[platform]}</span>
-              {info.account && <span className="text-zinc-500">· {info.account}</span>}
+              {info.account && <span className="min-w-0 truncate text-xs text-zinc-400">· {info.account}</span>}
               <span
-                className={`ml-auto ${info.status === "published" ? "text-emerald-400" : info.status === "failed" ? "text-red-400" : "text-zinc-500"}`}
+                className={`ml-auto text-xs ${info.status === "published" ? "text-emerald-400" : info.status === "failed" ? "text-red-400" : "text-zinc-500"}`}
               >
                 {STATUS_TEXT[info.status]}
               </span>
             </label>
-            {info.unavailable && <p className="pl-5 text-[11px] text-zinc-500">{info.unavailable}</p>}
-            {info.status === "failed" && info.failureMessage && <p className="pl-5 text-[11px] text-red-400">{info.failureMessage}</p>}
+            {info.unavailable && <p className="pl-7 text-xs text-zinc-400">{info.unavailable}</p>}
+            {info.status === "failed" && info.failureMessage && <p className="pl-7 text-xs text-red-400">{info.failureMessage}</p>}
             {!info.unavailable && (
-              <details className="pl-5">
-                <summary className="cursor-pointer text-[11px] text-zinc-400">{LABELS[platform]} metnini gör</summary>
-                <p className="mt-1 whitespace-pre-line text-[11px] text-zinc-400">{info.preview}</p>
+              <details className="pl-7">
+                <summary className="flex min-h-10 cursor-pointer items-center text-xs text-indigo-300">{LABELS[platform]} metnini gör</summary>
+                <p className="mt-1 max-h-60 overflow-y-auto whitespace-pre-line break-words text-xs text-zinc-300">{info.preview}</p>
               </details>
             )}
           </div>
         );
       })}
 
-      <p className="text-[11px] text-zinc-400">
+      <p className="text-xs text-zinc-400">
         {selected.length > 0 ? `Seçili: ${selected.map((p) => LABELS[p]).join(", ")} · 5 görsel, sırasıyla` : "Henüz platform seçilmedi."}
       </p>
       <button
         type="submit"
         disabled={isPending || selected.length === 0}
-        className="block w-full rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-indigo-300 transition-colors hover:border-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+        className="block min-h-11 w-full rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3.5 py-2 text-sm font-medium text-indigo-200 transition-colors hover:border-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isPending ? "Yayınlanıyor…" : "Seçili Platformlarda Yayınla"}
       </button>
 
-      {state.error && <p className="text-xs text-red-400">{state.error}</p>}
+      {state.error && <p className="text-sm text-red-400">{state.error}</p>}
       {state.results.length > 0 && (
-        <ul className="space-y-0.5 text-xs">
+        <ul className="space-y-0.5 text-sm">
           {state.results.map((result) => (
             <li key={result.platform} className={result.status === "failed" ? "text-red-400" : "text-emerald-400"}>
               {LABELS[result.platform]} — {result.status === "failed" ? `Başarısız: ${result.message}` : result.message}

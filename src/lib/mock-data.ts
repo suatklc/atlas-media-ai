@@ -1,7 +1,9 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Building2,
+  CalendarClock,
   CalendarDays,
+  FileCheck2,
   Handshake,
   ImagePlus,
   LayoutDashboard,
@@ -13,20 +15,27 @@ import {
 export type NavItem = {
   label: string;
   icon: LucideIcon;
+  // The dashboard is a single page: every live item points at one of its
+  // real sections (ids set in dashboard/page.tsx).
   href?: string;
-  active?: boolean;
-  // No route exists for this module yet — rendered as a disabled,
-  // non-navigating item instead of a dead href="#" link.
+  // DOM id of that section; drives the active highlight.
+  sectionId?: string;
+  // No page or function exists for this module yet — rendered as a clearly
+  // labelled, non-navigating item, never as a working link.
   comingSoon?: boolean;
 };
 
 export const navItems: NavItem[] = [
-  { label: "Pano", icon: LayoutDashboard, href: "/dashboard", active: true },
-  { label: "İçerik Üretimi", icon: Wand2, comingSoon: true },
-  { label: "Sosyal Medya", icon: Share2, comingSoon: true },
-  { label: "Gayrimenkul", icon: Building2, comingSoon: true },
-  { label: "CRM", icon: Handshake, comingSoon: true },
-  { label: "Takvim", icon: CalendarDays, comingSoon: true },
+  { label: "Pano", icon: LayoutDashboard, href: "#pano", sectionId: "pano" },
+  { label: "İçerik Planı", icon: CalendarDays, href: "#icerik-plani", sectionId: "icerik-plani" },
+  { label: "İçerik Hazırla", icon: Wand2, href: "#icerik-hazirla", sectionId: "icerik-hazirla" },
+  { label: "Taslaklar ve Yayın", icon: FileCheck2, href: "#taslaklar", sectionId: "taslaklar" },
+  { label: "Bağlı Hesaplar", icon: Share2, href: "#hesaplar", sectionId: "hesaplar" },
+];
+
+// Modules without a page yet — listed separately and disabled.
+export const comingSoonNavItems: NavItem[] = [
+  { label: "Yayın Takvimi", icon: CalendarClock, comingSoon: true },
   { label: "Ayarlar", icon: Settings, comingSoon: true },
 ];
 

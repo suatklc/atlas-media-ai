@@ -12,7 +12,7 @@ import {
 
 const initialState: StatusActionState = { error: null };
 const buttonClass =
-  "rounded-full border border-zinc-800 bg-zinc-950 px-3.5 py-2 text-xs font-medium text-indigo-300 transition-colors hover:border-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50";
+  "min-h-11 rounded-full border border-zinc-800 bg-zinc-950 px-4 py-2 text-sm font-medium text-indigo-300 transition-colors hover:border-indigo-500/40 disabled:cursor-not-allowed disabled:opacity-50";
 
 export function FacebookCheckButton({ label }: { label: string }) {
   const [state, formAction, isPending] = useActionState(runFacebookCheckAction, initialState);
@@ -31,7 +31,7 @@ export function FacebookSelectPageButton({ accountId }: { accountId: string }) {
   return (
     <form action={formAction} className="space-y-1">
       <button type="submit" disabled={isPending} className={buttonClass}>
-        {isPending ? "…" : "Bu Sayfayı Seç"}
+        {isPending ? "Seçiliyor…" : "Bu Sayfayı Seç"}
       </button>
       {state.error && <span className="block text-xs text-red-400">{state.error}</span>}
     </form>

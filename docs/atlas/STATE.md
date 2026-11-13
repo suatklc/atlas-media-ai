@@ -4,8 +4,9 @@ This document reflects VERIFIED current state as of the commit below. It
 changes often — keep it short and current, not a historical changelog
 (see ARCHITECTURE.md/PRODUCT.md for durable structure/decisions).
 
-**HEAD commit:** `edc61ea` (deployed to production 2026-11-09; this
-file synced 2026-11-11)
+**HEAD commit:** `0baf20b` (local; `f98594c` + `0baf20b` not pushed —
+production still runs `edc61ea`, deployed 2026-11-09; this file synced
+2026-11-13)
 
 ## Snapshot
 
@@ -546,6 +547,42 @@ file synced 2026-11-11)
   (immediate); full removal `supabase/ops/0006_rollback.sql`, then delete
   the pgpass line.
 
+## Daily-use UI pass — desktop + mobile (2026-11-13, NOT committed/deployed)
+
+- **Menu:** the sidebar's only working item was "Pano"; six others were
+  disabled "Yakında" stubs. The dashboard is ONE page, so the menu now
+  jumps to its real sections (`lib/mock-data.ts` `navItems` → ids set in
+  `dashboard/page.tsx`): Pano · İçerik Planı (Radar + weekly plan +
+  "Instagram paylaşımı hazırla") · İçerik Hazırla (assistant) · Taslaklar
+  ve Yayın (drafts, preview, approve, publish) · Bağlı Hesaplar. Active
+  item follows the section in view; larger (48px) readable items; the
+  mobile drawer closes on tap/Escape and locks page scroll behind it.
+  Only "Yayın Takvimi" and "Ayarlar" remain, grouped under "Henüz hazır
+  değil" — no page exists for them. "Gayrimenkul" and "CRM" were removed
+  (no function, outside product scope).
+- **Removed fake controls:** top-bar search box and avatar button (no
+  handler), login "Beni hatırla" (not wired) and "GitHub ile devam et"
+  (no handler).
+- **Mobile:** drafts are one card per row (were 2 cramped columns);
+  approve/reject/edit/publish/connect buttons ≥44px with 14px text;
+  publish-panel checkboxes 20px; inputs/textarea/select 16px on phones
+  (no iOS focus zoom); Draft Edit is a full-screen sheet with sticky
+  header ("Kapat") and sticky save bar; assistant no longer scrolls the
+  page to itself on load (this also broke `#draft-<id>` notification
+  links). Draft-ready notices link to "Taslaklar ve Yayın".
+- **Verified:** `tsc`, ESLint (0 errors; 8 old warnings in
+  `dashboard/actions.ts`), tests 663/667 (only the 4 known failures),
+  `next build`. Headless Chromium at 390×844 (mobile) and 1440×900 on a
+  temporary fixture page (deleted; no Supabase/AI/publish calls): no
+  horizontal overflow, drawer open/close, menu jump + active highlight,
+  Draft Edit open/scroll/close. Login page checked live-locally. NOT
+  verified: the real logged-in dashboard on a phone (needs Suat's
+  session) — do that after deploy.
+- **Remaining real gaps:** no Settings or publishing-calendar page;
+  Register page "Kullanım Şartları"/"Gizlilik Politikası" links go to
+  `#` (no legal pages exist); Google sign-in's Supabase provider setup is
+  unverified; the account/sign-out is only in the sidebar.
+
 ## Next work order (intentional — do not reorder without a genuine blocker)
 
 1. Claude Code persistent project memory — COMPLETE.
@@ -596,3 +633,6 @@ file synced 2026-11-11)
 15. Production read-only ops access (`atlas_ops_reader`, migration 0006)
     — COMPLETE and verified 2026-11-13 (see "Production read-only ops
     access").
+16. Daily-use UI pass (desktop + mobile) — IMPLEMENTED locally, checks
+    green, NOT committed/deployed; needs a real phone check by Suat after
+    deploy (see "Daily-use UI pass").
