@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
+import InstallPrompt from "@/components/pwa/InstallPrompt";
 import type { AuthUser } from "@/lib/types";
 
 type DashboardShellProps = {
@@ -21,6 +22,8 @@ export default function DashboardShell({ children, user }: DashboardShellProps) 
         <Topbar onMenuClick={() => setMobileNavOpen(true)} />
         <main className="px-4 py-5 sm:p-6 lg:p-8">{children}</main>
       </div>
+      {/* Mobile "add to home screen" hint; hidden inside the installed app. */}
+      <InstallPrompt />
     </div>
   );
 }
