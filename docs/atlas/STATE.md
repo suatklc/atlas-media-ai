@@ -4,12 +4,12 @@ This document reflects VERIFIED current state as of the commit below. It
 changes often — keep it short and current, not a historical changelog
 (see ARCHITECTURE.md/PRODUCT.md for durable structure/decisions).
 
-**Production commit:** `a8019a9` — installable PWA (deployed 2026-11-17
-to https://atlas-media-ai.vercel.app — deployment
-`atlas-media-ieqx86cwr-atlas-ai12.vercel.app`, READY + promoted; the
-production alias was confirmed to serve that commit). Previous:
-`18a03a8` (daily-use UI, 2026-11-13). This file synced 2026-11-17; a
-docs-only commit may sit on top of it (same application code).
+**Production commit:** `60f05d9` — Radar search status fix (deployed
+2026-11-17 to https://atlas-media-ai.vercel.app — deployment
+`atlas-media-rddez8d92-atlas-ai12.vercel.app`, READY + promoted; the
+production alias was confirmed to serve that commit). Before it: `a8019a9`
+(PWA), `18a03a8` (daily-use UI). This file synced 2026-11-17; a docs-only
+commit may sit on top of it (same application code).
 
 ## Snapshot
 
@@ -689,6 +689,55 @@ everything behind login.
   `NEXT_PUBLIC_SITE_URL`, Supabase Auth Site URL + redirect allow-list,
   Google OAuth and Meta app redirect URIs; an install made on the old
   domain stays bound to it and must be reinstalled from the new one.
+
+## Radar "Güncel Konuları Bul" — two SEPARATE states (2026-11-17)
+
+### A. Search UI was silent — FIXED, deployed in `60f05d9`
+
+Evidence (Vercel request + runtime logs, 2026-11-17 18:35–18:37 UTC): 3
+user-started searches from Suat's iPhone, all HTTP 200 in ~21–23 s, each
+`opportunities: 0` (not an error, not a timeout; unrelated to automation).
+The empty-state line rendered below the instruction box (off-screen on a
+phone) and looked like the pre-search hint. Fix: status region directly
+under the buttons (scrolled into view) with loading / explicit empty
+(+ "Tekrar Ara") / clear error (+ "Tekrar Dene", 75 s client timeout);
+TKGM now reports unreadable detail pages/PDFs, router → discover → route
+carry per-source status (reporting only — fetch/filter/rank unchanged);
+`/api/research/discover` returns `sourceIssues` and has `maxDuration =
+60`. Live: alias serves `60f05d9`, unauthenticated POST → 401 (no search
+run). NOT yet observed live: a post-deploy search returning
+`sourceIssues` (needs Suat's session; next run's `[radar-diag] adapter
+tkgm` line should read `partial`).
+- **Known copy issue (not fixed yet):** the new empty-state text says
+  "Son 30 günde … yeni bir duyuru veya haber çıkmadı", but the news layer
+  only sees hours (see C) — the sentence overclaims and should be
+  narrowed to what was actually scanned.
+
+### B. TKGM linked PDFs unreadable from production — OPEN
+
+`[radar-diag] tkgm-evidence` in all 3 runs: detail pages 9/9 ok, linked
+PDFs `pdfFailed: AbortError×6`, `pdfOk: 0`, `subjectFound: 0` — every
+`cms-api.tkgm.gov.tr` request hit the 10 s client timeout without any
+HTTP response. From a Turkish connection the same PDFs return 200 in
+60–1600 ms. Cause NOT established (no response is not proof of a geo
+block; could be connect/TLS hang, filtering or slowness). Effect: TKGM
+items stay title-only and fail the scope gate → 0 results. Reproduced
+locally by blocking only that host: identical funnel. Alternatives
+checked: detail pages carry no subject/body; `www.tkgm.gov.tr` does not
+serve the PDFs; `cms-api` sends no CORS headers (browser-side read not
+possible). PDF extraction from fra1 did work in October (Gold Standard
+runs).
+
+### C. Source coverage (measured 2026-11-17, raw pre-filter)
+
+The "74 items" = AA 30 + Dünya 25 + ÇŞİDB 12 + Resmî Gazete 7. There is no
+code-side "last N" cap — each adapter reads one page/feed, so the source
+decides the window: AA RSS ≈ last 9 h, Dünya RSS ≈ last 5 h, ÇŞİDB
+/haberler page 1 ≈ 1 day (pagination exists, not read), Resmî Gazete =
+today's issue only. Only TKGM (page 1: 39 days / 157 days) and TCMB feeds
+actually span the 30-day window. So a zero result is the outcome of a
+narrow scan for the news/official layers, not a verified "nothing in 30
+days".
 
 ## Next work order (intentional — do not reorder without a genuine blocker)
 
