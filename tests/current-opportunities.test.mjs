@@ -50,6 +50,7 @@ const discover = loadTypeScriptModule(
     if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => [] };
     if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
     if (specifier === "./realEstateScope") return realEstateScope;
+    if (specifier === "./turkishPlaces") return turkishPlacesModule();
     return {};
   },
   { URL },
@@ -100,6 +101,13 @@ function makeResult(overrides) {
 // Hard freshness rule — discoverCurrentContentOpportunities' maxAgeDays
 // ============================================================
 
+// discover.ts classifies geographic scope with the real turkishPlaces.ts.
+var cachedTurkishPlaces; // var: used by top-level loaders above this line
+function turkishPlacesModule() {
+  if (!cachedTurkishPlaces) cachedTurkishPlaces = loadTypeScriptModule("src/lib/ai/research/turkishPlaces.ts");
+  return cachedTurkishPlaces;
+}
+
 test("maxAgeDays: material older than 30 days is excluded, not merely down-ranked", () => {
   const now = new Date("2026-08-27T00:00:00.000Z");
   const results = [
@@ -134,6 +142,7 @@ test("maxAgeDays end-to-end via discoverCurrentContentOpportunities: old Februar
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => fixedResults };
       if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
       if (specifier === "./realEstateScope") return realEstateScope;
+      if (specifier === "./turkishPlaces") return turkishPlacesModule();
       return {};
     },
     { URL },
@@ -157,6 +166,7 @@ test("maxAgeDays: a missing publication date is never treated as current", async
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => fixedResults };
       if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
       if (specifier === "./realEstateScope") return realEstateScope;
+      if (specifier === "./turkishPlaces") return turkishPlacesModule();
       return {};
     },
     { URL },
@@ -184,6 +194,7 @@ test("maxAgeDays: fewer than the requested limit is returned rather than padding
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => fixedResults };
       if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
       if (specifier === "./realEstateScope") return realEstateScope;
+      if (specifier === "./turkishPlaces") return turkishPlacesModule();
       return {};
     },
     { URL },
@@ -206,6 +217,7 @@ test("maxAgeDays omitted (undefined): existing callers/tests are byte-for-byte u
       if (specifier === "./retrieval/router") return { retrieveCurrentInformation: async () => fixedResults };
       if (specifier === "./retrieval/turkishDate") return turkishDateForDiscover;
       if (specifier === "./realEstateScope") return realEstateScope;
+      if (specifier === "./turkishPlaces") return turkishPlacesModule();
       return {};
     },
     { URL },

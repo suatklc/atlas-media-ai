@@ -1,10 +1,11 @@
-import type { NormalizedResearchResult, RetrievalOptions, RetrievalQuery } from "./types";
+import type { AdapterStatus, NormalizedResearchResult, RetrievalOptions, RetrievalQuery } from "./types";
+import type { RetrievalWindow } from "./coverage";
 import { fetchTcmbAnnouncements } from "./providers/tcmb";
 import { fetchTkgmAnnouncements } from "./providers/tkgm";
 import { fetchResmiGazeteAnnouncements } from "./providers/resmiGazete";
 import { fetchCsbAnnouncements } from "./providers/csb";
 import { fetchEconomyNewsAnnouncements } from "./providers/economyNews";
-import { errorKind, radarDiag, tally, type AdapterReport } from "./diagnostics";
+import { errorKind, radarDiag, tally, type AdapterReport, type SourceCoverage } from "./diagnostics";
 
 const DEFAULT_MAX_RESULTS = 20;
 
@@ -56,7 +57,10 @@ const DEFAULT_MAX_RESULTS = 20;
 //
 // Adding a real, live-validated future adapter means adding one more
 // entry to this array; nothing else here changes.
-const ADAPTERS: Array<{ source: string; fetch: (report?: AdapterReport) => Promise<NormalizedResearchResult[]> }> = [
+const ADAPTERS: Array<{
+  source: string;
+  fetch: (report?: AdapterReport, window?: RetrievalWindow) => Promise<NormalizedResearchResult[]>;
+}> = [
   { source: "tcmb", fetch: fetchTcmbAnnouncements },
   { source: "tkgm", fetch: fetchTkgmAnnouncements },
   { source: "resmi-gazete", fetch: fetchResmiGazeteAnnouncements },
@@ -95,24 +99,32 @@ export async function retrieveCurrentInformation(
     ADAPTERS.map(async (adapter) => {
       const startedAt = Date.now();
       const failures: string[] = [];
+      let coverage: SourceCoverage | undefined;
       radarDiag("adapter-start", { source: adapter.source });
       try {
-        const items = await adapter.fetch({ fail: (kind) => failures.push(kind) });
-        // An adapter that swallowed a failure is "error" when nothing came
-        // back, "partial" when another feed/page still returned items.
-        const status = failures.length === 0 ? "ok" : items.length > 0 ? "partial" : "error";
-        options.onAdapterStatus?.(adapter.source, status);
+        const items = await adapter.fetch(
+          { fail: (kind) => failures.push(kind), coverage: (value) => (coverage = value) },
+          options.window,
+        );
+        // An adapter that swallowed a failure is "partial" when it still read
+        // something (items came back, or it reported dated coverage — items
+        // are counted AFTER relevance filtering, so 0 items alone does not
+        // mean nothing was read), "error" when it read nothing at all.
+        const readSomething = items.length > 0 || Boolean(coverage?.since);
+        const status: AdapterStatus = failures.length === 0 ? "ok" : readSomething ? "partial" : "error";
+        options.onAdapterReport?.(adapter.source, { status, coverage });
         radarDiag("adapter", {
           source: adapter.source,
           status,
           raw: items.length,
           ms: Date.now() - startedAt,
+          ...(coverage ? { coverage } : {}),
           ...(failures.length > 0 ? { errors: failures } : {}),
         });
         return items;
       } catch (error: unknown) {
         console.error("Research adapter failed:", error instanceof Error ? error.message : String(error));
-        options.onAdapterStatus?.(adapter.source, "error");
+        options.onAdapterReport?.(adapter.source, { status: "error" });
         radarDiag("adapter", { source: adapter.source, status: "error", error: errorKind(error), raw: 0, ms: Date.now() - startedAt });
         return [] as NormalizedResearchResult[];
       }

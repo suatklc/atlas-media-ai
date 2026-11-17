@@ -2,6 +2,7 @@ import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
 import { errorKind, type AdapterReport } from "../diagnostics";
+import { coverageOfLists, type RetrievalWindow } from "../coverage";
 
 // LIVE, real provider — the Turkish Central Bank (TCMB)'s own public Atom
 // feeds. No API key, no external search provider: TCMB publishes these
@@ -152,9 +153,12 @@ function extractEntries(xml: string): RawEntry[] {
 // retrieval (see retrieval/router.ts, which already treats every adapter
 // this way too; this per-feed isolation is an extra, adapter-internal
 // layer of the same principle).
-export async function fetchTcmbAnnouncements(report?: AdapterReport): Promise<NormalizedResearchResult[]> {
+export async function fetchTcmbAnnouncements(report?: AdapterReport, window?: RetrievalWindow): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
   const results: NormalizedResearchResult[] = [];
+  // Coverage per feed (each feed's oldest entry vs the window start).
+  const feedDates: Array<Array<string | undefined>> = [];
+  let feedFailed = false;
 
   for (const feed of TCMB_FEEDS) {
     let xml: string;
@@ -166,10 +170,13 @@ export async function fetchTcmbAnnouncements(report?: AdapterReport): Promise<No
         error instanceof Error ? error.message : String(error),
       );
       report?.fail(`${feed.label}: ${errorKind(error)}`);
+      feedFailed = true;
       continue;
     }
 
-    for (const entry of extractEntries(xml)) {
+    const entries = extractEntries(xml);
+    feedDates.push(entries.map((entry) => entry.published ?? undefined));
+    for (const entry of entries) {
       results.push({
         title: entry.title,
         publisher: "Türkiye Cumhuriyet Merkez Bankası (TCMB)",
@@ -187,5 +194,7 @@ export async function fetchTcmbAnnouncements(report?: AdapterReport): Promise<No
     }
   }
 
+  const coverage = coverageOfLists(feedDates, window);
+  report?.coverage?.({ since: coverage.since, complete: coverage.complete && !feedFailed });
   return results;
 }

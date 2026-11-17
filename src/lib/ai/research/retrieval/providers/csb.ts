@@ -3,6 +3,7 @@ import { classifySourceTier } from "../sourceQuality";
 import { parseTurkishLongDate } from "../turkishDate";
 import { hasAnyWordBoundaryMatch, REAL_ESTATE_RELEVANCE_KEYWORDS } from "../relevance";
 import { errorKind, radarDiag, type AdapterReport } from "../diagnostics";
+import { oldestDate, reachesWindow, type RetrievalWindow } from "../coverage";
 import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
 
 // LIVE, real provider — the Ministry of Environment, Urbanization and
@@ -17,13 +18,20 @@ import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
 // construction/urban-transformation — the SAME "mixed official source"
 // shape as Resmî Gazete, so it reuses that adapter's relevance.ts filter.
 //
-// No pagination link is server-rendered (older items load via a "load
-// more" JS action) — this adapter is deliberately scoped to the current
-// snapshot only, same convention as resmiGazete.ts's own "today's issue
-// only" scoping: a bounded, reliable single fetch rather than crawling
-// deeper pages that may not be server-rendered at all.
+// Pagination (re-checked live 2026-11-17): the listing now server-renders a
+// real pager, /haberler/2, /haberler/3, … (12 cards each, ~0.4–0.5 s). Page 1
+// alone covered ~1 day, so with a target window the adapter reads further
+// pages until a page reaches the window start — bounded by MAX_PAGES and
+// read sequentially so it stops as soon as the window is covered. Coverage
+// is reported either way; a window the page cap could not reach is a
+// reported gap, never silently treated as "nothing there".
 const ORIGIN = "https://www.csb.gov.tr";
 const NEWS_URL = `${ORIGIN}/haberler`;
+export const MAX_PAGES = 12;
+
+export function listingPageUrl(page: number): string {
+  return page <= 1 ? NEWS_URL : `${NEWS_URL}/${page}`;
+}
 const PUBLISHER = "T.C. Çevre, Şehircilik ve İklim Değişikliği Bakanlığı";
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -111,22 +119,54 @@ async function attachDetailPageEvidence(results: NormalizedResearchResult[]): Pr
   );
 }
 
-export async function fetchCsbAnnouncements(report?: AdapterReport): Promise<NormalizedResearchResult[]> {
+export async function fetchCsbAnnouncements(report?: AdapterReport, window?: RetrievalWindow): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
 
-  let html: string;
-  try {
-    html = await fetchHtml(NEWS_URL);
-  } catch (error) {
-    console.error("ÇŞİDB news retrieval failed:", error instanceof Error ? error.message : String(error));
-    radarDiag("csb-listing", { status: "error", error: errorKind(error) });
-    report?.fail(errorKind(error));
+  // Without a window: page 1 only (previous behavior). With one: page after
+  // page until the oldest card on a page reaches the window start.
+  const maxPages = window?.notBefore ? MAX_PAGES : 1;
+  const items: { title: string; url: string; dateText: string }[] = [];
+  let pagesRead = 0;
+  let reached = false;
+  let failed: string | null = null;
+  for (let page = 1; page <= maxPages; page++) {
+    let pageItems: { title: string; url: string; dateText: string }[];
+    try {
+      pageItems = extractNewsItems(await fetchHtml(listingPageUrl(page)));
+    } catch (error) {
+      console.error("ÇŞİDB news retrieval failed:", error instanceof Error ? error.message : String(error));
+      failed = `page ${page}: ${errorKind(error)}`;
+      break;
+    }
+    pagesRead = page;
+    items.push(...pageItems);
+    if (pageItems.length === 0) {
+      // Past the last page — nothing older exists to miss.
+      reached = true;
+      break;
+    }
+    if (reachesWindow(oldestDate(pageItems.map((item) => parseTurkishLongDate(item.dateText) ?? undefined)), window)) {
+      reached = true;
+      break;
+    }
+  }
+
+  if (failed) report?.fail(failed);
+  const dates = items.map((item) => parseTurkishLongDate(item.dateText) ?? undefined);
+  report?.coverage?.({ since: pagesRead > 0 ? oldestDate(dates) : null, complete: reached });
+  if (pagesRead === 0) {
+    radarDiag("csb-listing", { status: "error", error: failed });
     return [];
   }
 
-  const items = extractNewsItems(html);
   const relevant = items.filter((item) => hasAnyWordBoundaryMatch(item.title, REAL_ESTATE_RELEVANCE_KEYWORDS));
-  radarDiag("csb-listing", { status: "ok", extracted: items.length, relevant: relevant.length });
+  radarDiag("csb-listing", {
+    status: failed ? "partial" : "ok",
+    pagesRead,
+    windowReached: reached,
+    extracted: items.length,
+    relevant: relevant.length,
+  });
 
   const results: NormalizedResearchResult[] = relevant.map((item) => ({
     title: item.title,

@@ -3,7 +3,8 @@ import { classifySourceTier } from "../sourceQuality";
 import { parseTurkishLongDate } from "../turkishDate";
 import { hasAnyWordBoundaryMatch, REAL_ESTATE_RELEVANCE_KEYWORDS } from "../relevance";
 import { fetchWithSystemTrust } from "../secureFetch";
-import { errorKind, radarDiag, type AdapterReport } from "../diagnostics";
+import { errorKind, radarDiag, tally, type AdapterReport } from "../diagnostics";
+import { reachesWindow, type RetrievalWindow } from "../coverage";
 
 // Research Breadth Expansion v2: NOW REGISTERED in retrieval/router.ts.
 // The previous blocker — Node's global fetch() rejecting this host with
@@ -89,6 +90,8 @@ async function fetchHomepageHtml(): Promise<string> {
 function decodeHtmlEntities(value: string): string {
   return value
     .replace(/&#x([0-9A-Fa-f]+);/g, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
@@ -98,9 +101,22 @@ function decodeHtmlEntities(value: string): string {
 // Sayılı Resmî Gazete" — this is the issue's real publication date, used
 // as every entry's publishedAt (the fihrist itself carries no per-entry
 // date; every entry in one issue shares the issue's own date).
-function extractIssueDate(html: string): string | null {
-  const match = html.match(/(\d{1,2}\s+\p{L}+\s+\d{4})\s+Tarihli/u);
+// The heading is HTML-entity encoded on the live site ("17 Kas&#x131;m 2026
+// Tarihli…", seen 2026-11-17) — decode first, or the month never matches and
+// every entry silently got an empty date (= never inside the age window).
+export function extractIssueDate(html: string): string | null {
+  const match = decodeHtmlEntities(html).match(/(\d{1,2}\s+\p{L}+\s+\d{4})\s+Tarihli/u);
   return match ? parseTurkishLongDate(match[1]) : null;
+}
+
+// The issue date is also in every entry's own URL
+// (".../eskiler/2026/11/20261117-3.pdf") — the most reliable per-entry date,
+// independent of heading markup. Turkey midnight, like parseTurkishLongDate.
+export function issueDateFromUrl(url: string): string | null {
+  const match = url.match(/\/eskiler\/(\d{4})\/(\d{2})\/(\d{4})(\d{2})(\d{2})[-.]/);
+  if (!match || match[1] !== match[3] || match[2] !== match[4]) return null;
+  const parsed = new Date(`${match[3]}-${match[4]}-${match[5]}T00:00:00+03:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 // Minimal, bounded extraction of <div class="fihrist-item mb-1">
@@ -133,34 +149,163 @@ function extractFihristItems(html: string): { title: string; url: string }[] {
 // the safe, correct behavior when genuine evidence can't be captured;
 // content-package generation already treats an absent evidenceText as
 // "headline-only" and constrains itself accordingly.
-export async function fetchResmiGazeteAnnouncements(report?: AdapterReport): Promise<NormalizedResearchResult[]> {
-  const retrievedAt = new Date().toISOString();
+// ---------------------------------------------------------------------------
+// Archive coverage (2026-11-17): the homepage alone is ONE day, while the
+// dashboard promises a 30-day window. The site keeps every past issue as a
+// static index page, /eskiler/YYYY/MM/YYYYMMDD.htm (windows-1254, live
+// 28–370 ms) — unlike the /fihrist?tarih= query found unreliable earlier.
+// When a window is given, those day pages are read back to its start,
+// bounded (MAX_ARCHIVE_DAYS requests, ARCHIVE_CONCURRENCY at a time,
+// ARCHIVE_TIMEOUT_MS each). A day that cannot be read is reported, never
+// guessed; entries keep their own issue date, so an old issue is never
+// presented as new.
+// ---------------------------------------------------------------------------
+const ORIGIN = "https://www.resmigazete.gov.tr";
+export const MAX_ARCHIVE_DAYS = 30;
+const ARCHIVE_CONCURRENCY = 6;
+const ARCHIVE_TIMEOUT_MS = 8_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TURKEY_OFFSET_MS = 3 * 60 * 60 * 1000;
 
-  let html: string;
+type IssueDay = { year: string; month: string; day: string };
+
+// Turkey calendar day `daysBack` days before `now`.
+export function turkeyIssueDay(now: Date, daysBack: number): IssueDay {
+  const shifted = new Date(now.getTime() + TURKEY_OFFSET_MS - daysBack * DAY_MS);
+  return {
+    year: String(shifted.getUTCFullYear()),
+    month: String(shifted.getUTCMonth() + 1).padStart(2, "0"),
+    day: String(shifted.getUTCDate()).padStart(2, "0"),
+  };
+}
+
+// Turkey midnight of an issue day as an ISO instant (same convention as
+// parseTurkishLongDate).
+export function issueDayIso({ year, month, day }: IssueDay): string {
+  return new Date(`${year}-${month}-${day}T00:00:00+03:00`).toISOString();
+}
+
+export function archiveIndexUrl({ year, month, day }: IssueDay): string {
+  return `${ORIGIN}/eskiler/${year}/${month}/${year}${month}${day}.htm`;
+}
+
+// Archive day page: <a href="20261116-1.htm">––&nbsp; Title</a>. Only the
+// issue's own entries (YYYYMMDD-N.htm/pdf) — the announcement-section
+// links (main.aspx?...ilanlar...) are section indexes, not entries.
+export function extractArchiveItems(html: string, issue: IssueDay): { title: string; url: string }[] {
+  const stamp = `${issue.year}${issue.month}${issue.day}`;
+  const pattern = /<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const items: { title: string; url: string }[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(html))) {
+    const href = match[1].trim();
+    const file = href.split("/").pop() ?? "";
+    if (!new RegExp(`^${stamp}-\\d+\\.(?:htm|pdf)$`, "i").test(file)) continue;
+    const title = decodeHtmlEntities(match[2].replace(/<[^>]+>/g, " "))
+      .replace(/\s+/g, " ")
+      .replace(/^[\s–-]+/, "")
+      .trim();
+    if (title) items.push({ title, url: `${ORIGIN}/eskiler/${issue.year}/${issue.month}/${file}` });
+  }
+  return items;
+}
+
+async function fetchArchiveDay(issue: IssueDay): Promise<{ title: string; url: string }[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ARCHIVE_TIMEOUT_MS);
   try {
-    html = await fetchHomepageHtml();
+    const response = await fetch(archiveIndexUrl(issue), { signal: controller.signal, headers: { Accept: "text/html" } });
+    if (!response.ok) throw new Error(`request failed with status ${response.status}`);
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > MAX_RESPONSE_BYTES) throw new Error("response exceeded the size limit");
+    // These static pages are windows-1254 (Turkish), not UTF-8.
+    return extractArchiveItems(new TextDecoder("windows-1254").decode(buffer), issue);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Number of past issues needed to reach the window start (0 = homepage only).
+export function archiveDaysFor(now: Date, window?: RetrievalWindow): number {
+  if (!window?.notBefore) return 0;
+  const days = Math.ceil((now.getTime() - window.notBefore.getTime()) / DAY_MS);
+  return Math.max(0, Math.min(MAX_ARCHIVE_DAYS, days));
+}
+
+type Entry = { title: string; url: string; publishedAt: string };
+
+export async function fetchResmiGazeteAnnouncements(
+  report?: AdapterReport,
+  window?: RetrievalWindow,
+  now: Date = new Date(),
+): Promise<NormalizedResearchResult[]> {
+  const retrievedAt = new Date().toISOString();
+  const entries: Entry[] = [];
+  // dayRead[k] = issue k days back was read (0 = today's homepage).
+  const archiveDays = archiveDaysFor(now, window);
+  const dayRead: boolean[] = new Array(archiveDays + 1).fill(false);
+  const failures: Record<string, number> = {};
+
+  try {
+    const html = await fetchHomepageHtml();
+    const issueDate = extractIssueDate(html);
+    for (const item of extractFihristItems(html)) {
+      entries.push({ ...item, publishedAt: issueDateFromUrl(item.url) ?? issueDate ?? "" });
+    }
+    dayRead[0] = true;
   } catch (error) {
     console.error("Resmî Gazete retrieval failed:", error instanceof Error ? error.message : String(error));
-    radarDiag("resmi-gazete", { status: "error", error: errorKind(error) });
-    report?.fail(errorKind(error));
-    return [];
+    tally(failures, `today: ${errorKind(error)}`);
   }
 
-  const publishedAt = extractIssueDate(html) ?? "";
-  const items = extractFihristItems(html);
+  // Bounded worker pool over days 1..archiveDays.
+  let next = 1;
+  async function worker() {
+    while (next <= archiveDays) {
+      const daysBack = next++;
+      const issue = turkeyIssueDay(now, daysBack);
+      try {
+        const items = await fetchArchiveDay(issue);
+        const publishedAt = issueDayIso(issue);
+        for (const item of items) entries.push({ ...item, publishedAt });
+        dayRead[daysBack] = true;
+      } catch (error) {
+        tally(failures, `archive: ${errorKind(error)}`);
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(ARCHIVE_CONCURRENCY, archiveDays) }, worker));
 
-  const relevant = items.filter((item) => hasAnyWordBoundaryMatch(item.title, REAL_ESTATE_RELEVANCE_KEYWORDS));
-  radarDiag("resmi-gazete", { status: "ok", issueDateParsed: Boolean(publishedAt), extracted: items.length, relevant: relevant.length });
+  for (const [kind, count] of Object.entries(failures)) report?.fail(`${kind}×${count}`);
 
-  return relevant.map((item) => ({
-    title: item.title,
+  // Coverage = the contiguous run of read issues starting today: a missing
+  // day in the middle means nothing before it counts as fully scanned.
+  let contiguous = -1;
+  while (contiguous + 1 < dayRead.length && dayRead[contiguous + 1]) contiguous++;
+  const since = contiguous < 0 ? null : issueDayIso(turkeyIssueDay(now, contiguous));
+  report?.coverage?.({ since, complete: since !== null && reachesWindow(since, window) });
+
+  const deduped = [...new Map(entries.map((entry) => [entry.url, entry])).values()];
+  const relevant = deduped.filter((entry) => hasAnyWordBoundaryMatch(entry.title, REAL_ESTATE_RELEVANCE_KEYWORDS));
+  radarDiag("resmi-gazete", {
+    status: dayRead.every(Boolean) ? "ok" : dayRead.some(Boolean) ? "partial" : "error",
+    issuesRead: dayRead.filter(Boolean).length,
+    issuesWanted: dayRead.length,
+    undated: deduped.filter((entry) => !entry.publishedAt).length,
+    extracted: deduped.length,
+    relevant: relevant.length,
+    ...(Object.keys(failures).length > 0 ? { failures } : {}),
+  });
+
+  return relevant.map((entry) => ({
+    title: entry.title,
     publisher: "T.C. Resmî Gazete",
-    url: item.url,
-    // Empty string, never a guessed date, when the issue heading didn't
-    // parse — same explicit-unknown convention as providers/tcmb.ts.
-    publishedAt,
-    tier: classifySourceTier(item.url),
-    snippet: item.title,
+    url: entry.url,
+    // The entry's own issue date; empty string (never a guess) only when
+    // neither the URL nor the heading carried one.
+    publishedAt: entry.publishedAt,
+    tier: classifySourceTier(entry.url),
+    snippet: entry.title,
     retrievedAt,
   }));
 }

@@ -42,6 +42,13 @@ const scope = loadTypeScriptModule("src/lib/ai/research/realEstateScope.ts", () 
 const REGIONS = ["Zekeriyaköy", "Uskumruköy", "Demirciköy", "Gümüşdere", "Kilyos", "Sarıyer"];
 const classify = (text) => scope.classifyRealEstateScope(text, REGIONS);
 
+// discover.ts classifies geographic scope with the real turkishPlaces.ts.
+var cachedTurkishPlaces; // var: used by top-level loaders above this line
+function turkishPlacesModule() {
+  if (!cachedTurkishPlaces) cachedTurkishPlaces = loadTypeScriptModule("src/lib/ai/research/turkishPlaces.ts");
+  return cachedTurkishPlaces;
+}
+
 test("scope: real-estate topics across the WHOLE property scope (not villa-only) are 'property'", () => {
   for (const title of [
     "Konut Fiyat Endeksi, Eylül 2026",
@@ -114,6 +121,7 @@ function loadDiscover(pool) {
     if (specifier === "./retrieval/turkishDate") return turkishDate;
     if (specifier === "../context/businessProfile") return businessProfile;
     if (specifier === "./realEstateScope") return scope;
+    if (specifier === "./turkishPlaces") return turkishPlacesModule();
     return {};
   });
 }
@@ -253,6 +261,7 @@ test("discover: TKGM items skip the router keyword pre-filter (scope gate decide
     if (specifier === "./retrieval/turkishDate") return turkishDate;
     if (specifier === "../context/businessProfile") return businessProfile;
     if (specifier === "./realEstateScope") return scope;
+    if (specifier === "./turkishPlaces") return turkishPlacesModule();
     return {};
   });
   await discover.discoverCurrentContentOpportunities({ now: NOW, limit: 5, maxAgeDays: 30 });
@@ -375,4 +384,49 @@ test("discover: the retrieval query includes 'yapılaşma' (TKGM's live 'Yerleş
   const discover = loadDiscover([]);
   const businessProfile = loadTypeScriptModule("src/lib/ai/context/businessProfile.ts");
   assert.ok(discover.buildRetrievalQuery(businessProfile.ATLAS_DEFAULT_BUSINESS_PROFILE).keywords.includes("yapılaşma"));
+});
+
+// ===== Geographic scope (2026-11-17) =====
+// Live Radar run: Resmî Gazete/ÇŞİDB archives returned parcel and reserve-
+// area decisions for Konya, Van, Kartal, Pendik… They are real
+// developments, but must never be presented as applying to the business's
+// own area, nor displace national / own-area topics.
+
+test("classifyGeoScope: national, own-area, province-wide and local-elsewhere decisions are told apart (live titles)", () => {
+  const places = turkishPlacesModule();
+  const home = ["İstanbul", "Zekeriyaköy", "Sarıyer"];
+  const geo = (text) => {
+    const value = places.classifyGeoScope(text, home);
+    return value.kind === "elsewhere" ? `elsewhere:${value.place}` : value.kind;
+  };
+  assert.equal(geo("Konya İli, Halkapınar İlçesine Doğal Gaz Arzının Sağlanabilmesi Amacıyla Kurulacak Dağıtım Hattı"), "elsewhere:Konya");
+  assert.equal(geo("Van İli, İpekyolu İlçesi, Eskişehir Mahallesi Sınırları İçerisinde Belirlenen Rezerv Yapı Alanı"), "elsewhere:Van", "a province missing from the list is still caught by 'İli'");
+  assert.equal(geo("İstanbul İli, Kartal İlçesi, Gümüşpınar Mahallesi Sınırları İçerisinde Bulunan Bazı Alanlar"), "elsewhere:Kartal", "sharing the province does not make another district local");
+  assert.equal(geo("BAKAN KURUM, PENDİK’TE KENTSEL DÖNÜŞÜM KURA TÖRENİNDE KONUŞTU"), "elsewhere:Pendik");
+  assert.equal(geo("İstanbul İlinde Yürütülecek Kentsel Dönüşüm Uygulamaları Kapsamında Yapım İçin Yardım Verilmesine İlişkin Karar"), "general", "province-wide in the home province");
+  assert.equal(geo("Yerleşme ve Yapılaşmaya İlişkin Cumhurbaşkanlığı Kararnamesi"), "general", "'İlişkin' is not an 'ili' place marker");
+  assert.equal(geo("Sarıyer'de imar planı askıya çıktı"), "home");
+  assert.equal(geo("Tapu harçlarında yeni düzenleme"), "general");
+});
+
+test("discover: decisions local to another province/district only fill leftover slots, after national/own-area topics, and are labelled", async () => {
+  const discover = loadDiscover([
+    result("Konya İli Meram İlçesinde İmar Planı Değişikliği Askıya Çıktı", "official-authority", 1),
+    result("Van İli İpekyolu İlçesinde Kentsel Dönüşüm Alanı İlanı", "official-authority", 1),
+    result("Tapu Harçlarında Yeni Düzenleme Hakkında Genelge", "official-authority", 5),
+    result("Sarıyer'de imar planı değişikliği askıya çıktı", "official-authority", 6),
+  ]);
+  const full = await discover.discoverCurrentContentOpportunities({ now: NOW, limit: 10, maxAgeDays: 30 });
+  const kinds = [...full.map((o) => o.geoScope.kind)];
+  assert.equal(kinds.length, 4, full.map((o) => `${o.geoScope.kind}:${o.topic}`).join(" | "));
+  assert.ok(kinds.lastIndexOf("general") < kinds.indexOf("elsewhere") && kinds.lastIndexOf("home") < kinds.indexOf("elsewhere"), "elsewhere items come after the others: " + kinds.join(","));
+  assert.equal(full.filter((o) => o.geoScope.kind === "elsewhere").length, 2, "nothing is dropped when there is room");
+  assert.ok(full.find((o) => o.topic.startsWith("Konya")).geoScope.place === "Konya");
+
+  const short = await discover.discoverCurrentContentOpportunities({ now: NOW, limit: 2, maxAgeDays: 30 });
+  assert.deepEqual(
+    [...short.map((o) => o.geoScope.kind)].sort(),
+    ["general", "home"],
+    "local decisions elsewhere never displace national / own-area topics, even if newer",
+  );
 });

@@ -708,10 +708,10 @@ carry per-source status (reporting only — fetch/filter/rank unchanged);
 run). NOT yet observed live: a post-deploy search returning
 `sourceIssues` (needs Suat's session; next run's `[radar-diag] adapter
 tkgm` line should read `partial`).
-- **Known copy issue (not fixed yet):** the new empty-state text says
-  "Son 30 günde … yeni bir duyuru veya haber çıkmadı", but the news layer
-  only sees hours (see C) — the sentence overclaims and should be
-  narrowed to what was actually scanned.
+- **Copy overclaim — FIXED locally (D, not yet deployed):** the empty
+  state now says "Taranan kaynaklarda … bulunamadı", valid only for what
+  was scanned, plus separate "Okunamayan kaynaklar" / "Kapsamı eksik
+  kaynaklar" lists.
 
 ### B. TKGM linked PDFs unreadable from production — OPEN
 
@@ -726,7 +726,11 @@ locally by blocking only that host: identical funnel. Alternatives
 checked: detail pages carry no subject/body; `www.tkgm.gov.tr` does not
 serve the PDFs; `cms-api` sends no CORS headers (browser-side read not
 possible). PDF extraction from fra1 did work in October (Gold Standard
-runs).
+runs). Diagnosis step prepared (D): `connectionProbe.ts` logs DNS / TCP /
+TLS / first-byte timings for `cms-api` and the `www` control on every
+search (`[radar-diag] tkgm-connection-probe`, TEMPORARY). Locally all
+steps 12–42 ms. The production result is the next step — NOT run yet.
+Still OPEN: no fix, no region change, no timeout increase.
 
 ### C. Source coverage (measured 2026-11-17, raw pre-filter)
 
@@ -738,6 +742,60 @@ today's issue only. Only TKGM (page 1: 39 days / 157 days) and TCMB feeds
 actually span the 30-day window. So a zero result is the outcome of a
 narrow scan for the news/official layers, not a verified "nothing in 30
 days".
+
+### D. Coverage + reliability fix — IMPLEMENTED locally, NOT committed/deployed
+
+- **Regression vs old gap (evidence):** regressions = (1) Resmî Gazete's
+  issue heading became entity-encoded ("Kas&#x131;m") so every entry got
+  an empty date and could never pass the 30-day filter (code unchanged
+  since 32c1c42; date of the site change unknown); (2) TKGM PDFs
+  unreachable from fra1 (B); (3) TKGM reported "ok" despite that (fixed in
+  `60f05d9`). Old, by-design gaps = Resmî Gazete "today only", ÇŞİDB
+  "page 1 only", AA/Dünya feed length (all documented in the adapters).
+- **Fix:** adapters receive the target window (discover: now − maxAgeDays)
+  and report coverage `{ since, complete }` from raw, pre-filter entries
+  (`retrieval/coverage.ts`). Resmî Gazete reads `/eskiler/YYYY/MM/
+  YYYYMMDD.htm` day pages (windows-1254) back to the window start — ≤30
+  requests, 6 parallel, 8 s each — entries dated by their own issue (URL),
+  heading parsed after entity decoding. ÇŞİDB reads `/haberler/N`
+  sequentially until a page reaches the window start, ≤12 pages. TKGM /
+  TCMB / AA-Dünya report what their first page/feeds span (no server-side
+  archive found for AA, Dünya or TKGM "Daha Fazla"). Router: status
+  "partial" when a source failed but still read something (0 relevant
+  items is not an access error), "error" only when nothing was read; one
+  source failing never hides the others. Route returns `accessIssues` and
+  `coverageGaps` separately. Filters/scope gate unchanged.
+- **Verified locally (live sources, free):** 10 opportunities in 9.2 s
+  (Resmî Gazete 31/31 issues in 0.4 s, ÇŞİDB 8 pages in 4.6 s, coverage
+  complete for Resmî Gazete/ÇŞİDB/TKGM/TCMB, AA/Dünya "yalnız son 6
+  saat"); with only the TKGM PDF host blocked (= production today): 9
+  opportunities + TKGM access issue. Tests 683 (679 pass; only the 4 known
+  failures), 16 new regression tests (window, archive bounds, pagination
+  stop/cap, relevance, partial failures, access vs coverage, copy);
+  mutation-checked (reverting the Resmî Gazete date fix or the ÇŞİDB stop
+  rule fails a test). tsc, ESLint 0 errors, `next build` green.
+- **Geographic scope (added before deploy):** the archive runs surfaced
+  decisions local to Konya, Van, Kartal, Pendik, Maltepe. Rule
+  (`turkishPlaces.ts` `classifyGeoScope`, also used by the weekly plan via
+  `isLocalToElsewhere`): own area (BusinessProfile primary/nearby) =
+  "home"; another province, another İstanbul district or any "<X>
+  İli/İlçesi" = "elsewhere" (catches Van, which the name list omits; a
+  shared province no longer hides a district); nothing named or only the
+  home province (`geography.province`, new in businessProfile.ts — was
+  hard-coded "İstanbul" in weeklyPlan.ts) = "general". Radar: elsewhere
+  items only fill leftover slots after general/home ones (nothing dropped
+  or added), carry `geoScope`, and the dashboard shows them in a separate
+  "Başka il veya ilçeye özgü kararlar — bölgeniz için doğrudan geçerli
+  değildir" group with a "Yerel karar: X" badge (+ a note on the selected
+  panel). Live check: 5 general/home (TKGM 7452 national, İstanbul-wide
+  8189 urban-transformation decision, 3 national ÇŞİDB) + 5 elsewhere.
+  NOT changed: what Job 2 writes if Suat still picks an elsewhere item
+  (paid path, not run).
+- **Not done:** production run of the new code, TKGM root cause (B).
+- **TEMPORARY, remove after diagnosis:** `retrieval/connectionProbe.ts` and
+  its call in `providers/tkgm.ts` (`[radar-diag] tkgm-connection-probe`) —
+  two extra TLS connections per search, diagnosis only; delete together
+  with the other `[radar-diag]` code once B is understood.
 
 ## Next work order (intentional — do not reorder without a genuine blocker)
 

@@ -9,13 +9,24 @@ import { fileURLToPath } from "node:url";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // Same sandboxed loader convention used throughout tests/*.test.mjs.
+
+// retrieval/coverage.ts (pure date-window helpers) resolves to the real
+// module in every loader, like the diagnostics module.
+let cachedCoverageModule;
+function realCoverageModule() {
+  if (!cachedCoverageModule) cachedCoverageModule = loadTypeScriptModule("src/lib/ai/research/retrieval/coverage.ts");
+  return cachedCoverageModule;
+}
+const isCoverageSpecifier = (specifier) => specifier === "./coverage" || specifier === "../coverage";
+
 function loadTypeScriptModule(relativePath, dependencyLoader = () => ({}), globals = {}) {
   const source = fs.readFileSync(path.join(projectRoot, relativePath), "utf8");
   const output = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   const loadedModule = { exports: {} };
-  const context = { loadedModule, exports: loadedModule.exports, dependencyLoader, ...globals };
+  const withCoverage = (specifier) => (isCoverageSpecifier(specifier) ? realCoverageModule() : dependencyLoader(specifier));
+  const context = { loadedModule, exports: loadedModule.exports, dependencyLoader: withCoverage, ...globals };
   vm.runInNewContext(
     `(function (exports, dependencyLoader) { const require = dependencyLoader; ${output}\n})(exports, dependencyLoader);`,
     context,
@@ -123,7 +134,8 @@ test("csb.ts: a listing AbortError is reported to the router and the adapter sti
   );
   const results = await csb.fetchCsbAnnouncements({ fail: (kind) => reported.push(kind) });
   assert.deepEqual(Array.from(results), []);
-  assert.deepEqual(reported, ["AbortError"]);
+  // The failing page is named since ÇŞİDB reads several pages per run.
+  assert.deepEqual(reported, ["page 1: AbortError"]);
   assert.deepEqual(Array.from(await csb.fetchCsbAnnouncements()), [], "callers that pass no reporter are unaffected");
 });
 

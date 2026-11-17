@@ -27,17 +27,59 @@ const PROVINCES = [
 ];
 
 const lower = (text: string) => text.toLocaleLowerCase("tr-TR");
-const PLACES = new Set([...ISTANBUL_DISTRICTS, ...PROVINCES].map(lower));
 
 function words(text: string): string[] {
   return lower(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 }
 
-// True when the text names a Turkish district/province outside homeNames
-// (the business's own area) and names none of homeNames itself.
-export function isLocalToElsewhere(text: string, homeNames: string[]): boolean {
+const PROVINCE_SET = new Set([...PROVINCES, "İstanbul"].map(lower));
+const DISTRICT_SET = new Set(ISTANBUL_DISTRICTS.map(lower));
+
+// Administrative wording that pins a decision to one place even when the
+// name is not in the lists above ("Van İli", "İpekyolu İlçesi") — Resmî
+// Gazete parcel/reserve-area decisions are written this way.
+// The suffix must end the word: JS \b is ASCII-only even with /u, so
+// "İlişkin" would otherwise match "ili" (live false positive, 2026-11-17).
+const ADMIN_PLACE_PATTERN = /(\p{L}+)\s+(?:ili|ilinde|ilindeki|ilçesi|ilçesinde|ilçesindeki|ilçesine)(?!\p{L})/giu;
+const ADMIN_PATTERN_STOPWORDS = new Set(["bu", "her", "tüm", "aynı", "söz", "konu", "ilgili", "o"].map(lower));
+
+export type GeoScope =
+  | { kind: "home" }
+  | { kind: "general" }
+  | { kind: "elsewhere"; place: string };
+
+const display = (name: string) => name.charAt(0).toLocaleUpperCase("tr-TR") + name.slice(1);
+
+// Where a development applies, from its own title/snippet:
+// - "home": names the business's own area (a homeNames entry that is not
+//   just the province, e.g. a district or village) — always wins.
+// - "elsewhere": names another province, another İstanbul district, or
+//   another "<X> İli/İlçesi" — local to somewhere else, even if the province
+//   (e.g. "İstanbul İli, Kartal İlçesi") is shared.
+// - "general": no place named, or only a home province ("İstanbul
+//   genelinde") — national or province-wide.
+export function classifyGeoScope(text: string, homeNames: string[]): GeoScope {
   const home = new Set(homeNames.map(lower));
+  const specificHome = new Set([...home].filter((name) => !PROVINCE_SET.has(name)));
   const tokens = words(text);
-  if (tokens.some((token) => home.has(token))) return false;
-  return tokens.some((token) => PLACES.has(token) && !home.has(token));
+  if (tokens.some((token) => specificHome.has(token))) return { kind: "home" };
+
+  for (const match of lower(text).matchAll(ADMIN_PLACE_PATTERN)) {
+    const place = match[1];
+    if (!home.has(place) && !ADMIN_PATTERN_STOPWORDS.has(place)) return { kind: "elsewhere", place: display(place) };
+  }
+  const elsewhere = tokens.find((token) => (PROVINCE_SET.has(token) || DISTRICT_SET.has(token)) && !home.has(token));
+  return elsewhere ? { kind: "elsewhere", place: display(elsewhere) } : { kind: "general" };
+}
+
+// The business's own area as classifyGeoScope expects it: its province (if
+// set in BusinessProfile.geography), primary area and nearby places.
+export function homeAreaNames(geography: { primary: string; nearby: string[]; province?: string }): string[] {
+  return [...(geography.province ? [geography.province] : []), geography.primary, ...geography.nearby];
+}
+
+// True when the text is local to a district/province outside homeNames (the
+// business's own area) — see classifyGeoScope.
+export function isLocalToElsewhere(text: string, homeNames: string[]): boolean {
+  return classifyGeoScope(text, homeNames).kind === "elsewhere";
 }

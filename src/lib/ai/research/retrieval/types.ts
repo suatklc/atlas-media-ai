@@ -1,4 +1,7 @@
 import type { ContentOpportunity, ResearchSource } from "../types";
+import type { SourceCoverage } from "./diagnostics";
+import type { RetrievalWindow } from "./coverage";
+import type { GeoScope } from "../turkishPlaces";
 
 // Phase 2 (Current Content Engine — live research foundation): the raw
 // retrieval-stage contract. Deliberately NOT a new source-description
@@ -43,12 +46,19 @@ export type RetrievalQuery = {
 
 export type AdapterStatus = "ok" | "partial" | "error";
 
+// Per-adapter outcome of one run. status = ACCESS (could the source be
+// read: "partial" = some pages/attachments failed). coverage = SCOPE (how
+// far back it was read, see retrieval/coverage.ts) — absent when the
+// adapter did not report it. The two are reported separately on purpose: a
+// fully readable source can still cover only a few hours.
+export type AdapterRunReport = { status: AdapterStatus; coverage?: SourceCoverage };
+
 export type RetrievalOptions = {
   maxResults?: number;
-  // Optional per-adapter outcome ("partial" = some pages/attachments of that
-  // source could not be read). Reporting only — never changes what is
-  // fetched, filtered or ranked.
-  onAdapterStatus?: (source: string, status: AdapterStatus) => void;
+  // Target date window; adapters with an archive/pagination read back to it.
+  window?: RetrievalWindow;
+  // Reporting only — never changes what is fetched, filtered or ranked.
+  onAdapterReport?: (source: string, report: AdapterRunReport) => void;
 };
 
 // Phase 3 (Official Source Expansion + Topic Diversity): the minimum
@@ -83,4 +93,8 @@ export type TopicFamily =
 // (Phase 1's stable contract) need no change at all.
 export type RankedContentOpportunity = ContentOpportunity & {
   topicFamily: TopicFamily;
+  // Where the development applies (turkishPlaces.ts classifyGeoScope) —
+  // "elsewhere" = local to another province/district: shown separately and
+  // never presented as applying to the business's own area.
+  geoScope?: GeoScope;
 };

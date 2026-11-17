@@ -6,6 +6,7 @@ import type { NormalizedResearchResult, RankedContentOpportunity, RetrievalOptio
 import { retrieveCurrentInformation } from "./retrieval/router";
 import { toTurkeyCalendarDate } from "./retrieval/turkishDate";
 import { classifyRealEstateScope, deriveEditorialAngle, isPropertyDomainSource } from "./realEstateScope";
+import { classifyGeoScope, homeAreaNames } from "./turkishPlaces";
 import { radarDiag, tally } from "./retrieval/diagnostics";
 
 // Phase 2/3 (Current Content Engine — live research foundation +
@@ -775,10 +776,11 @@ export type DiscoverCurrentOpportunitiesOptions = {
   // caller (tests, any other future consumer) is completely unaffected;
   // the dashboard-facing route is the one caller that sets it.
   maxAgeDays?: number;
-  // Optional: each source's retrieval outcome (see RetrievalOptions), so a
-  // caller can tell "nothing qualified" apart from "a source could not be
-  // read". Reporting only — fetching, filtering and ranking are unchanged.
-  onSourceStatus?: RetrievalOptions["onAdapterStatus"];
+  // Optional: each source's access status + date coverage (see
+  // RetrievalOptions), so a caller can tell "nothing qualified in what was
+  // scanned" apart from "a source could not be read / was only partly
+  // scanned". Reporting only.
+  onSourceReport?: RetrievalOptions["onAdapterReport"];
 };
 
 // retrieveCurrentInformation is asked for a generously large CANDIDATE
@@ -822,7 +824,16 @@ export async function discoverCurrentContentOpportunities(
   // evaluates them with a stricter source-specific rule instead.
   const results = await retrieveCurrentInformation(
     { ...query, keywordFilterExempt: (result) => isPropertyDomainSource(result.url) },
-    { maxResults: CANDIDATE_POOL_SIZE, onAdapterStatus: options.onSourceStatus },
+    {
+      maxResults: CANDIDATE_POOL_SIZE,
+      // The age cutoff is also the window adapters with an archive or
+      // pagination read back to (and report coverage against).
+      window:
+        options.maxAgeDays !== undefined
+          ? { notBefore: new Date(now.getTime() - options.maxAgeDays * 24 * 60 * 60 * 1000) }
+          : undefined,
+      onAdapterReport: options.onSourceReport,
+    },
   );
   const ageFiltered =
     options.maxAgeDays !== undefined
@@ -845,13 +856,31 @@ export async function discoverCurrentContentOpportunities(
   // A macro item passes only when its own evidence links it to property.
   const propertyCandidates = applyEditorialGate(property, regionNames);
   const macroCandidates = applyEditorialGate(macro, regionNames);
-  const ranked = rankContentOpportunities(buildContentOpportunities(propertyCandidates, now), query.keywords, limit);
+
+  // Geographic scope (turkishPlaces.ts, same rule the weekly plan uses): a
+  // decision local to another province/district (a Konya parcel, a Pendik
+  // lottery) is a real development but not one for the business's own
+  // area. It never displaces national/own-area topics: it only fills slots
+  // left over, after them, and carries geoScope so the dashboard shows it
+  // apart. Nothing is dropped or added by this — order and labelling only.
+  // Same text the weekly plan classifies (topic + angle).
+  const homeNames = homeAreaNames(profile.geography);
+  const withGeo = (opportunities: RankedContentOpportunity[]) =>
+    opportunities.map((opportunity) => ({ ...opportunity, geoScope: classifyGeoScope(`${opportunity.topic} ${opportunity.angle}`, homeNames) }));
+  const propertyOpportunities = withGeo(buildContentOpportunities(propertyCandidates, now));
+  const ownOrGeneral = propertyOpportunities.filter((opportunity) => opportunity.geoScope.kind !== "elsewhere");
+  const elsewhere = propertyOpportunities.filter((opportunity) => opportunity.geoScope.kind === "elsewhere");
+
+  const ranked = rankContentOpportunities(ownOrGeneral, query.keywords, limit);
   const fill =
     ranked.length >= limit || macroCandidates.length === 0
       ? []
-      : rankContentOpportunities(buildContentOpportunities(macroCandidates, now), query.keywords, Math.min(MAX_MACRO_FILL, limit - ranked.length));
-  logDiscoverFunnel(results, ageFiltered, scopeOf, [...ranked, ...fill], options.maxAgeDays, limit);
-  return [...ranked, ...fill];
+      : withGeo(rankContentOpportunities(buildContentOpportunities(macroCandidates, now), query.keywords, Math.min(MAX_MACRO_FILL, limit - ranked.length)));
+  const room = limit - ranked.length - fill.length;
+  const local = room <= 0 || elsewhere.length === 0 ? [] : rankContentOpportunities(elsewhere, query.keywords, room);
+  const shortlist = [...ranked, ...fill, ...local];
+  logDiscoverFunnel(results, ageFiltered, scopeOf, shortlist, options.maxAgeDays, limit);
+  return shortlist;
 }
 
 const MAX_MACRO_FILL = 1;

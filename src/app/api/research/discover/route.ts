@@ -2,7 +2,8 @@ import { type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { discoverCurrentContentOpportunities } from "@/lib/ai/research/discover";
 import { errorKind, radarDiag } from "@/lib/ai/research/retrieval/diagnostics";
-import { describeSourceIssues } from "@/lib/ai/research/sourceIssues";
+import { describeSourceReport } from "@/lib/ai/research/sourceIssues";
+import type { AdapterRunReport } from "@/lib/ai/research/retrieval/types";
 
 // Phase 2 (Current Content Engine — live research foundation): the
 // smallest safe server-side entry point to trigger research manually. No
@@ -22,7 +23,8 @@ const DEFAULT_LIMIT = 5;
 // "to fill the list."
 const MAX_OPPORTUNITY_AGE_DAYS = 30;
 
-// A full run takes ~20-25 s in production (TKGM detail pages + PDFs).
+// A full run takes ~20-25 s in production (TKGM detail pages + PDFs; the
+// Resmî Gazete archive and ÇŞİDB pages run in parallel with it).
 // Bounded so a hung source ends in a clear error, never an endless spinner.
 export const maxDuration = 60;
 
@@ -69,17 +71,22 @@ export async function POST(request: NextRequest) {
   // apart from a request that never finished.
   const startedAt = Date.now();
   radarDiag("discover-request", { phase: "start", region: process.env.VERCEL_REGION ?? "local", limit });
-  const sourceStatuses: Record<string, string> = {};
+  const sourceReports: Record<string, AdapterRunReport> = {};
   try {
     const opportunities = await discoverCurrentContentOpportunities({
       limit,
       maxAgeDays: MAX_OPPORTUNITY_AGE_DAYS,
-      onSourceStatus: (source, status) => {
-        sourceStatuses[source] = status;
+      onSourceReport: (source, report) => {
+        sourceReports[source] = report;
       },
     });
     radarDiag("discover-request", { phase: "end", ms: Date.now() - startedAt, opportunities: opportunities.length });
-    return Response.json({ opportunities, sourceIssues: describeSourceIssues(sourceStatuses) });
+    // accessIssues (a source could not be read) and coverageGaps (a source
+    // was scanned only part of the 30 days) are separate on purpose; the
+    // dashboard must not present an empty list as "nothing in 30 days"
+    // when either is non-empty.
+    const { accessIssues, coverageGaps } = describeSourceReport(sourceReports);
+    return Response.json({ opportunities, accessIssues, coverageGaps });
   } catch (error) {
     radarDiag("discover-request", { phase: "error", ms: Date.now() - startedAt, error: errorKind(error) });
     console.error("Research discovery error:", error instanceof Error ? error.message : String(error));

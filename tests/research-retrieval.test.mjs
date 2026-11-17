@@ -10,6 +10,12 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 
 // Same loader convention as tests/output-mode.test.mjs and
 // tests/educational-metadata.test.mjs.
+let cachedCoverage;
+function coverageModule() {
+  if (!cachedCoverage) cachedCoverage = loadTypeScriptModule("src/lib/ai/research/retrieval/coverage.ts");
+  return cachedCoverage;
+}
+
 let cachedRadarDiagnostics;
 function radarDiagnosticsModule() {
   if (!cachedRadarDiagnostics) {
@@ -29,8 +35,13 @@ function loadTypeScriptModule(relativePath, dependencyLoader = () => ({}), globa
   // Temporary Radar diagnostics (retrieval/diagnostics.ts) resolve to the
   // real, silent module in every loader, so adapters under test keep their
   // exact behavior without each loader having to list it.
+  // Same for the pure date-window helpers (retrieval/coverage.ts).
   const withDiagnostics = (specifier) =>
-    (specifier === "diagnostics" || specifier.endsWith("/diagnostics")) ? radarDiagnosticsModule() : dependencyLoader(specifier);
+    (specifier === "diagnostics" || specifier.endsWith("/diagnostics"))
+      ? radarDiagnosticsModule()
+      : specifier === "./coverage" || specifier === "../coverage" || specifier.endsWith("retrieval/coverage")
+        ? coverageModule()
+        : dependencyLoader(specifier);
   const context = { loadedModule, exports: loadedModule.exports, dependencyLoader: withDiagnostics, ...globals };
   vm.runInNewContext(
     `(function (exports, dependencyLoader) { const require = dependencyLoader; ${output}\n})(exports, dependencyLoader);`,
@@ -1600,67 +1611,397 @@ test("rankContentOpportunities: a suppressed same-event item's source is kept on
   assert.equal(other.sources.length, 1, "unrelated opportunities are untouched");
 });
 
+
 // ============================================================
-// Source status reporting (2026-11-17): production returned 0 opportunities
-// because every TKGM linked-PDF fetch timed out from fra1 while the adapter
-// still reported "ok". These tests pin the reporting-only plumbing that lets
-// the dashboard say which source could not be read.
+// Radar reliability (2026-11-17). Production returned 0 opportunities:
+// TKGM PDFs unreadable from fra1 while the source reported "ok", Resmî
+// Gazete dates silently empty (entity-encoded heading), and most sources
+// scanned only hours/one day of a promised 30-day window. These pin date
+// windows, pagination/archive bounds, relevance, partial failures and the
+// separate access vs coverage reporting.
 // ============================================================
 
-test("retrieveCurrentInformation: onAdapterStatus reports ok / partial / error per adapter without changing results", async () => {
-  const router = loadTypeScriptModule(
-    "src/lib/ai/research/retrieval/router.ts",
+const NOW = new Date("2026-11-17T12:00:00.000Z"); // 15:00 Turkey time
+const WINDOW_3D = { notBefore: new Date(NOW.getTime() - 3 * 24 * 60 * 60 * 1000) };
+const SILENT = { error: () => {}, log: () => {}, warn: () => {} };
+
+// windows-1254 bytes for the Turkish letters used in fixtures (archive pages
+// are served in that encoding, not UTF-8).
+const CP1254 = { "ı": 0xfd, "İ": 0xdd, "ş": 0xfe, "Ş": 0xde, "ğ": 0xf0, "Ğ": 0xd0, "ç": 0xe7, "Ç": 0xc7, "ö": 0xf6, "Ö": 0xd6, "ü": 0xfc, "Ü": 0xdc, "–": 0x96 };
+function encode1254(text) {
+  return Uint8Array.from([...text].map((ch) => CP1254[ch] ?? ch.charCodeAt(0))).buffer;
+}
+
+test("coverage.ts: a source is complete only when EVERY list reaches the window; since = the most restrictive list", () => {
+  const coverage = coverageModule();
+  const window = { notBefore: new Date("2026-10-18T00:00:00.000Z") };
+  const longFeed = ["2026-11-17T08:00:00.000Z", "2026-10-01T00:00:00.000Z"];
+  const shortFeed = ["2026-11-17T13:00:00.000Z", "2026-11-17T09:00:00.000Z"];
+  assert.equal(coverage.reachesWindow("2026-10-01T00:00:00.000Z", window), true);
+  assert.equal(coverage.reachesWindow("2026-11-17T09:00:00.000Z", window), false);
+  assert.equal(coverage.reachesWindow(null, window), false, "nothing dated never counts as covered");
+  assert.equal(coverage.reachesWindow(null, undefined), true, "without a window there is nothing to reach");
+
+  const both = coverage.coverageOfLists([longFeed, shortFeed], window);
+  assert.equal(both.complete, false, "one short feed is a real gap even if another goes back further");
+  assert.equal(both.since, "2026-11-17T09:00:00.000Z");
+  assert.equal(coverage.coverageOfLists([longFeed], window).complete, true);
+  assert.equal(coverage.coverageOfLists([], window).complete, false, "no list read = not covered");
+  assert.equal(coverage.coverageOfLists([[undefined, ""]], window).since, null);
+});
+
+function loadResmiGazeteWithArchive(fetchImpl) {
+  const requested = [];
+  const resmiGazete = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/resmiGazete.ts",
     (specifier) => {
-      if (specifier === "./providers/tcmb") {
-        return { fetchTcmbAnnouncements: async () => [makeResult({ title: "TCMB Faiz Duyurusu", url: "https://www.tcmb.gov.tr/x/a" })] };
-      }
-      if (specifier === "./providers/tkgm") {
-        return {
-          fetchTkgmAnnouncements: async (report) => {
-            report?.fail("evidence: AbortError×6");
-            return [makeResult({ title: "Tapu Duyurusu", url: "https://www.tkgm.gov.tr/duyurular/x" })];
-          },
-        };
-      }
-      if (specifier === "./providers/resmiGazete") {
-        return {
-          fetchResmiGazeteAnnouncements: async () => {
-            throw new Error("simulated timeout");
-          },
-        };
-      }
-      if (specifier === "./providers/csb") return { fetchCsbAnnouncements: async () => [] };
-      if (specifier === "./providers/economyNews") return { fetchEconomyNewsAnnouncements: async () => [] };
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../turkishDate") return turkishDate;
+      if (specifier === "../relevance") return relevance;
+      if (specifier === "../secureFetch") return { fetchWithSystemTrust: async () => { throw new Error("not expected"); } };
       return {};
     },
-    { console: { error: () => {}, log: () => {}, warn: () => {} } },
+    {
+      console: SILENT,
+      fetch: async (url, init) => {
+        requested.push(String(url));
+        return fetchImpl(String(url), init);
+      },
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      Buffer,
+      TextDecoder,
+      URL,
+    },
+  );
+  return { resmiGazete, requested };
+}
+
+// Live homepage markup (2026-11-17): the heading is entity-encoded.
+const RG_HOMEPAGE_ENCODED = `<html><body>
+<span id="spanGazeteTarih">17 Kas&#x131;m 2026 Tarihli ve 33433 Say&#x131;l&#x131; Resm&#xEE; Gazete</span>
+<div class="fihrist-item mb-1"><a href="https://www.resmigazete.gov.tr/eskiler/2026/11/20261117-1.htm">–– Tapu Sicili Tüzüğünde Değişiklik Yapılmasına Dair Yönetmelik</a></div>
+<div class="fihrist-item mb-1"><a href="https://www.resmigazete.gov.tr/eskiler/2026/11/20261117-2.htm">–– Üniversite Lisansüstü Eğitim Yönetmeliği</a></div>
+</body></html>`;
+
+const rgArchivePage = (stamp, entries) =>
+  `<html><head><meta name="GENERATOR" content="Microsoft FrontPage 6.0"></head><body>` +
+  entries.map(([n, title]) => `<p><a href="${stamp}-${n}.htm">––&nbsp; ${title}</a></p>`).join("") +
+  `<p><a href="http://www.resmigazete.gov.tr/main.aspx?home=x&main=http://www.resmigazete.gov.tr/ilanlar/eskiilanlar/x-2.htm">a - Yargı İlânları</a></p></body></html>`;
+
+test("resmiGazete.ts: an entity-encoded issue heading still yields the issue date (regression: every entry was undated)", () => {
+  const { resmiGazete } = loadResmiGazeteWithArchive(async () => htmlResponse(200, ""));
+  assert.equal(resmiGazete.extractIssueDate(RG_HOMEPAGE_ENCODED), new Date("2026-11-17T00:00:00+03:00").toISOString());
+  assert.equal(
+    resmiGazete.issueDateFromUrl("https://www.resmigazete.gov.tr/eskiler/2026/11/20261117-3.pdf"),
+    new Date("2026-11-17T00:00:00+03:00").toISOString(),
+  );
+  assert.equal(resmiGazete.issueDateFromUrl("https://www.resmigazete.gov.tr/eskiler/2026/10/20261117-3.pdf"), null, "folder/date mismatch is not trusted");
+});
+
+test("resmiGazete.ts: archive pages (windows-1254) yield only the issue's own entries, absolute URLs, decoded Turkish titles", () => {
+  const { resmiGazete } = loadResmiGazeteWithArchive(async () => htmlResponse(200, ""));
+  const html = new TextDecoder("windows-1254").decode(
+    encode1254(rgArchivePage("20261116", [[1, "İmar Kanunu Uygulama Yönetmeliğinde Değişiklik"], [2, "Atılım Üniversitesi Ana Yönetmeliği"]])),
+  );
+  const items = resmiGazete.extractArchiveItems(html, { year: "2026", month: "11", day: "16" });
+  assert.equal(items.length, 2, "the announcement-section index link is not an entry");
+  assert.equal(items[0].title, "İmar Kanunu Uygulama Yönetmeliğinde Değişiklik");
+  assert.equal(items[0].url, "https://www.resmigazete.gov.tr/eskiler/2026/11/20261116-1.htm");
+});
+
+test("resmiGazete.ts: with a window it reads exactly one archive page per past day, dates entries by issue, keeps only relevant ones", async () => {
+  const { resmiGazete, requested } = loadResmiGazeteWithArchive(async (url) => {
+    if (url === "https://www.resmigazete.gov.tr/") return htmlResponse(200, RG_HOMEPAGE_ENCODED);
+    const stamp = url.match(/(\d{8})\.htm$/)[1];
+    const body = rgArchivePage(stamp, [[1, `Kentsel Dönüşüm Alanı İlanı ${stamp}`], [2, "Sağlık Bakanlığı Atama Yönetmeliği"]]);
+    return { status: 200, ok: true, headers: { get: () => "text/html" }, arrayBuffer: async () => encode1254(body) };
+  });
+  const coverages = [];
+  const failures = [];
+  const results = await resmiGazete.fetchResmiGazeteAnnouncements(
+    { fail: (kind) => failures.push(kind), coverage: (c) => coverages.push(c) },
+    WINDOW_3D,
+    NOW,
   );
 
-  const statuses = {};
+  assert.equal(requested.length, 1 + 3, "homepage + exactly 3 archive days, no more");
+  assert.deepEqual(
+    requested.slice(1).sort(),
+    ["20261114", "20261115", "20261116"].map((d) => `https://www.resmigazete.gov.tr/eskiler/2026/11/${d}.htm`),
+  );
+  assert.equal(failures.length, 0);
+  assert.equal(results.length, 4, "today's tapu entry + one kentsel dönüşüm entry per archive day; unrelated ones dropped");
+  const day15 = results.find((r) => r.title.endsWith("20261115"));
+  assert.equal(day15.publishedAt, new Date("2026-11-15T00:00:00+03:00").toISOString(), "an archive entry keeps its own (old) issue date");
+  const today = results.find((r) => r.title.startsWith("Tapu Sicili"));
+  assert.equal(today.publishedAt, new Date("2026-11-17T00:00:00+03:00").toISOString());
+  assert.equal(coverages.length, 1);
+  assert.equal(coverages[0].complete, true);
+  assert.equal(coverages[0].since, new Date("2026-11-14T00:00:00+03:00").toISOString());
+});
+
+test("resmiGazete.ts: one unreadable archive day is reported, other days still return, coverage stops at the gap", async () => {
+  const { resmiGazete } = loadResmiGazeteWithArchive(async (url) => {
+    if (url === "https://www.resmigazete.gov.tr/") return htmlResponse(200, RG_HOMEPAGE_ENCODED);
+    if (url.endsWith("20261115.htm")) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    const stamp = url.match(/(\d{8})\.htm$/)[1];
+    return { status: 200, ok: true, headers: { get: () => "text/html" }, arrayBuffer: async () => encode1254(rgArchivePage(stamp, [[1, `Kentsel Dönüşüm ${stamp}`]])) };
+  });
+  const coverages = [];
+  const failures = [];
+  const results = await resmiGazete.fetchResmiGazeteAnnouncements(
+    { fail: (kind) => failures.push(kind), coverage: (c) => coverages.push(c) },
+    WINDOW_3D,
+    NOW,
+  );
+  assert.deepEqual(failures, ["archive: AbortError×1"]);
+  assert.ok(results.some((r) => r.title.endsWith("20261114")), "days after the gap are still returned");
+  assert.ok(results.some((r) => r.title.endsWith("20261116")));
+  assert.equal(coverages[0].complete, false);
+  assert.equal(coverages[0].since, new Date("2026-11-16T00:00:00+03:00").toISOString(), "fully covered only back to the gap");
+});
+
+test("resmiGazete.ts: the archive is bounded (at most MAX_ARCHIVE_DAYS requests) and unused without a window", async () => {
+  const { resmiGazete, requested } = loadResmiGazeteWithArchive(async (url) =>
+    url === "https://www.resmigazete.gov.tr/"
+      ? htmlResponse(200, RG_HOMEPAGE_ENCODED)
+      : { status: 200, ok: true, headers: { get: () => "text/html" }, arrayBuffer: async () => encode1254("<html></html>") },
+  );
+  assert.equal(resmiGazete.archiveDaysFor(NOW, { notBefore: new Date(NOW.getTime() - 90 * 864e5) }), resmiGazete.MAX_ARCHIVE_DAYS);
+  await resmiGazete.fetchResmiGazeteAnnouncements(undefined, undefined, NOW);
+  assert.deepEqual(requested, ["https://www.resmigazete.gov.tr/"], "no window = today's issue only (previous behavior)");
+});
+
+function csbPage(cards) {
+  return `<section>${cards
+    .map(
+      ([date, title, slug]) =>
+        `<div class="haberler-card-wrapper"><a href="https://www.csb.gov.tr/x/${slug}"><img/></a><span class="date">${date}</span><a href="https://www.csb.gov.tr/haberler/${slug}" target="_self">${title}</a></div>`,
+    )
+    .join("")}</section>`;
+}
+
+function loadCsb(pages) {
+  const requested = [];
+  const csb = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/csb.ts",
+    (specifier) => {
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../turkishDate") return turkishDate;
+      if (specifier === "../relevance") return relevance;
+      if (specifier === "../evidenceExtraction") return evidenceExtraction;
+      return {};
+    },
+    {
+      fetch: async (url) => {
+        requested.push(String(url));
+        const listing = String(url).match(/\/haberler(?:\/(\d+))?$/);
+        if (!listing) return htmlResponse(200, "<p>detay</p>");
+        const page = Number(listing[1] ?? 1);
+        const body = pages(page);
+        if (body instanceof Error) throw body;
+        return { ...htmlResponse(200, body), ok: true };
+      },
+      URL,
+      TextEncoder,
+      Buffer,
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      console: SILENT,
+    },
+  );
+  return { csb, requested: () => requested.filter((u) => /\/haberler(\/\d+)?$/.test(u)) };
+}
+
+test("csb.ts: pages until a page reaches the window start, then stops; relevance still filters", async () => {
+  const { csb, requested } = loadCsb((page) =>
+    page === 1
+      ? csbPage([["17 Kasım 2026", "COP31 İKLİM ZİRVESİ", "a"], ["16 Kasım 2026", "KENTSEL DÖNÜŞÜMDE YENİ ETAP", "b"]])
+      : page === 2
+        ? csbPage([["15 Kasım 2026", "ORMAN YANGINI TATBİKATI", "c"], ["12 Kasım 2026", "İMAR PLANI ASKIYA ÇIKTI", "d"]])
+        : csbPage([["10 Kasım 2026", "SOSYAL KONUT KURASI", "e"]]),
+  );
+  const coverages = [];
+  const results = await csb.fetchCsbAnnouncements({ fail: () => {}, coverage: (c) => coverages.push(c) }, WINDOW_3D);
+  assert.deepEqual(requested(), ["https://www.csb.gov.tr/haberler", "https://www.csb.gov.tr/haberler/2"], "page 2 already reaches 14 Nov → no page 3");
+  assert.deepEqual([...results.map((r) => r.title)].sort(), ["KENTSEL DÖNÜŞÜMDE YENİ ETAP", "İMAR PLANI ASKIYA ÇIKTI"].sort());
+  assert.equal(coverages[0].complete, true);
+});
+
+test("csb.ts: a window the page cap cannot reach is reported incomplete (never treated as 'nothing there')", async () => {
+  const { csb, requested } = loadCsb(() => csbPage([["17 Kasım 2026", "COP31 İKLİM ZİRVESİ", "a"]]));
+  const coverages = [];
+  await csb.fetchCsbAnnouncements({ fail: () => {}, coverage: (c) => coverages.push(c) }, WINDOW_3D);
+  assert.equal(requested().length, csb.MAX_PAGES, "bounded by MAX_PAGES");
+  assert.equal(coverages[0].complete, false);
+  assert.equal(coverages[0].since, new Date("2026-11-17T00:00:00+03:00").toISOString());
+});
+
+test("csb.ts: a failing later page keeps the earlier pages' results and reports the failure", async () => {
+  const { csb } = loadCsb((page) =>
+    page === 1 ? csbPage([["17 Kasım 2026", "KENTSEL DÖNÜŞÜMDE YENİ ETAP", "b"]]) : Object.assign(new Error("aborted"), { name: "AbortError" }),
+  );
+  const failures = [];
+  const coverages = [];
+  const results = await csb.fetchCsbAnnouncements({ fail: (k) => failures.push(k), coverage: (c) => coverages.push(c) }, WINDOW_3D);
+  assert.equal(results.length, 1);
+  assert.deepEqual(failures, ["page 2: AbortError"]);
+  assert.equal(coverages[0].complete, false);
+});
+
+test("csb.ts: without a window only page 1 is read (previous behavior)", async () => {
+  const { csb, requested } = loadCsb(() => csbPage([["17 Kasım 2026", "KENTSEL DÖNÜŞÜMDE YENİ ETAP", "b"]]));
+  await csb.fetchCsbAnnouncements();
+  assert.deepEqual(requested(), ["https://www.csb.gov.tr/haberler"]);
+});
+
+test("economyNews.ts: an RSS feed that spans only hours is reported as a coverage gap against a 30-day window", async () => {
+  const rss = (dates) =>
+    `<rss><channel>${dates.map((d, i) => `<item><title>Haber ${i}</title><link>https://www.aa.com.tr/x/${i}</link><pubDate>${d}</pubDate></item>`).join("")}</channel></rss>`;
+  const economyNews = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/economyNews.ts",
+    (specifier) => {
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../relevance") return relevance;
+      if (specifier === "../evidenceExtraction") return evidenceExtraction;
+      return {};
+    },
+    {
+      fetch: async (url) => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => "application/rss+xml" },
+        arrayBuffer: async () =>
+          new TextEncoder().encode(
+            String(url).includes("aa.com.tr")
+              ? rss(["Tue, 17 Nov 2026 16:49:00 +0300", "Tue, 17 Nov 2026 08:02:00 +0300"])
+              : rss(["Tue, 17 Nov 2026 18:37:00 +0300", "Tue, 17 Nov 2026 13:24:00 +0300"]),
+          ).buffer,
+      }),
+      URL,
+      TextEncoder,
+      Buffer,
+      AbortController,
+      setTimeout,
+      clearTimeout,
+      console: SILENT,
+    },
+  );
+  const coverages = [];
+  await economyNews.fetchEconomyNewsAnnouncements({ fail: () => {}, coverage: (c) => coverages.push(c) }, { notBefore: new Date("2026-10-18T00:00:00Z") });
+  assert.equal(coverages[0].complete, false);
+  assert.equal(coverages[0].since, new Date("2026-11-17T13:24:00+03:00").toISOString(), "the shorter feed bounds what was fully read");
+});
+
+function loadRouterWith(adapters) {
+  return loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/router.ts",
+    (specifier) => {
+      const map = {
+        "./providers/tcmb": { fetchTcmbAnnouncements: adapters.tcmb },
+        "./providers/tkgm": { fetchTkgmAnnouncements: adapters.tkgm },
+        "./providers/resmiGazete": { fetchResmiGazeteAnnouncements: adapters.rg },
+        "./providers/csb": { fetchCsbAnnouncements: adapters.csb },
+        "./providers/economyNews": { fetchEconomyNewsAnnouncements: adapters.news },
+      };
+      return map[specifier] ?? {};
+    },
+    { console: SILENT },
+  );
+}
+
+test("retrieveCurrentInformation: one source failing never hides the others; access status and coverage are reported per source", async () => {
+  const window = { notBefore: new Date("2026-10-18T00:00:00Z") };
+  const seenWindows = [];
+  const router = loadRouterWith({
+    tcmb: async (report, w) => {
+      seenWindows.push(w);
+      report.coverage({ since: "2026-07-01T00:00:00.000Z", complete: true });
+      return [makeResult({ title: "TCMB Faiz Duyurusu", url: "https://www.tcmb.gov.tr/x/a" })];
+    },
+    tkgm: async (report) => {
+      report.fail("evidence: AbortError×6");
+      report.coverage({ since: "2026-09-28T00:00:00.000Z", complete: true });
+      return [makeResult({ title: "Tapu Duyurusu", url: "https://www.tkgm.gov.tr/duyurular/x" })];
+    },
+    rg: async () => {
+      throw new Error("simulated outage");
+    },
+    // Read 29 of 30 days, nothing relevant: partial, NOT error.
+    csb: async (report) => {
+      report.fail("page 3: AbortError");
+      report.coverage({ since: "2026-11-10T00:00:00.000Z", complete: false });
+      return [];
+    },
+    // Nothing read at all.
+    news: async (report) => {
+      report.fail("AA: AbortError");
+      return [];
+    },
+  });
+
+  const reports = {};
   const results = await router.retrieveCurrentInformation(
     { keywords: ["faiz", "tapu"] },
-    { onAdapterStatus: (source, status) => (statuses[source] = status) },
+    { window, onAdapterReport: (source, report) => (reports[source] = report) },
   );
-  assert.deepEqual(statuses, { tcmb: "ok", tkgm: "partial", "resmi-gazete": "error", csb: "ok", "aa-dunya": "ok" });
-  assert.equal(results.length, 2, "reporting must not change what is returned");
+  assert.equal(results.length, 2, "the working sources' entries still come back");
+  assert.equal(seenWindows[0], window, "the window is passed to adapters");
+  assert.equal(reports.tcmb.status, "ok");
+  assert.equal(reports.tkgm.status, "partial");
+  assert.equal(reports["resmi-gazete"].status, "error");
+  assert.equal(reports.csb.status, "partial", "0 relevant items after reading pages is not an access error");
+  assert.equal(reports["aa-dunya"].status, "error");
+  assert.equal(reports.csb.coverage.complete, false);
+});
+
+test("describeSourceReport: access problems and coverage gaps are separate lists; an unreachable source gets no coverage line", () => {
+  const { describeSourceReport } = loadTypeScriptModule("src/lib/ai/research/sourceIssues.ts", (specifier) =>
+    specifier === "./retrieval/turkishDate" ? turkishDate : {},
+  );
+  const now = new Date("2026-11-17T16:00:00.000Z");
+  const summary = describeSourceReport(
+    {
+      tcmb: { status: "ok", coverage: { since: "2026-07-01T00:00:00.000Z", complete: true } },
+      tkgm: { status: "partial", coverage: { since: "2026-09-28T00:00:00.000Z", complete: true } },
+      "resmi-gazete": { status: "error" },
+      csb: { status: "ok", coverage: { since: "2026-11-09T21:00:00.000Z", complete: false } },
+      "aa-dunya": { status: "ok", coverage: { since: "2026-11-17T10:00:00.000Z", complete: false } },
+    },
+    now,
+  );
+  assert.deepEqual([...summary.accessIssues], ["TKGM (bazı duyuru içerikleri okunamadı)", "Resmî Gazete (ulaşılamadı)"]);
+  assert.deepEqual([...summary.coverageGaps], [
+    "Çevre, Şehircilik ve İklim Değişikliği Bakanlığı: yalnız 10 Kasım 2026 sonrası tarandı",
+    "AA / Dünya haber akışları: yalnız son 6 saat tarandı",
+  ]);
+});
+
+test("/api/research/discover: returns accessIssues and coverageGaps separately and is time-bounded", () => {
+  const routeSource = fs.readFileSync(path.join(projectRoot, "src/app/api/research/discover/route.ts"), "utf8");
+  assert.match(routeSource, /export const maxDuration = 60;/);
+  assert.match(routeSource, /onSourceReport:/);
+  assert.match(routeSource, /Response\.json\(\{ opportunities, accessIssues, coverageGaps \}\)/);
+});
+
+test("dashboard copy never claims 'nothing in the last 30 days' — only what was scanned", () => {
+  const ui = fs.readFileSync(path.join(projectRoot, "src/components/dashboard/CurrentOpportunities.tsx"), "utf8");
+  assert.doesNotMatch(ui, /Son 30 günde[^.]*çıkmadı/);
+  assert.match(ui, /Taranan kaynaklarda paylaşmaya uygun güncel bir gayrimenkul gelişmesi bulunamadı\./);
+  assert.match(ui, /Okunamayan kaynaklar:/);
+  assert.match(ui, /Kapsamı eksik kaynaklar:/);
 });
 
 test("tkgm.ts: a linked PDF that cannot be fetched is reported as a failure (source becomes partial, not a silent ok)", async () => {
   const listing = `<a class="group block" href="/duyurular/duyuru-degisikligi"><div class="flex flex-col gap-4"><h3>Duyuru Değişikliği</h3><div><span>Duyuru</span><p>19 Ekim 2026</p></div></div></a>`;
   const detail = `<html><body><main><p>Duyuru metni için ekteki dosyaya bakınız.</p><a href="https://cms-api.tkgm.gov.tr/media-library/abc123.pdf">Dosya</a></main></body></html>`;
   const fetch = async (url) => {
-    if (String(url).includes("/media-library/")) {
-      const error = new Error("aborted");
-      error.name = "AbortError";
-      throw error;
-    }
+    if (String(url).includes("/media-library/")) throw Object.assign(new Error("aborted"), { name: "AbortError" });
     const html = String(url).endsWith("/duyurular") || String(url).endsWith("/haberler") ? listing : detail;
-    return {
-      ok: true,
-      status: 200,
-      headers: { get: (name) => (name.toLowerCase() === "content-type" ? "text/html; charset=UTF-8" : null) },
-      arrayBuffer: async () => new TextEncoder().encode(html).buffer,
-    };
+    return { ok: true, status: 200, headers: { get: (n) => (n.toLowerCase() === "content-type" ? "text/html; charset=UTF-8" : null) }, arrayBuffer: async () => new TextEncoder().encode(html).buffer };
   };
   const tkgm = loadTypeScriptModule(
     "src/lib/ai/research/retrieval/providers/tkgm.ts",
@@ -1670,28 +2011,16 @@ test("tkgm.ts: a linked PDF that cannot be fetched is reported as a failure (sou
       if (specifier === "../evidenceExtraction") return evidenceExtraction;
       return {};
     },
-    { fetch, URL, TextEncoder, Buffer, AbortController, setTimeout, clearTimeout, Promise, console: { error: () => {}, log: () => {}, warn: () => {} } },
+    { fetch, URL, TextEncoder, Buffer, AbortController, setTimeout, clearTimeout, Promise, console: SILENT },
   );
-
   const failures = [];
-  const results = await tkgm.fetchTkgmAnnouncements({ fail: (kind) => failures.push(kind) });
+  const coverages = [];
+  const results = await tkgm.fetchTkgmAnnouncements(
+    { fail: (kind) => failures.push(kind), coverage: (c) => coverages.push(c) },
+    { notBefore: new Date("2026-10-18T00:00:00Z") },
+  );
   assert.ok(results.length > 0, "listing items are still returned");
   assert.equal(failures.length, 1);
   assert.match(failures[0], /^evidence: AbortError×\d+$/);
-});
-
-test("describeSourceIssues: only non-ok sources, as short Turkish labels without URLs or error text", () => {
-  const { describeSourceIssues } = loadTypeScriptModule("src/lib/ai/research/sourceIssues.ts");
-  assert.deepEqual([...describeSourceIssues({ tcmb: "ok", tkgm: "partial", "resmi-gazete": "error", csb: "ok" })], [
-    "TKGM (bazı duyuru içerikleri okunamadı)",
-    "Resmî Gazete (ulaşılamadı)",
-  ]);
-  assert.equal(describeSourceIssues({ tcmb: "ok" }).length, 0);
-});
-
-test("/api/research/discover: returns sourceIssues next to opportunities and is time-bounded", () => {
-  const routeSource = fs.readFileSync(path.join(projectRoot, "src/app/api/research/discover/route.ts"), "utf8");
-  assert.match(routeSource, /export const maxDuration = 60;/);
-  assert.match(routeSource, /onSourceStatus:/);
-  assert.match(routeSource, /Response\.json\(\{ opportunities, sourceIssues: describeSourceIssues\(sourceStatuses\) \}\)/);
+  assert.equal(coverages[0].complete, false, "a first page that does not reach the window start is a coverage gap");
 });

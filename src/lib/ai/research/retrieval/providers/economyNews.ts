@@ -2,6 +2,7 @@ import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { hasAnyWordBoundaryMatch, PROPERTY_MARKET_RELEVANCE_KEYWORDS } from "../relevance";
 import { errorKind, radarDiag, type AdapterReport } from "../diagnostics";
+import { coverageOfLists, type RetrievalWindow } from "../coverage";
 import { toEvidenceTextOrUndefined } from "../evidenceExtraction";
 
 // Current Content Radar V1 — Layer 2 (news/market attention). LIVE, real
@@ -158,9 +159,15 @@ function extractItems(xml: string): RawItem[] {
 // adapter this way too; this per-feed isolation is an extra,
 // adapter-internal layer of the same principle, matching tcmb.ts's own
 // two-feed handling).
-export async function fetchEconomyNewsAnnouncements(report?: AdapterReport): Promise<NormalizedResearchResult[]> {
+export async function fetchEconomyNewsAnnouncements(report?: AdapterReport, window?: RetrievalWindow): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
   const results: NormalizedResearchResult[] = [];
+  // These RSS feeds only carry their latest N items (live 2026-11-17: AA ≈ 9
+  // hours, Dünya ≈ 5 hours) and offer no server-side archive/pagination, so
+  // coverage is reported as what the feeds actually span — a real gap
+  // against a 30-day window, stated rather than hidden.
+  const feedDates: Array<Array<string | undefined>> = [];
+  let feedFailed = false;
 
   for (const feed of ECONOMY_NEWS_FEEDS) {
     let xml: string;
@@ -173,10 +180,12 @@ export async function fetchEconomyNewsAnnouncements(report?: AdapterReport): Pro
       );
       radarDiag("economy-feed", { feed: feed.label, status: "error", error: errorKind(error) });
       report?.fail(`${feed.label}: ${errorKind(error)}`);
+      feedFailed = true;
       continue;
     }
 
     const extracted = extractItems(xml);
+    feedDates.push(extracted.map((item) => item.pubDate ?? undefined));
     const relevantItems = extracted.filter((item) => hasAnyWordBoundaryMatch(item.title, PROPERTY_MARKET_RELEVANCE_KEYWORDS));
     radarDiag("economy-feed", { feed: feed.label, status: "ok", extracted: extracted.length, relevant: relevantItems.length });
 
@@ -194,5 +203,7 @@ export async function fetchEconomyNewsAnnouncements(report?: AdapterReport): Pro
     }
   }
 
+  const coverage = coverageOfLists(feedDates, window);
+  report?.coverage?.({ since: coverage.since, complete: coverage.complete && !feedFailed });
   return results;
 }

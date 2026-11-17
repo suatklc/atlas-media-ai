@@ -1,6 +1,8 @@
 import type { NormalizedResearchResult } from "../types";
 import { classifySourceTier } from "../sourceQuality";
 import { errorKind, radarDiag, tally, type AdapterReport } from "../diagnostics";
+import { coverageOfLists, type RetrievalWindow } from "../coverage";
+import { probeHttpsEndpoint } from "../connectionProbe";
 import { parseTurkishLongDate } from "../turkishDate";
 import {
   toEvidenceTextOrUndefined,
@@ -256,10 +258,22 @@ async function attachDetailPageEvidence(
   );
 }
 
-export async function fetchTkgmAnnouncements(report?: AdapterReport): Promise<NormalizedResearchResult[]> {
+export async function fetchTkgmAnnouncements(report?: AdapterReport, window?: RetrievalWindow): Promise<NormalizedResearchResult[]> {
   const retrievedAt = new Date().toISOString();
   const results: NormalizedResearchResult[] = [];
   const listing: Record<string, unknown> = {};
+  // Dates per successfully read listing page (coverage); a failed page adds
+  // none and makes coverage incomplete.
+  const pageDates: Array<Array<string | undefined>> = [];
+  let pageFailed = false;
+
+  // TEMPORARY diagnosis (connectionProbe.ts): started now so it runs in
+  // parallel with the listing/evidence phase instead of lengthening it.
+  // cms-api is where the PDFs live; www is the control that does answer.
+  const probe =
+    typeof probeHttpsEndpoint === "function"
+      ? Promise.all([probeHttpsEndpoint(new URL(PDF_MEDIA_ORIGIN).host, "/"), probeHttpsEndpoint(new URL(ORIGIN).host, "/")])
+      : null;
 
   for (const page of LISTING_PAGES) {
     let html: string;
@@ -270,6 +284,7 @@ export async function fetchTkgmAnnouncements(report?: AdapterReport): Promise<No
       console.error(`TKGM listing retrieval failed (${page.url}):`, error instanceof Error ? error.message : String(error));
       listing[page.basePath] = { status: "error", error: errorKind(error), ms: Date.now() - listingStartedAt };
       report?.fail(`${page.basePath}: ${errorKind(error)}`);
+      pageFailed = true;
       continue;
     }
     const before = results.length;
@@ -290,7 +305,14 @@ export async function fetchTkgmAnnouncements(report?: AdapterReport): Promise<No
       });
     }
     listing[page.basePath] = { status: "ok", items: results.length - before, ms: Date.now() - listingStartedAt };
+    pageDates.push(results.slice(before).map((result) => result.publishedAt || undefined));
   }
+
+  // Only the first page of each listing is server-rendered ("Daha Fazla"
+  // loads more client-side), so coverage is complete only when that first
+  // page already reaches back to the window start.
+  const coverage = coverageOfLists(pageDates, window);
+  report?.coverage?.({ since: coverage.since, complete: coverage.complete && !pageFailed });
 
   const stats = emptyEvidenceStats();
   const evidenceStartedAt = Date.now();
@@ -301,7 +323,10 @@ export async function fetchTkgmAnnouncements(report?: AdapterReport): Promise<No
   // title-only, which the scope gate usually cannot place — report it so
   // the source shows as "partial" instead of a silent "ok" (production,
   // 2026-11-17: every PDF fetch from fra1 timed out → 0 opportunities).
-  const unreadable = { ...counts.detailFailed, ...counts.pdfFailed };
+  const unreadable: Record<string, number> = {};
+  for (const [kind, n] of [...Object.entries(counts.detailFailed), ...Object.entries(counts.pdfFailed)]) {
+    unreadable[kind] = (unreadable[kind] ?? 0) + n;
+  }
   if (Object.keys(unreadable).length > 0) {
     report?.fail(`evidence: ${Object.entries(unreadable).map(([kind, n]) => `${kind}×${n}`).join(", ")}`);
   }
@@ -328,6 +353,11 @@ export async function fetchTkgmAnnouncements(report?: AdapterReport): Promise<No
     subjectFound,
     titleOnly: results.length - subjectFound,
   });
+
+  if (probe) {
+    const [media, control] = await probe;
+    radarDiag("tkgm-connection-probe", { media, control });
+  }
 
   return results;
 }

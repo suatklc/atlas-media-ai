@@ -58,6 +58,29 @@ function isSafeExternalUrl(url: string | undefined): url is string {
   }
 }
 
+// Untrusted JSON → list of strings (anything else dropped).
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+// What this search could NOT see, in two separate lists: sources that could
+// not be read (access) and sources only scanned part of the way back (scope).
+function SourceReportNotes({ accessIssues, coverageGaps }: { accessIssues: string[]; coverageGaps: string[] }) {
+  if (accessIssues.length === 0 && coverageGaps.length === 0) return null;
+  return (
+    <div className="mt-2 space-y-1.5 text-sm">
+      {accessIssues.length > 0 && (
+        <p className="text-amber-300">Okunamayan kaynaklar: {accessIssues.join("; ")}.</p>
+      )}
+      {coverageGaps.length > 0 && (
+        <p className="text-zinc-300">
+          Kapsamı eksik kaynaklar: {coverageGaps.join("; ")}. Bu dönemlerin dışında kalan gelişmeler aranmadı.
+        </p>
+      )}
+    </div>
+  );
+}
+
 const SLIDE_ROLE_LABELS: Record<string, string> = {
   hook: "Kapak",
   "what-happened": "Ne Oldu?",
@@ -74,8 +97,10 @@ export default function CurrentOpportunities() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   // Sources the last search could not (fully) read — from the route's
-  // sourceIssues; lets an empty result say why instead of staying silent.
-  const [sourceIssues, setSourceIssues] = useState<string[]>([]);
+  // accessIssues / coverageGaps (kept separate); lets an empty result say
+  // what was and was not scanned instead of staying silent or overclaiming.
+  const [accessIssues, setAccessIssues] = useState<string[]>([]);
+  const [coverageGaps, setCoverageGaps] = useState<string[]>([]);
   const searchRegionRef = useRef<HTMLDivElement>(null);
 
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -139,7 +164,8 @@ export default function CurrentOpportunities() {
   async function handleFindOpportunities() {
     setIsSearching(true);
     setSearchError(null);
-    setSourceIssues([]);
+    setAccessIssues([]);
+    setCoverageGaps([]);
     setSelectedIndex(null);
     setContentPackage(null);
     setVisual(null);
@@ -172,9 +198,8 @@ export default function CurrentOpportunities() {
       }
 
       setOpportunities(Array.isArray(data?.opportunities) ? data.opportunities : []);
-      setSourceIssues(
-        Array.isArray(data?.sourceIssues) ? data.sourceIssues.filter((issue: unknown): issue is string => typeof issue === "string") : [],
-      );
+      setAccessIssues(stringList(data?.accessIssues));
+      setCoverageGaps(stringList(data?.coverageGaps));
       setHasSearched(true);
     } catch (err) {
       setOpportunities([]);
@@ -592,8 +617,7 @@ export default function CurrentOpportunities() {
 
         {!hasSearched && !isSearching && !searchError && (
           <p className="text-sm text-zinc-400">
-            Son 30 gün içindeki güvenilir kaynaklardan güncel gayrimenkul fırsatlarını bulmak için yukarıdaki butona
-            tıklayın.
+            Güvenilir kaynaklarda son 30 güne ait gayrimenkul gelişmelerini aramak için yukarıdaki butona tıklayın.
           </p>
         )}
 
@@ -601,18 +625,13 @@ export default function CurrentOpportunities() {
           <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-3.5">
             <p className="flex items-start gap-2 text-sm font-medium text-white">
               <SearchX className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
-              Bu aramada paylaşmaya değer güncel bir gayrimenkul gelişmesi bulunamadı.
+              Taranan kaynaklarda paylaşmaya uygun güncel bir gayrimenkul gelişmesi bulunamadı.
             </p>
             <p className="mt-1.5 text-sm text-zinc-400">
-              Son 30 günde gayrimenkulle doğrudan ilgili, kaynağı doğrulanabilen yeni bir duyuru veya haber çıkmadı.
-              Atlas listeyi doldurmak için alakasız haber göstermez.
+              Bu sonuç yalnız bu aramada okunabilen kaynaklar ve tarih aralıkları için geçerlidir. Atlas listeyi
+              doldurmak için alakasız haber göstermez.
             </p>
-            {sourceIssues.length > 0 && (
-              <p className="mt-2 text-sm text-amber-300">
-                Bu aramada tam okunamayan kaynaklar: {sourceIssues.join(", ")}. Sonuç bu yüzden eksik olabilir; biraz
-                sonra tekrar deneyin.
-              </p>
-            )}
+            <SourceReportNotes accessIssues={accessIssues} coverageGaps={coverageGaps} />
             <button
               type="button"
               onClick={handleFindOpportunities}
@@ -625,18 +644,38 @@ export default function CurrentOpportunities() {
         )}
 
         {hasSearched && !isSearching && !searchError && opportunities.length > 0 && (
-          <p className="text-sm text-zinc-400">
-            {opportunities.length} güncel konu bulundu. İçerik hazırlamak için birini seçin.
-            {sourceIssues.length > 0 && (
-              <span className="text-amber-300"> Tam okunamayan kaynaklar: {sourceIssues.join(", ")}.</span>
-            )}
-          </p>
+          <div>
+            <p className="text-sm text-zinc-400">
+              {opportunities.length} güncel konu bulundu. İçerik hazırlamak için birini seçin.
+            </p>
+            <SourceReportNotes accessIssues={accessIssues} coverageGaps={coverageGaps} />
+          </div>
         )}
       </div>
 
       {opportunities.length > 0 && (
+        <div className="space-y-4">
+          {/* Two groups, original indices kept for selection: national /
+              own-area developments first; decisions local to another
+              province/district (geoScope "elsewhere") apart and labelled,
+              never presented as applying to the user's own area. */}
+          {[false, true].map((localGroup) => {
+            const entries = opportunities
+              .map((opportunity, index) => ({ opportunity, index }))
+              .filter(({ opportunity }) => (opportunity.geoScope?.kind === "elsewhere") === localGroup);
+            if (entries.length === 0) return null;
+            return (
+              <div key={localGroup ? "elsewhere" : "main"}>
+                {localGroup && (
+                  <div className="mb-2.5">
+                    <p className="text-sm font-medium text-white">Başka il veya ilçeye özgü kararlar</p>
+                    <p className="mt-0.5 text-sm text-zinc-400">
+                      Bölgeniz için doğrudan geçerli değildir; yalnız bilgi amaçlı gösterilir.
+                    </p>
+                  </div>
+                )}
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-          {opportunities.map((opportunity, index) => {
+          {entries.map(({ opportunity, index }) => {
             const source = opportunity.sources[0];
             const freshness = source ? describeFreshnessBand(source.publishedAt, new Date()) : undefined;
             const recommended = recommendVisualFormat(opportunity);
@@ -677,6 +716,11 @@ export default function CurrentOpportunities() {
                   <span className="rounded-full border border-zinc-800 px-2.5 py-1 text-zinc-400">
                     Önerilen: {recommended === "carousel" ? "Carousel" : "Tek Görsel"}
                   </span>
+                  {opportunity.geoScope?.kind === "elsewhere" && (
+                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-amber-300">
+                      Yerel karar: {opportunity.geoScope.place}
+                    </span>
+                  )}
                 </div>
 
                 {isSafeExternalUrl(source?.url) && (
@@ -695,12 +739,21 @@ export default function CurrentOpportunities() {
             );
           })}
         </div>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {selectedOpportunity && (
         <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
           <p className="text-sm font-medium text-zinc-400">Seçilen fırsat</p>
           <p className="mt-1 text-base font-medium text-white">{selectedOpportunity.topic}</p>
+          {selectedOpportunity.geoScope?.kind === "elsewhere" && (
+            <p className="mt-2 text-sm text-amber-300">
+              Bu karar {selectedOpportunity.geoScope.place} için geçerlidir; bölgeniz için doğrudan geçerli değildir.
+            </p>
+          )}
           {selectedOpportunity.riskCaveat && (
             <p className="mt-2 text-sm text-amber-400">{selectedOpportunity.riskCaveat}</p>
           )}

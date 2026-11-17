@@ -1,6 +1,6 @@
 import type { BusinessProfile, ContentIdea } from "../context/businessProfile";
 import type { RankedContentOpportunity } from "../research/retrieval/types";
-import { isLocalToElsewhere } from "../research/turkishPlaces";
+import { homeAreaNames, isLocalToElsewhere } from "../research/turkishPlaces";
 
 // Weekly content plan: picks the week's ideas from the business's content
 // strategy (businessProfile.ts) and, when one qualifies, a current Radar
@@ -93,7 +93,7 @@ export function buildWeeklyContentPlan({ profile, now, radarOpportunities, recen
   const week = weekIndex(now);
   const recentTexts = recentDrafts.map((draft) => normalized(draft.text));
   const recentSourceUrls = new Set(recentDrafts.map((draft) => draft.sourceUrl).filter(Boolean));
-  const homeNames = ["İstanbul", profile.geography.primary, ...profile.geography.nearby];
+  const homeNames = homeAreaNames(profile.geography);
 
   const usedIdeaIds = new Set<string>();
   const usedFormats = new Set<string>();

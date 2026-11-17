@@ -36,7 +36,20 @@ export function errorKind(error: unknown): string {
 // break discovery). They report each swallowed failure here, so the router
 // logs the real status ("error" / "partial") instead of "ok". Optional:
 // callers that pass nothing (tests, other code) see no change at all.
-export type AdapterReport = { fail: (kind: string) => void };
+export type AdapterReport = {
+  fail: (kind: string) => void;
+  // How far back this run actually saw the source (raw entries, BEFORE any
+  // relevance filtering) — see retrieval/coverage.ts. Optional for the same
+  // reason as above.
+  coverage?: (coverage: SourceCoverage) => void;
+};
+
+// since: everything this source published after this instant was read (ISO;
+// for several feeds/pages, the most restrictive one), null when no dated
+// entry was read. complete: the target window (RetrievalWindow.notBefore)
+// was reached, i.e. nothing inside it can have been skipped for lack of
+// pages/archive.
+export type SourceCoverage = { since: string | null; complete: boolean };
 
 // Increments a counter map in place ({ "AbortError": 2, ... }).
 export function tally(counts: Record<string, number>, key: string): void {

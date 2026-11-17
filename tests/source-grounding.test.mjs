@@ -22,6 +22,16 @@ function radarDiagnosticsModule() {
   return cachedRadarDiagnostics;
 }
 
+
+// retrieval/coverage.ts (pure date-window helpers) resolves to the real
+// module in every loader, like the diagnostics module.
+let cachedCoverageModule;
+function realCoverageModule() {
+  if (!cachedCoverageModule) cachedCoverageModule = loadTypeScriptModule("src/lib/ai/research/retrieval/coverage.ts");
+  return cachedCoverageModule;
+}
+const isCoverageSpecifier = (specifier) => specifier === "./coverage" || specifier === "../coverage";
+
 function loadTypeScriptModule(relativePath, dependencyLoader = () => ({}), globals = {}) {
   const source = fs.readFileSync(path.join(projectRoot, relativePath), "utf8");
   const output = ts.transpileModule(source, {
@@ -32,7 +42,11 @@ function loadTypeScriptModule(relativePath, dependencyLoader = () => ({}), globa
   // real, silent module in every loader, so adapters under test keep their
   // exact behavior without each loader having to list it.
   const withDiagnostics = (specifier) =>
-    specifier === "diagnostics" || specifier.endsWith("/diagnostics") ? radarDiagnosticsModule() : dependencyLoader(specifier);
+    specifier === "diagnostics" || specifier.endsWith("/diagnostics")
+      ? radarDiagnosticsModule()
+      : isCoverageSpecifier(specifier)
+        ? realCoverageModule()
+        : dependencyLoader(specifier);
   const context = { loadedModule, exports: loadedModule.exports, dependencyLoader: withDiagnostics, ...globals };
   vm.runInNewContext(
     `(function (exports, dependencyLoader) { const require = dependencyLoader; ${output}\n})(exports, dependencyLoader);`,

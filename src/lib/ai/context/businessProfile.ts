@@ -9,6 +9,10 @@
 export type BusinessProfileGeography = {
   primary: string;
   nearby: string[];
+  // The province the business works in. A province-wide development there
+  // ("İstanbul genelinde …") is not "local to somewhere else", while another
+  // district of the same province still is.
+  province?: string;
 };
 
 // One evergreen content idea: an expert-mode instruction for
@@ -52,6 +56,7 @@ export const ATLAS_DEFAULT_BUSINESS_PROFILE: BusinessProfile = {
   geography: {
     primary: "Zekeriyaköy",
     nearby: ["Uskumruköy", "Demirciköy", "Gümüşdere", "Kilyos", "Bahçeköy", "Maden", "Sarıyer"],
+    province: "İstanbul",
   },
   expertiseTopics: [
     "villa",
