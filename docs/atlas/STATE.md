@@ -4,11 +4,12 @@ This document reflects VERIFIED current state as of the commit below. It
 changes often — keep it short and current, not a historical changelog
 (see ARCHITECTURE.md/PRODUCT.md for durable structure/decisions).
 
-**Production commit:** `18a03a8` (deployed 2026-11-13 to
-https://atlas-media-ai.vercel.app — deployment
-`atlas-media-q0wtn9igo-atlas-ai12.vercel.app`, READY + promoted; the
-production alias was confirmed to serve that commit). This file synced
-2026-11-13; a later docs-only commit may sit on top of it.
+**Production commit:** `a8019a9` — installable PWA (deployed 2026-11-17
+to https://atlas-media-ai.vercel.app — deployment
+`atlas-media-ieqx86cwr-atlas-ai12.vercel.app`, READY + promoted; the
+production alias was confirmed to serve that commit). Previous:
+`18a03a8` (daily-use UI, 2026-11-13). This file synced 2026-11-17; a
+docs-only commit may sit on top of it (same application code).
 
 ## Snapshot
 
@@ -602,6 +603,93 @@ production alias was confirmed to serve that commit). This file synced
   Platformlarda Yayınla" unless you mean to publish); a notification
   opens its draft; typing in fields does not zoom the page.
 
+## Installable PWA (2026-11-17, deployed in `a8019a9` — AWAITING REAL-DEVICE CHECK)
+
+Pushed together with `32743ba` (docs). Live check on
+https://atlas-media-ai.vercel.app (read-only, headless Chromium 390×844,
+logged out, no form submitted): production alias serves `a8019a9`;
+`/manifest.webmanifest`, the 4 icons, `/sw.js`, `/offline.html` all 200
+with correct types and byte-identical to the repo; `sw.js` sends no
+cookie, `Cache-Control: public, max-age=0, must-revalidate`; manifest +
+iOS tags are in `<head>`; installability errors: none; service worker
+active and controlling at scope `/`; cache holds only `/offline.html` +
+one icon, unchanged after browsing; with page AND service worker taken
+offline, `/dashboard` and `/login` show "İnternet bağlantısı yok";
+"Tekrar Dene" returns to the real page. Not verifiable headless: the
+automatic return on the browser's `online` event, the Android install
+button (Chrome fires `beforeinstallprompt` only on real devices), and
+everything behind login.
+
+- **Device check pending (Suat):** install from Safari (Paylaş → Ana
+  Ekrana Ekle) or Chrome (Uygulamayı Yükle / ⋮ → Ana ekrana ekle); the
+  icon is the indigo "A", opens full-screen without browser bars; log in
+  with e-mail + password inside the app (iOS asks once — separate
+  storage); menu, drafts, preview and approve work as in the browser; the
+  install hint never shows inside the app; airplane mode → offline
+  screen, "Tekrar Dene" after reconnecting. Do NOT test Google sign-in or
+  Instagram/Facebook "Bağla" inside the iOS app as a requirement (known
+  risk, see below); do not publish to test.
+
+- **Files:** `src/app/manifest.ts` (`/manifest.webmanifest`: name "Atlas
+  AI", short "Atlas", `start_url` `/dashboard`, scope `/`, standalone,
+  portrait, dark theme; every URL relative → works on the Vercel address
+  and a future own domain unchanged); `public/icons/` (192/512 "any",
+  512 maskable, 180 apple-touch) rendered from the existing indigo "A"
+  app mark by `scripts/generate-pwa-icons.mjs` (resvg-wasm + bundled
+  Inter, no new dependency — not a new brand, and NOT the Suat Kılıç
+  logo); `public/sw.js`; `public/offline.html`;
+  `components/pwa/PwaRegister.tsx` (registers the worker, production
+  builds only); `components/pwa/InstallPrompt.tsx` (in `DashboardShell`).
+- **Head tags:** Next 15 streams `metadata` into `<body>`, where Chrome
+  did not detect the manifest (installability check: "no-manifest") and
+  iOS ignores home-screen tags — so the manifest link, apple-touch-icon
+  and `apple-mobile-web-app-*` tags are written directly in the root
+  layout's `<head>`. Status bar style `black` (opaque) — no content under
+  the notch, no safe-area changes needed.
+- **Service worker scope of action:** precaches ONLY `/offline.html` and
+  one icon. Handles ONLY top-level GET navigations: network first; on a
+  network failure it shows the offline screen. It never caches pages,
+  user data, API responses, server actions, POSTs or publish calls (cache
+  contents verified unchanged after browsing). `sw.js`,
+  `manifest.webmanifest` and `offline.html` are excluded from the auth
+  middleware.
+- **Install prompt:** phones/tablets only (≤1023px + coarse pointer);
+  never inside the installed app; "Şimdi değil" hides it for 14 days
+  (localStorage). Android/Chrome: shown only when the browser fires
+  `beforeinstallprompt`, button opens the native dialog. iOS: manual hint
+  (Safari Paylaş → "Ana Ekrana Ekle").
+- **Verified locally (production build, headless Chromium 390×844):**
+  manifest served and parsed, installability errors: none, service worker
+  active and controlling; with the server stopped, `/dashboard` and
+  `/login` show "İnternet bağlantısı yok" + "Tekrar Dene" (returns on its
+  own when back online); install hint shows on iOS Safari UA, hides after
+  "Şimdi değil" incl. reload, hidden with `navigator.standalone` and on
+  desktop. tsc, ESLint 0 errors, tests 663/667 (only the 4 known), `next
+  build` green.
+- **Auth in the installed app — reviewed in code, NOT verified on a
+  device:**
+  - Launch opens `/dashboard`; no session → middleware redirects to
+    `/login`. Email/password login is same-origin and stays in the app.
+  - iOS keeps home-screen-app storage separate from Safari: Suat will
+    have to log in once inside the installed app.
+  - Google sign-in (`SocialButtons.tsx`, PKCE via
+    `${window.location.origin}/auth/callback`) leaves the app's origin.
+    Android Chrome usually returns to the app with shared cookies. On iOS
+    the Google page opens in an in-app browser sheet whose cookie storage
+    may differ, so the PKCE verifier / session may not reach the app —
+    expected to fail or land logged-out; unverified. Whether the Google
+    provider is even enabled in Supabase is also unverified. Email login
+    is the reliable path in the installed app.
+  - Instagram/Facebook "Bağla" (Meta OAuth via `NEXT_PUBLIC_SITE_URL`)
+    has the same out-of-app risk on iOS — connect accounts from the
+    browser, not the installed app, until tested.
+  - Password-reset / verification emails open in the browser, not the
+    installed app (normal for PWAs).
+- **Domain change later (no code change needed for the PWA):** update
+  `NEXT_PUBLIC_SITE_URL`, Supabase Auth Site URL + redirect allow-list,
+  Google OAuth and Meta app redirect URIs; an install made on the old
+  domain stays bound to it and must be reinstalled from the new one.
+
 ## Next work order (intentional — do not reorder without a genuine blocker)
 
 1. Claude Code persistent project memory — COMPLETE.
@@ -609,9 +697,9 @@ production alias was confirmed to serve that commit). This file synced
 3. Freeze Carousel V1 — COMPLETE (see above).
 4. Live Vercel URL + responsive mobile use — reachable/healthy on
    `atlas-media-ai.vercel.app`, including from a phone; mobile usability
-   reworked in item 16. CORRECTED 2026-11-13: PWA was never implemented
-   (no manifest/service worker) and there is no own domain — both remain
-   OPEN, not complete.
+   reworked in item 16. CORRECTED 2026-11-13: PWA was not implemented
+   then (now deployed as item 17, awaiting device check); there is no own
+   domain — still OPEN.
 5. Real usage test — COMPLETE for Current Content Radar V1 (see above);
    Carousel/Hero already covered by their own freezes.
 6. Gold Standard V1 (`ContentPackage` pipeline, `/api/content-package`)
@@ -656,6 +744,8 @@ production alias was confirmed to serve that commit). This file synced
     access").
 16. Daily-use UI pass (desktop + mobile) — DEPLOYED (`18a03a8`); still
     needs Suat's real-phone check behind login (see "Daily-use UI pass").
-    NOT done and not to be marked done: PWA (no manifest, icons or
-    service worker), an own domain for Atlas (only
+    NOT done and not to be marked done: an own domain for Atlas (only
     `atlas-media-ai.vercel.app`), sales/multi-customer readiness.
+17. Installable PWA — DEPLOYED (`a8019a9`), live assets verified; AWAITING
+    real-device verification on Suat's phone (install, login, offline) —
+    not complete until then (see "Installable PWA").
