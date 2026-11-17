@@ -4,11 +4,12 @@ This document reflects VERIFIED current state as of the commit below. It
 changes often — keep it short and current, not a historical changelog
 (see ARCHITECTURE.md/PRODUCT.md for durable structure/decisions).
 
-**Production commit:** `60f05d9` — Radar search status fix (deployed
-2026-11-17 to https://atlas-media-ai.vercel.app — deployment
-`atlas-media-rddez8d92-atlas-ai12.vercel.app`, READY + promoted; the
-production alias was confirmed to serve that commit). Before it: `a8019a9`
-(PWA), `18a03a8` (daily-use UI). This file synced 2026-11-17; a docs-only
+**Production commit:** `ee3fd41` — Radar 30-day coverage, access vs coverage
+reporting, local-decision separation (deployed 2026-11-17 to
+https://atlas-media-ai.vercel.app — deployment
+`atlas-media-31i2eks8w-atlas-ai12.vercel.app`, READY + promoted; the
+production alias was confirmed to serve that commit). Before it: `60f05d9`
+(Radar status UI), `a8019a9` (PWA), `18a03a8` (daily-use UI). This file synced 2026-11-17; a docs-only
 commit may sit on top of it (same application code).
 
 ## Snapshot
@@ -743,7 +744,7 @@ actually span the 30-day window. So a zero result is the outcome of a
 narrow scan for the news/official layers, not a verified "nothing in 30
 days".
 
-### D. Coverage + reliability fix — IMPLEMENTED locally, NOT committed/deployed
+### D. Coverage + reliability fix — DEPLOYED in `ee3fd41` (2026-11-17), production search NOT yet observed
 
 - **Regression vs old gap (evidence):** regressions = (1) Resmî Gazete's
   issue heading became entity-encoded ("Kas&#x131;m") so every entry got
@@ -791,7 +792,10 @@ days".
   8189 urban-transformation decision, 3 national ÇŞİDB) + 5 elsewhere.
   NOT changed: what Job 2 writes if Suat still picks an elsewhere item
   (paid path, not run).
-- **Not done:** production run of the new code, TKGM root cause (B).
+- **Not done:** a production search on the new code (none ran after the
+  deploy as of 19:49 UTC; the agent has no authenticated session, and a
+  401 from an unauthenticated call is not a functional check), the
+  production connection-probe result, TKGM root cause (B).
 - **TEMPORARY, remove after diagnosis:** `retrieval/connectionProbe.ts` and
   its call in `providers/tkgm.ts` (`[radar-diag] tkgm-connection-probe`) —
   two extra TLS connections per search, diagnosis only; delete together
