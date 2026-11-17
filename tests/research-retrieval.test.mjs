@@ -1599,3 +1599,99 @@ test("rankContentOpportunities: a suppressed same-event item's source is kept on
   const other = ranked.find((o) => /Konut/.test(o.topic));
   assert.equal(other.sources.length, 1, "unrelated opportunities are untouched");
 });
+
+// ============================================================
+// Source status reporting (2026-11-17): production returned 0 opportunities
+// because every TKGM linked-PDF fetch timed out from fra1 while the adapter
+// still reported "ok". These tests pin the reporting-only plumbing that lets
+// the dashboard say which source could not be read.
+// ============================================================
+
+test("retrieveCurrentInformation: onAdapterStatus reports ok / partial / error per adapter without changing results", async () => {
+  const router = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/router.ts",
+    (specifier) => {
+      if (specifier === "./providers/tcmb") {
+        return { fetchTcmbAnnouncements: async () => [makeResult({ title: "TCMB Faiz Duyurusu", url: "https://www.tcmb.gov.tr/x/a" })] };
+      }
+      if (specifier === "./providers/tkgm") {
+        return {
+          fetchTkgmAnnouncements: async (report) => {
+            report?.fail("evidence: AbortError×6");
+            return [makeResult({ title: "Tapu Duyurusu", url: "https://www.tkgm.gov.tr/duyurular/x" })];
+          },
+        };
+      }
+      if (specifier === "./providers/resmiGazete") {
+        return {
+          fetchResmiGazeteAnnouncements: async () => {
+            throw new Error("simulated timeout");
+          },
+        };
+      }
+      if (specifier === "./providers/csb") return { fetchCsbAnnouncements: async () => [] };
+      if (specifier === "./providers/economyNews") return { fetchEconomyNewsAnnouncements: async () => [] };
+      return {};
+    },
+    { console: { error: () => {}, log: () => {}, warn: () => {} } },
+  );
+
+  const statuses = {};
+  const results = await router.retrieveCurrentInformation(
+    { keywords: ["faiz", "tapu"] },
+    { onAdapterStatus: (source, status) => (statuses[source] = status) },
+  );
+  assert.deepEqual(statuses, { tcmb: "ok", tkgm: "partial", "resmi-gazete": "error", csb: "ok", "aa-dunya": "ok" });
+  assert.equal(results.length, 2, "reporting must not change what is returned");
+});
+
+test("tkgm.ts: a linked PDF that cannot be fetched is reported as a failure (source becomes partial, not a silent ok)", async () => {
+  const listing = `<a class="group block" href="/duyurular/duyuru-degisikligi"><div class="flex flex-col gap-4"><h3>Duyuru Değişikliği</h3><div><span>Duyuru</span><p>19 Ekim 2026</p></div></div></a>`;
+  const detail = `<html><body><main><p>Duyuru metni için ekteki dosyaya bakınız.</p><a href="https://cms-api.tkgm.gov.tr/media-library/abc123.pdf">Dosya</a></main></body></html>`;
+  const fetch = async (url) => {
+    if (String(url).includes("/media-library/")) {
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      throw error;
+    }
+    const html = String(url).endsWith("/duyurular") || String(url).endsWith("/haberler") ? listing : detail;
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: (name) => (name.toLowerCase() === "content-type" ? "text/html; charset=UTF-8" : null) },
+      arrayBuffer: async () => new TextEncoder().encode(html).buffer,
+    };
+  };
+  const tkgm = loadTypeScriptModule(
+    "src/lib/ai/research/retrieval/providers/tkgm.ts",
+    (specifier) => {
+      if (specifier === "../sourceQuality") return sourceQuality;
+      if (specifier === "../turkishDate") return turkishDate;
+      if (specifier === "../evidenceExtraction") return evidenceExtraction;
+      return {};
+    },
+    { fetch, URL, TextEncoder, Buffer, AbortController, setTimeout, clearTimeout, Promise, console: { error: () => {}, log: () => {}, warn: () => {} } },
+  );
+
+  const failures = [];
+  const results = await tkgm.fetchTkgmAnnouncements({ fail: (kind) => failures.push(kind) });
+  assert.ok(results.length > 0, "listing items are still returned");
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /^evidence: AbortError×\d+$/);
+});
+
+test("describeSourceIssues: only non-ok sources, as short Turkish labels without URLs or error text", () => {
+  const { describeSourceIssues } = loadTypeScriptModule("src/lib/ai/research/sourceIssues.ts");
+  assert.deepEqual([...describeSourceIssues({ tcmb: "ok", tkgm: "partial", "resmi-gazete": "error", csb: "ok" })], [
+    "TKGM (bazı duyuru içerikleri okunamadı)",
+    "Resmî Gazete (ulaşılamadı)",
+  ]);
+  assert.equal(describeSourceIssues({ tcmb: "ok" }).length, 0);
+});
+
+test("/api/research/discover: returns sourceIssues next to opportunities and is time-bounded", () => {
+  const routeSource = fs.readFileSync(path.join(projectRoot, "src/app/api/research/discover/route.ts"), "utf8");
+  assert.match(routeSource, /export const maxDuration = 60;/);
+  assert.match(routeSource, /onSourceStatus:/);
+  assert.match(routeSource, /Response\.json\(\{ opportunities, sourceIssues: describeSourceIssues\(sourceStatuses\) \}\)/);
+});

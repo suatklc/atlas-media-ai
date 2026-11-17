@@ -101,6 +101,7 @@ export async function retrieveCurrentInformation(
         // An adapter that swallowed a failure is "error" when nothing came
         // back, "partial" when another feed/page still returned items.
         const status = failures.length === 0 ? "ok" : items.length > 0 ? "partial" : "error";
+        options.onAdapterStatus?.(adapter.source, status);
         radarDiag("adapter", {
           source: adapter.source,
           status,
@@ -111,6 +112,7 @@ export async function retrieveCurrentInformation(
         return items;
       } catch (error: unknown) {
         console.error("Research adapter failed:", error instanceof Error ? error.message : String(error));
+        options.onAdapterStatus?.(adapter.source, "error");
         radarDiag("adapter", { source: adapter.source, status: "error", error: errorKind(error), raw: 0, ms: Date.now() - startedAt });
         return [] as NormalizedResearchResult[];
       }

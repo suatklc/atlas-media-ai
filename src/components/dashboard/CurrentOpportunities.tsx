@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, Loader2, ExternalLink, ImagePlus, RefreshCw, CalendarDays } from "lucide-react";
+import { Sparkles, Loader2, ExternalLink, ImagePlus, RefreshCw, CalendarDays, SearchX, AlertTriangle } from "lucide-react";
 import type { RankedContentOpportunity } from "@/lib/ai/research/retrieval/types";
 import type { WeeklyContentPlan, WeeklyPlanItem } from "@/lib/ai/content/weeklyPlan";
 import { describeFreshnessBand } from "@/lib/ai/research/freshnessBand";
@@ -73,6 +73,10 @@ export default function CurrentOpportunities() {
   const [hasSearched, setHasSearched] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  // Sources the last search could not (fully) read — from the route's
+  // sourceIssues; lets an empty result say why instead of staying silent.
+  const [sourceIssues, setSourceIssues] = useState<string[]>([]);
+  const searchRegionRef = useRef<HTMLDivElement>(null);
 
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [formatChoice, setFormatChoice] = useState<VisualFormatChoice>("single");
@@ -135,9 +139,18 @@ export default function CurrentOpportunities() {
   async function handleFindOpportunities() {
     setIsSearching(true);
     setSearchError(null);
+    setSourceIssues([]);
     setSelectedIndex(null);
     setContentPackage(null);
     setVisual(null);
+    // The status panel sits right under the buttons; on a phone make sure it
+    // is on screen so the search is never "silent".
+    requestAnimationFrame(() => searchRegionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+
+    // The route is bounded at 60 s (maxDuration); give up a little later so a
+    // dropped connection ends in a clear error rather than an endless spinner.
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 75_000);
 
     try {
       // Research Breadth Expansion: 5 -> 10 (the route's own MAX_LIMIT,
@@ -150,6 +163,7 @@ export default function CurrentOpportunities() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ limit: 10 }),
+        signal: controller.signal,
       });
       const data = await response.json().catch(() => null);
 
@@ -158,11 +172,26 @@ export default function CurrentOpportunities() {
       }
 
       setOpportunities(Array.isArray(data?.opportunities) ? data.opportunities : []);
+      setSourceIssues(
+        Array.isArray(data?.sourceIssues) ? data.sourceIssues.filter((issue: unknown): issue is string => typeof issue === "string") : [],
+      );
       setHasSearched(true);
     } catch (err) {
-      setSearchError(err instanceof Error ? err.message : "Güncel içerik fırsatları alınamadı. Lütfen tekrar deneyin.");
+      setOpportunities([]);
+      setHasSearched(false);
+      setSearchError(
+        err instanceof Error && err.name === "AbortError"
+          ? "Kaynaklar zamanında yanıt vermedi. Bağlantınızı kontrol edip tekrar deneyin."
+          : err instanceof TypeError
+            ? "Sunucuya ulaşılamadı. İnternet bağlantınızı kontrol edip tekrar deneyin."
+            : err instanceof Error
+              ? err.message
+              : "Güncel içerik fırsatları alınamadı. Lütfen tekrar deneyin.",
+      );
     } finally {
+      window.clearTimeout(timeout);
       setIsSearching(false);
+      requestAnimationFrame(() => searchRegionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
     }
   }
 
@@ -530,63 +559,80 @@ export default function CurrentOpportunities() {
         </div>
       )}
 
-      <div ref={instructionBoxRef} className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
-        <p className="text-sm font-medium text-white">Instagram paylaşımı hazırla</p>
-        <p className="mt-1 text-sm text-zinc-400">
-          Konuyu ve kime hitap edeceğini yazın; Atlas 5 slaytlık carousel, caption ve hashtagleri taslak olarak hazırlasın.
-        </p>
-        <textarea
-          value={instruction}
-          onChange={(event) => setInstruction(event.target.value)}
-          rows={3}
-          maxLength={1000}
-          placeholder="Örn. Zekeriyaköy'de villasını satmayı düşünen mülk sahiplerine doğru fiyatlandırmanın önemini anlatan bir paylaşım hazırla."
-          className="mt-3 w-full resize-y rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-base text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500/60 focus:outline-none sm:text-sm"
-        />
-        <button
-          type="button"
-          onClick={() => handleGenerateFromInstruction()}
-          disabled={isGenerating}
-          className="mt-3 flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-4 py-2.5 text-sm font-medium text-indigo-300 transition-colors hover:border-indigo-500/70 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isGenerating && activeInstruction !== null ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              İçerik oluşturuluyor…
-            </>
-          ) : (
-            <>
-              <Sparkles className="h-4 w-4" />
-              Carousel Oluştur
-            </>
-          )}
-        </button>
-        {activeInstruction !== null && generationError && (
-          <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-300">
-            {generationError}
+      {/* Search status — directly under the buttons, announced to screen
+          readers, never silent: loading → results / empty / error. */}
+      <div ref={searchRegionRef} aria-live="polite" className="scroll-mt-24 space-y-3">
+        {isSearching && (
+          <div className="flex items-start gap-3 rounded-lg border border-indigo-500/30 bg-indigo-500/5 px-4 py-3.5">
+            <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-indigo-300" />
+            <div>
+              <p className="text-sm font-medium text-white">Güvenilir kaynaklar taranıyor…</p>
+              <p className="mt-0.5 text-sm text-zinc-400">
+                Resmî kurumlar ve haber kaynakları kontrol ediliyor. Bu işlem 20–30 saniye sürebilir.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {searchError && !isSearching && (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3.5">
+            <p className="flex items-start gap-2 text-sm font-medium text-red-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {searchError}
+            </p>
+            <button
+              type="button"
+              onClick={handleFindOpportunities}
+              className="mt-3 min-h-11 rounded-full border border-red-400/40 px-4 py-2 text-sm font-medium text-red-100 hover:border-red-300"
+            >
+              Tekrar Dene
+            </button>
+          </div>
+        )}
+
+        {!hasSearched && !isSearching && !searchError && (
+          <p className="text-sm text-zinc-400">
+            Son 30 gün içindeki güvenilir kaynaklardan güncel gayrimenkul fırsatlarını bulmak için yukarıdaki butona
+            tıklayın.
           </p>
         )}
-        {activeInstruction !== null && packagePreview}
+
+        {hasSearched && !isSearching && !searchError && opportunities.length === 0 && (
+          <div className="rounded-lg border border-zinc-700 bg-zinc-950 px-4 py-3.5">
+            <p className="flex items-start gap-2 text-sm font-medium text-white">
+              <SearchX className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
+              Bu aramada paylaşmaya değer güncel bir gayrimenkul gelişmesi bulunamadı.
+            </p>
+            <p className="mt-1.5 text-sm text-zinc-400">
+              Son 30 günde gayrimenkulle doğrudan ilgili, kaynağı doğrulanabilen yeni bir duyuru veya haber çıkmadı.
+              Atlas listeyi doldurmak için alakasız haber göstermez.
+            </p>
+            {sourceIssues.length > 0 && (
+              <p className="mt-2 text-sm text-amber-300">
+                Bu aramada tam okunamayan kaynaklar: {sourceIssues.join(", ")}. Sonuç bu yüzden eksik olabilir; biraz
+                sonra tekrar deneyin.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={handleFindOpportunities}
+              className="mt-3 inline-flex min-h-11 items-center gap-1.5 rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 hover:border-indigo-500/50 hover:text-indigo-300"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Tekrar Ara
+            </button>
+          </div>
+        )}
+
+        {hasSearched && !isSearching && !searchError && opportunities.length > 0 && (
+          <p className="text-sm text-zinc-400">
+            {opportunities.length} güncel konu bulundu. İçerik hazırlamak için birini seçin.
+            {sourceIssues.length > 0 && (
+              <span className="text-amber-300"> Tam okunamayan kaynaklar: {sourceIssues.join(", ")}.</span>
+            )}
+          </p>
+        )}
       </div>
-
-      {searchError && (
-        <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-300">
-          {searchError}
-        </p>
-      )}
-
-      {!hasSearched && !isSearching && !searchError && (
-        <p className="text-sm text-zinc-400">
-          Son 30 gün içindeki güvenilir kaynaklardan güncel gayrimenkul fırsatlarını bulmak için yukarıdaki butona
-          tıklayın.
-        </p>
-      )}
-
-      {hasSearched && !isSearching && opportunities.length === 0 && !searchError && (
-        <p className="text-sm text-zinc-400">
-          Şu anda son 30 gün içinde yeterince güçlü güncel içerik bulunamadı.
-        </p>
-      )}
 
       {opportunities.length > 0 && (
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -707,6 +753,45 @@ export default function CurrentOpportunities() {
           {packagePreview}
         </div>
       )}
+
+      <div ref={instructionBoxRef} className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+        <p className="text-sm font-medium text-white">Instagram paylaşımı hazırla</p>
+        <p className="mt-1 text-sm text-zinc-400">
+          Konuyu ve kime hitap edeceğini yazın; Atlas 5 slaytlık carousel, caption ve hashtagleri taslak olarak hazırlasın.
+        </p>
+        <textarea
+          value={instruction}
+          onChange={(event) => setInstruction(event.target.value)}
+          rows={3}
+          maxLength={1000}
+          placeholder="Örn. Zekeriyaköy'de villasını satmayı düşünen mülk sahiplerine doğru fiyatlandırmanın önemini anlatan bir paylaşım hazırla."
+          className="mt-3 w-full resize-y rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-base text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500/60 focus:outline-none sm:text-sm"
+        />
+        <button
+          type="button"
+          onClick={() => handleGenerateFromInstruction()}
+          disabled={isGenerating}
+          className="mt-3 flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-4 py-2.5 text-sm font-medium text-indigo-300 transition-colors hover:border-indigo-500/70 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {isGenerating && activeInstruction !== null ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              İçerik oluşturuluyor…
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-4 w-4" />
+              Carousel Oluştur
+            </>
+          )}
+        </button>
+        {activeInstruction !== null && generationError && (
+          <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-300">
+            {generationError}
+          </p>
+        )}
+        {activeInstruction !== null && packagePreview}
+      </div>
       </div>
     </section>
   );

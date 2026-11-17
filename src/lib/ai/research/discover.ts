@@ -2,7 +2,7 @@ import type { BusinessProfile } from "../context/businessProfile";
 import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "../context/businessProfile";
 import type { ContentIntent } from "../content/types";
 import type { ContentOpportunityFreshness, ResearchSource, SourceTier } from "./types";
-import type { NormalizedResearchResult, RankedContentOpportunity, RetrievalQuery, TopicFamily } from "./retrieval/types";
+import type { NormalizedResearchResult, RankedContentOpportunity, RetrievalOptions, RetrievalQuery, TopicFamily } from "./retrieval/types";
 import { retrieveCurrentInformation } from "./retrieval/router";
 import { toTurkeyCalendarDate } from "./retrieval/turkishDate";
 import { classifyRealEstateScope, deriveEditorialAngle, isPropertyDomainSource } from "./realEstateScope";
@@ -775,6 +775,10 @@ export type DiscoverCurrentOpportunitiesOptions = {
   // caller (tests, any other future consumer) is completely unaffected;
   // the dashboard-facing route is the one caller that sets it.
   maxAgeDays?: number;
+  // Optional: each source's retrieval outcome (see RetrievalOptions), so a
+  // caller can tell "nothing qualified" apart from "a source could not be
+  // read". Reporting only — fetching, filtering and ranking are unchanged.
+  onSourceStatus?: RetrievalOptions["onAdapterStatus"];
 };
 
 // retrieveCurrentInformation is asked for a generously large CANDIDATE
@@ -818,7 +822,7 @@ export async function discoverCurrentContentOpportunities(
   // evaluates them with a stricter source-specific rule instead.
   const results = await retrieveCurrentInformation(
     { ...query, keywordFilterExempt: (result) => isPropertyDomainSource(result.url) },
-    { maxResults: CANDIDATE_POOL_SIZE },
+    { maxResults: CANDIDATE_POOL_SIZE, onAdapterStatus: options.onSourceStatus },
   );
   const ageFiltered =
     options.maxAgeDays !== undefined

@@ -297,6 +297,14 @@ export async function fetchTkgmAnnouncements(report?: AdapterReport): Promise<No
   await attachDetailPageEvidence(results, stats);
   const evidencePhaseMs = Date.now() - evidenceStartedAt;
   const { detailMs, pdfFetchMs, pdfParseMs, ...counts } = stats;
+  // Detail pages / linked PDFs that could not be read leave those items
+  // title-only, which the scope gate usually cannot place — report it so
+  // the source shows as "partial" instead of a silent "ok" (production,
+  // 2026-11-17: every PDF fetch from fra1 timed out → 0 opportunities).
+  const unreadable = { ...counts.detailFailed, ...counts.pdfFailed };
+  if (Object.keys(unreadable).length > 0) {
+    report?.fail(`evidence: ${Object.entries(unreadable).map(([kind, n]) => `${kind}×${n}`).join(", ")}`);
+  }
 
   let subjectFound = 0;
   for (const result of results) {

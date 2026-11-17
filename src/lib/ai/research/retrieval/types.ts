@@ -41,8 +41,14 @@ export type RetrievalQuery = {
   keywordFilterExempt?: (result: NormalizedResearchResult) => boolean;
 };
 
+export type AdapterStatus = "ok" | "partial" | "error";
+
 export type RetrievalOptions = {
   maxResults?: number;
+  // Optional per-adapter outcome ("partial" = some pages/attachments of that
+  // source could not be read). Reporting only — never changes what is
+  // fetched, filtered or ranked.
+  onAdapterStatus?: (source: string, status: AdapterStatus) => void;
 };
 
 // Phase 3 (Official Source Expansion + Topic Diversity): the minimum

@@ -2,6 +2,7 @@ import { type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { discoverCurrentContentOpportunities } from "@/lib/ai/research/discover";
 import { errorKind, radarDiag } from "@/lib/ai/research/retrieval/diagnostics";
+import { describeSourceIssues } from "@/lib/ai/research/sourceIssues";
 
 // Phase 2 (Current Content Engine — live research foundation): the
 // smallest safe server-side entry point to trigger research manually. No
@@ -20,6 +21,10 @@ const DEFAULT_LIMIT = 5;
 // merely down-ranked, so it can never appear in this dashboard surface
 // "to fill the list."
 const MAX_OPPORTUNITY_AGE_DAYS = 30;
+
+// A full run takes ~20-25 s in production (TKGM detail pages + PDFs).
+// Bounded so a hung source ends in a clear error, never an endless spinner.
+export const maxDuration = 60;
 
 function jsonError(message: string, status: number) {
   return Response.json({ error: message }, { status });
@@ -64,13 +69,17 @@ export async function POST(request: NextRequest) {
   // apart from a request that never finished.
   const startedAt = Date.now();
   radarDiag("discover-request", { phase: "start", region: process.env.VERCEL_REGION ?? "local", limit });
+  const sourceStatuses: Record<string, string> = {};
   try {
     const opportunities = await discoverCurrentContentOpportunities({
       limit,
       maxAgeDays: MAX_OPPORTUNITY_AGE_DAYS,
+      onSourceStatus: (source, status) => {
+        sourceStatuses[source] = status;
+      },
     });
     radarDiag("discover-request", { phase: "end", ms: Date.now() - startedAt, opportunities: opportunities.length });
-    return Response.json({ opportunities });
+    return Response.json({ opportunities, sourceIssues: describeSourceIssues(sourceStatuses) });
   } catch (error) {
     radarDiag("discover-request", { phase: "error", ms: Date.now() - startedAt, error: errorKind(error) });
     console.error("Research discovery error:", error instanceof Error ? error.message : String(error));
