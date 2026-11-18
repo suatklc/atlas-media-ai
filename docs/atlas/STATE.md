@@ -938,7 +938,7 @@ Suat; portfolio acquisition. TKGM access work is ON HOLD.
   Suite 710 (706 pass; only the 4 known); tsc, ESLint 0 errors, `next
   build` green.
 
-### Owner proposal cards — owner headline, scope, context routing (2026-11-18)
+### Owner proposal cards — owner headline, scope, context routing (2026-11-18, DEPLOYED in `06df86b`)
 
 - **Card title** = a fixed owner-facing template per theme
   (`ownerThemes[].newsHeadlines`, first stem match on the news title,
@@ -977,6 +977,7 @@ Suat; portfolio acquisition. TKGM access work is ON HOLD.
   "Ulusal fiyat verisi mülkünüzün değeri hakkında ne söyler, ne
   söylemez?"; miras/vergi → "Miras kalan evi satmadan önce
   netleştirilmesi gereken sorular" — plus 1 evergreen (villa/arsa).
+- **Live checks after deploy (2026-11-18):** production alias → `06df86b` READY; /login 200, manifest 200, sw.js 200; discover POST without session 401 (auth only, not a functional check). A logged-in "Güncel Konuları Bul" run in production has NOT been observed yet.
 - **Not verified:** no draft was generated (paid) — the gate is proven by
   stubbed-model tests only (tax ruling → regenerate once → 502).
 - **Tests:** owner-proposals 12, content-package +2 (186). Suite 714
