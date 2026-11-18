@@ -411,7 +411,9 @@ test("content-package prompt explicitly prohibits unsupported factual invention"
 test("content-package prompt establishes Suat Kılıç's professional real-estate-advisor positioning, not a news-summarizer persona", () => {
   const routeSource = readContentPackageRouteSource();
   assert.match(routeSource, /haber özetleyicisi DEĞİLSİN/);
-  assert.match(routeSource, /Suat Kılıç/);
+  // The name comes from the business profile (single source of the brand).
+  assert.match(routeSource, /\$\{BRAND\.name\}/);
+  assert.match(fs.readFileSync(path.join(projectRoot, "src/lib/ai/context/businessProfile.ts"), "utf8"), /brand: \{ name: "Suat Kılıç"/);
   assert.match(routeSource, /gayrimenkul danışman/i);
 });
 
@@ -529,8 +531,13 @@ function loadContentPackageRoute(overrides = {}) {
       isVisualFormat: (v) => v === "single" || v === "carousel",
     },
     "@/lib/ai/context/businessProfile": {
-      ATLAS_DEFAULT_BUSINESS_PROFILE: { geography: { primary: "Zekeriyaköy", nearby: ["Sarıyer"] } },
+      ATLAS_DEFAULT_BUSINESS_PROFILE: {
+        geography: { primary: "Zekeriyaköy", nearby: ["Sarıyer"] },
+        brand: { name: "Suat Kılıç", title: "Gayrimenkul Yatırım Danışmanı" },
+        contact: { whatsappUrl: "https://wa.me/905425087828", leadFormUrl: "https://talep.suatkilic.net" },
+      },
     },
+    "@/lib/ai/content/contactLine": loadTypeScriptModule("src/lib/ai/content/contactLine.ts"),
     "@/lib/ai/content/contentPackage": {
       CAROUSEL_SLIDE_ROLES: ["hook", "what-happened", "why-it-matters", "what-to-do", "cta"],
       validateContentPackage: overrides.validateContentPackage ?? (() => ({ ok: true })),
@@ -991,7 +998,11 @@ test("/api/content-package guarantees a clean blank-line separation before the s
 
   const response = await route.POST(request);
   const body = await response.json();
-  assert.match(body.contentPackage.caption, /Bu gelişmeyi takip edin\.\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı/);
+  // The profile's contact line sits between the text and the signature.
+  assert.match(
+    body.contentPackage.caption,
+    /Bu gelişmeyi takip edin\.\n\nİletişim — WhatsApp: wa\.me\/905425087828 · Talep formu: talep\.suatkilic\.net\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı/,
+  );
 });
 
 test("/api/content-package's signature normalization never introduces a duplicate — exactly one name and one title survive", async () => {
@@ -1080,7 +1091,7 @@ test("/api/content-package canonicalizes a signature where name and title run to
   const body = await response.json();
   assert.match(
     body.contentPackage.caption,
-    /Bu gelişmeyi takip edin\.\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı$/,
+    /Bu gelişmeyi takip edin\.\n\nİletişim — WhatsApp: wa\.me\/905425087828 · Talep formu: talep\.suatkilic\.net\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı$/,
   );
 });
 
@@ -1099,7 +1110,10 @@ test("/api/content-package leaves an already-canonical signature exactly as-is (
 
   const response = await route.POST(request);
   const body = await response.json();
-  assert.equal(body.contentPackage.caption, "Bu gelişmeyi takip edin.\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı");
+  assert.equal(
+    body.contentPackage.caption,
+    "Bu gelişmeyi takip edin.\n\nİletişim — WhatsApp: wa.me/905425087828 · Talep formu: talep.suatkilic.net\n\nSuat Kılıç\nGayrimenkul Yatırım Danışmanı",
+  );
 });
 
 test("/api/content-package's final caption always has exactly one blank line before the signature block, never zero or more than one", async () => {
@@ -3054,6 +3068,38 @@ test("/api/content-package: still failing after the one regeneration -> no packa
   assert.equal(response.status, 502);
   assert.equal(body.contentPackage, undefined);
   assert.equal(state.contentPackageCalls, 2, "never a loop");
+});
+
+test("expert copy gate: tax/legal rulings and figures are issues; the contact line and slide labels are not", () => {
+  const issues = (caption) => [...expertCopyGate.findExpertCopyIssues({ hook: "h", caption, slides: fiveSlides() })];
+  assert.deepEqual(issues("Miras kalan ev satılırsa vergi çıkmaz."), ["vergi çıkmaz"]);
+  assert.deepEqual(issues("Bu satış kanunen vergiden muaftır."), ["muaftır", "kanunen"]);
+  assert.deepEqual(issues("Beş yıl dolduysa satış serbesttir."), []);
+  assert.deepEqual(issues("Değer artışı %20 oranında vergilendirilir."), [expertCopyGate.EXPERT_FIGURE_ISSUE]);
+  assert.deepEqual(issues("Bu yıl 2026 için geçerli."), [expertCopyGate.EXPERT_FIGURE_ISSUE]);
+  assert.deepEqual(
+    issues("Vergi sorunuzu satıştan önce bir mali müşavirle netleştirin.\n\nİletişim — WhatsApp: wa.me/905425087828 · Talep formu: talep.suatkilic.net"),
+    [],
+    "contact links are not figures",
+  );
+});
+
+test("/api/content-package: an expert draft that states a tax ruling is regenerated once, and refused (502) if it still does", async () => {
+  const ruling = expertPackage("Miras kalan ev satılırsa vergi çıkmaz; bu satış kanunen muaftır.");
+  const refused = loadContentPackageRoute({ completionResponses: [ruling, ruling, ruling] });
+  const refusedResponse = await refused.route.POST({ json: async () => ({ instruction: LAND_INSTRUCTION, visualFormat: "carousel" }) });
+  assert.equal(refusedResponse.status, 502);
+  assert.equal((await refusedResponse.json()).contentPackage, undefined);
+  assert.equal(refused.state.contentPackageCalls, 2);
+
+  const fixed = loadContentPackageRoute({
+    completionResponses: [ruling, expertPackage("Miras kalan evi satmadan önce vergi sorunuzu bir mali müşavirle netleştirin.")],
+  });
+  const fixedResponse = await fixed.route.POST({ json: async () => ({ instruction: LAND_INSTRUCTION, visualFormat: "carousel" }) });
+  const fixedBody = await fixedResponse.json();
+  assert.equal(fixedResponse.status, 200);
+  assert.doesNotMatch(fixedBody.contentPackage.caption, /vergi çıkmaz|muaftır/);
+  assert.match(fixedBody.contentPackage.caption, /wa\.me\/905425087828/, "the contact line passes the figure check");
 });
 
 test("/api/content-package: a clean expert package passes the gate with a single Job 2 call; news packages never go through it", async () => {

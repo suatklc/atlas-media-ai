@@ -1984,7 +1984,7 @@ test("/api/research/discover: returns accessIssues and coverageGaps separately a
   const routeSource = fs.readFileSync(path.join(projectRoot, "src/app/api/research/discover/route.ts"), "utf8");
   assert.match(routeSource, /export const maxDuration = 60;/);
   assert.match(routeSource, /onSourceReport:/);
-  assert.match(routeSource, /Response\.json\(\{ opportunities, accessIssues, coverageGaps \}\)/);
+  assert.match(routeSource, /Response\.json\(\{ opportunities, proposals, accessIssues, coverageGaps \}\)/);
 });
 
 test("dashboard copy never claims 'nothing in the last 30 days' — only what was scanned", () => {

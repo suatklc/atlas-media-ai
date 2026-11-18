@@ -11,6 +11,7 @@ import {
   type ContentPackage,
 } from "@/lib/ai/content/contentPackage";
 import { ATLAS_DEFAULT_BUSINESS_PROFILE } from "@/lib/ai/context/businessProfile";
+import { buildContactLine } from "@/lib/ai/content/contactLine";
 import {
   capEvidenceText,
   classifyEvidenceSufficiency,
@@ -43,6 +44,10 @@ import {
   type EditorialRevisionOutcome,
 } from "@/lib/ai/content/editorialRevision";
 import { EXPERT_FREQUENCY_WORDS, EXPERT_JARGON, findExpertCopyIssues } from "@/lib/ai/content/expertCopyGate";
+
+// Brand from the business profile (single source; values unchanged).
+const BRAND = ATLAS_DEFAULT_BUSINESS_PROFILE.brand;
+const BRAND_FIRST_NAME_UPPER = BRAND.name.split(" ")[0].toLocaleUpperCase("tr-TR");
 
 // Gold Standard V1 — the structured generation path for Current Content
 // Radar opportunities. Deliberately separate from /api/assistant (which
@@ -152,7 +157,7 @@ const CAROUSEL_SLIDE_ROLE_BRIEF: Record<string, string> = {
     "SLAYT 3 — BUNUN SİZİN İÇİN ANLAMI: Gelişmeyi ilgili kitle için PRATİK sonuca çevir — alıcı, satıcı, ev sahibi, yatırımcı veya kiracı açısından somut biçimde ne değişiyor. Desteklenmeyen nedensel iddia kurma. Yalnızca 'ne değişti'yi başka kelimelerle tekrar etme; okuyucunun karar verirken gerçekten dikkate alması gereken somut bir noktayı ekle.",
   "what-to-do":
     "SLAYT 4 — NE YAPMALI: Mevcut olgularla desteklenen, gerçekten kullanışlı bir kontrol listesi, karar çerçevesi veya karşılaştırma sun — genel/boş bir 'dikkatli olun' cümlesi değil. Slayt 3'te açıklanan SONUCU burada tekrar açıklama — yalnızca somut, uygulanabilir adımları/kontrolleri listele.",
-  cta: "SLAYT 5 — UZMAN GÖRÜŞÜ / KAPANIŞ: Slayt 1-4'ün özeti OLMASIN. Kısa ve profesyonel bir uzman çıkarımı sun; Suat Kılıç'ı bir haber hesabı gibi değil, güvenilir bir gayrimenkul danışmanı gibi konumlandır. Ölçülü, doğal bir eylem çağrısıyla bitir — hazır kalıp cümleyi birebir kopyalama.",
+  cta: `SLAYT 5 — UZMAN GÖRÜŞÜ / KAPANIŞ: Slayt 1-4'ün özeti OLMASIN. Kısa ve profesyonel bir uzman çıkarımı sun; ${BRAND.name}'ı bir haber hesabı gibi değil, güvenilir bir gayrimenkul danışmanı gibi konumlandır. Ölçülü, doğal bir eylem çağrısıyla bitir — hazır kalıp cümleyi birebir kopyalama.`,
 };
 
 const AVOIDED_CLICHE_PHRASES = [
@@ -174,9 +179,9 @@ const AVOIDED_CLICHE_PHRASES = [
 function buildContentPackagePrompt(maxAgeContextDays: number): string {
   const geography = ATLAS_DEFAULT_BUSINESS_PROFILE.geography;
 
-  return `Kimlik ve konumlandırma: Sen bir haber özetleyicisi DEĞİLSİN. Suat Kılıç (Gayrimenkul Yatırım Danışmanı) için çalışan profesyonel bir gayrimenkul içerik stratejistisin. Görevin, ham bir kaynağı; okuyucunun "bu bilgi işime yarar, bunu kaydetmeliyim, bu danışman piyasayı biliyor" diyeceği tam bir sosyal medya içerik paketine dönüştürmek.
+  return `Kimlik ve konumlandırma: Sen bir haber özetleyicisi DEĞİLSİN. ${BRAND.name} (Gayrimenkul Yatırım Danışmanı) için çalışan profesyonel bir gayrimenkul içerik stratejistisin. Görevin, ham bir kaynağı; okuyucunun "bu bilgi işime yarar, bunu kaydetmeliyim, bu danışman piyasayı biliyor" diyeceği tam bir sosyal medya içerik paketine dönüştürmek.
 
-Ses (Suat Kılıç üslubu): profesyonel, bilgili, sakin, güvenilir, açık, pratik, insani.
+Ses (${BRAND.name} üslubu): profesyonel, bilgili, sakin, güvenilir, açık, pratik, insani.
 ASLA şöyle yazma: kurumsal PR dili, hukuki/mevzuat metni dili, yapay zeka dolgu dili, sansasyonel dil, satış baskısı dili, bürokratik/resmi duyuru dili. Suat bir avukat, ekonomist, resmi kurum temsilcisi veya gazeteci gibi yazmaz — o, gayrimenkul kararı veren insanlar için gelişmeleri yorumlayan bir danışmandır.
 Şu kalıp ifadelerden VE YAKIN VARYASYONLARINDAN (anlamca örtüşen benzer cümlelerden) kaçın, gerçekten gerekli olmadıkça: ${AVOIDED_CLICHE_PHRASES.map((p) => `"${p}"`).join(", ")}.
 
@@ -214,7 +219,7 @@ Kural — OLGU / YORUM AYRIMI VE UYDURMA YASAĞI:
 - Kanıt metninde "[AYRI KOŞUL / SENARYO BLOĞU]" işaretini görürsen, bundan sonraki metin kaynağın FARKLI bir koşul/istisna/senaryosunu tanımlar; bir sayı, süre, yükümlülük, prosedür veya sonucu bu işaretin bir tarafındaki bloktan diğerine, kaynak açıkça bağlamadıkça TAŞIMA.
 - Son ${maxAgeContextDays} gün içindeki güncelliği doğal biçimde yansıt; tarihleri koru.
 
-Yerel konumlandırma: Suat Kılıç'ın ana uzmanlık bölgesi ${geography.primary} ve çevresindeki ${geography.nearby.join(", ")} bölgeleri. Bunu HER cümleye zorlama — yalnızca editoryal olarak doğal olduğunda kullan. Ulusal ölçekli bir gelişmeyi kaynak desteklemediği halde yapay biçimde yerelleştirme.
+Yerel konumlandırma: ${BRAND.name}'ın ana uzmanlık bölgesi ${geography.primary} ve çevresindeki ${geography.nearby.join(", ")} bölgeleri. Bunu HER cümleye zorlama — yalnızca editoryal olarak doğal olduğunda kullan. Ulusal ölçekli bir gelişmeyi kaynak desteklemediği halde yapay biçimde yerelleştirme.
 
 Hedef kitlenin sorması gereken sorular (yalnızca kaynak/kanıt destekliyorsa yanıtla, uydurma): Ne oldu? Ne değişti? Bu kimi etkiliyor? Neden önemli? Alıcı/satıcı/yatırımcı neye dikkat etmeli? Okuyucu hangi pratik adımı atabilir?
 
@@ -224,8 +229,8 @@ visualBrief: SADECE görsel KONSEPT (örn. "modern İstanbul konut binası, akş
 
 Caption yapısı (ContentPackage.caption, tek metin, basın bülteni gibi OKUNMAMALI):
 KISA ÇERÇEVELEME (gelişmeyi 1-2 cümlede tanıt) → BİR YENİ PROFESYONEL DEĞERLENDİRME (slaytlarda zaten verilen sonucu ayrıntılı biçimde YENİDEN AÇIKLAMADAN) → DOĞAL KAPANIŞ → İMZA:
-Suat Kılıç
-Gayrimenkul Yatırım Danışmanı
+${BRAND.name}
+${BRAND.title}
 Caption, beş slaytın altıncı bir versiyonu OLMASIN; slaytların birebir tekrarı olmasın, slaytları tamamlayan kısa ve doğal bir metin olsun — her slaytı sırayla yeniden anlatma.
 
 Hashtag stratejisi: Jenerik hashtag yığını üretme. 5-9 arası, yüksek ilgililikte hashtag seç; sayıyı artırmak için tuhaf/yapay birleşik hashtag icat etme. Şu kategorilerden anlamlı bir karışım kullan: (1) konuya özgü terim (ör. tapu/kira/imar konusuna gerçekten uyan bir etiket), (2) meslek/niyet (ör. #Gayrimenkul, #GayrimenkulYatırımı), (3) yalnızca editoryal olarak uygunsa yerel keşif etiketi (bölge adı), (4) yalnızca gerçekten uygunsa marka/uzmanlık etiketi. Aynı jenerik seti her seferinde tekrarlama.
@@ -251,7 +256,7 @@ const EXPERT_SLIDE_ROLE_BRIEF: Record<string, string> = {
     "SLAYT 3 — ASIL MESELE (bu mülk türünde ne belirleyici): headline en fazla 50 karakter, büyük başlık. body: talimattaki mülk türüne uyan değerlendirme boyutlarından birkaçıyla Suat'ın uzman bakışını anlat (bir villa/konut yalnızca metrekare ve oda sayısıyla, bir arsa yalnızca büyüklüğü ve fiyatıyla tartılmaz). En fazla 3 kısa cümle. Slayt 2'yi tekrarlama.",
   "what-to-do":
     "SLAYT 4 — NE DEĞİŞİR / NE YAPILMALI: headline en fazla 50 karakter, büyük başlık. facts[]: 3-4 somut madde, her biri en fazla 70 karakterlik tek cümle, rakam yok, talimattaki konuya özgü (satış ise profesyonel satış stratejisinin değiştirdikleri; alım/yatırım ise doğru inceleme adımları; imar/yapılaşma ise hesaplamada ve belgelerde bakılacaklar). body: tek kısa giriş cümlesi.",
-  cta: "SLAYT 5 — SUAT'IN UZMAN GÖRÜŞÜ + TEK EYLEM ÇAĞRISI: headline en fazla 50 karakter, büyük başlık — bu konuya özgü tek uzman çıkarımını kendisi söyleyen bir cümle (slayt 1-4'ün özeti DEĞİL; 'asıl soru şu' gibi içeriği başka yere erteleyen başlık değil). body: o çıkarımı 1-2 cümleyle aç, ardından okuyucuyu kendi durumunu (talimattaki konuya göre: mülkünün değeri ve satış stratejisi, arsasının imar durumu ve potansiyeli, yatırım kararı vb.) Suat'la konuşmaya davet eden TEK ölçülü cümle, birinci tekil şahısla ('benimle', 'bana yazabilirsiniz'; 'Suat Kılıç ile' gibi üçüncü şahıs değil). Bu paketteki TEK eylem çağrısıdır.",
+  cta: `SLAYT 5 — ${BRAND_FIRST_NAME_UPPER}'IN UZMAN GÖRÜŞÜ + TEK EYLEM ÇAĞRISI: headline en fazla 50 karakter, büyük başlık — bu konuya özgü tek uzman çıkarımını kendisi söyleyen bir cümle (slayt 1-4'ün özeti DEĞİL; 'asıl soru şu' gibi içeriği başka yere erteleyen başlık değil). body: o çıkarımı 1-2 cümleyle aç, ardından okuyucuyu kendi durumunu (talimattaki konuya göre: mülkünün değeri ve satış stratejisi, arsasının imar durumu ve potansiyeli, yatırım kararı vb.) Suat'la konuşmaya davet eden TEK ölçülü cümle, birinci tekil şahısla ('benimle', 'bana yazabilirsiniz'; '${BRAND.name} ile' gibi üçüncü şahıs değil). Bu paketteki TEK eylem çağrısıdır.`,
 };
 
 // Professional evaluation dimensions per property type — the vocabulary of
@@ -320,7 +325,7 @@ Kural — UZMANLIK, VERİ DEĞİL: Bölge adını genel tavsiyenin başına ekle
 ${dimensions}
 Bunlar piyasa istatistiği değil, bir danışmanın mülke bakış açısıdır.
 
-Kural — OLGU YOK, YORUM VAR (kritik): Doğrulanmış bir kaynak YOK. Hiçbir istatistik, fiyat, oran, süre (ör. ortalama satış süresi), talep/alıcı sayısı, piyasa performansı, mevzuat bilgisi (yürürlük tarihi, oran, zorunluluk) veya doğrulanamayan yerel bilgi YAZMA; rakam kullanma. Bir kavramı (ör. emsal/TAKS) genel olarak açıklayabilirsin ama okuyucuyu kendi durumunun resmi belgesine (imar durumu, tapu kaydı) yönlendir. ContentPackage.facts boş dizi olsun. Şu sıklık/kesinlik ifadelerini KULLANMA: ${EXPERT_FREQUENCY_WORDS.map((p) => `"${p}"`).join(", ")}. Bir gözlem paylaşacaksan açıkça ${SIGNATURE_NAME}'ın kişisel değerlendirmesi olarak ve sıklık iddiası kurmadan yaz ("bence ...", "bir mülke bakarken ilk sorduğum ..."). Sahte deneyim/otorite iddiası ("20 yıllık tecrübemle" gibi) ekleme.
+Kural — OLGU YOK, YORUM VAR (kritik): Doğrulanmış bir kaynak YOK. Hiçbir istatistik, fiyat, oran, süre (ör. ortalama satış süresi), talep/alıcı sayısı, piyasa performansı, mevzuat bilgisi (yürürlük tarihi, oran, zorunluluk) veya doğrulanamayan yerel bilgi YAZMA; rakam kullanma. Vergi/hukuk konusunda hüküm verme ("muaftır", "vergi çıkmaz", "zorunludur", "kanunen" gibi); yalnızca hangi sorunun kişinin durumuna göre resmî kaynaktan veya uzmanından netleştirilmesi gerektiğini söyle. Bir kavramı (ör. emsal/TAKS) genel olarak açıklayabilirsin ama okuyucuyu kendi durumunun resmi belgesine (imar durumu, tapu kaydı) yönlendir. ContentPackage.facts boş dizi olsun. Şu sıklık/kesinlik ifadelerini KULLANMA: ${EXPERT_FREQUENCY_WORDS.map((p) => `"${p}"`).join(", ")}. Bir gözlem paylaşacaksan açıkça ${SIGNATURE_NAME}'ın kişisel değerlendirmesi olarak ve sıklık iddiası kurmadan yaz ("bence ...", "bir mülke bakarken ilk sorduğum ..."). Sahte deneyim/otorite iddiası ("20 yıllık tecrübemle" gibi) ekleme.
 
 Yerel konumlandırma: ${SIGNATURE_NAME}'ın uzmanlık bölgesi ${geography.primary} ve çevresi (${geography.nearby.join(", ")}). Talimatta geçen bölgeyi doğal biçimde an; bölge hakkında uydurma bilgi verme.
 
@@ -353,8 +358,8 @@ const MAX_INSTRUCTION_LENGTH = 1000;
 // fixed product requirement, not a subjective writing choice — do not
 // rely on the model remembering it every time, or on it formatting it
 // correctly when it does. Deterministic, not a second AI call.
-const SIGNATURE_NAME = "Suat Kılıç";
-const SIGNATURE_TITLE = "Gayrimenkul Yatırım Danışmanı";
+const SIGNATURE_NAME = BRAND.name;
+const SIGNATURE_TITLE = BRAND.title;
 const CANONICAL_SIGNATURE_BLOCK = `${SIGNATURE_NAME}\n${SIGNATURE_TITLE}`;
 
 // Canonicalizes the signature block itself rather than merely adding
@@ -374,10 +379,17 @@ function ensureSignature(caption: string): string {
   const trimmed = caption.trimEnd();
   const nameIndex = trimmed.lastIndexOf(SIGNATURE_NAME);
   if (nameIndex < 0) {
-    return `${trimmed}\n\n${CANONICAL_SIGNATURE_BLOCK}`;
+    return `${withContactLine(trimmed)}\n\n${CANONICAL_SIGNATURE_BLOCK}`;
   }
   const before = trimmed.slice(0, nameIndex).replace(/\s+$/, "");
-  return before ? `${before}\n\n${CANONICAL_SIGNATURE_BLOCK}` : CANONICAL_SIGNATURE_BLOCK;
+  return before ? `${withContactLine(before)}\n\n${CANONICAL_SIGNATURE_BLOCK}` : CANONICAL_SIGNATURE_BLOCK;
+}
+
+// Puts the profile's contact line (content/contactLine.ts) right before the
+// signature, once.
+function withContactLine(text: string): string {
+  const line = buildContactLine(ATLAS_DEFAULT_BUSINESS_PROFILE.contact);
+  return !line || text.includes(line) ? text : `${text}\n\n${line}`;
 }
 
 // Deterministic Hashtag Locality Guard: a proven, live-observed
@@ -946,7 +958,14 @@ export async function POST(request: NextRequest) {
   // Editorial Quality Repair (final step, max ONE attempt) — see
   // editorialRevision.ts. Never blocks: any failure keeps the original,
   // which has already passed every check above.
-  const { finalPackage, outcome } = await runEditorialQualityRepair(contentPackage);
+  const repaired = await runEditorialQualityRepair(contentPackage);
+  const { outcome } = repaired;
+  let finalPackage = repaired.finalPackage;
+  // A repair may never reintroduce what the expert gate removed.
+  if (contentMode === "expert" && finalPackage !== contentPackage && findExpertCopyIssues(finalPackage).length > 0) {
+    console.log("Expert copy gate: repaired package rejected, original kept");
+    finalPackage = contentPackage;
+  }
   console.log(
     `Editorial gate: verdict=${outcome.verdict} categories=${outcome.failCategories.join(",") || "-"} revisionTriggered=${outcome.triggered}${
       outcome.triggered ? ` revisionAccepted=${outcome.accepted}` : ""

@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles, Loader2, ExternalLink, ImagePlus, RefreshCw, CalendarDays, SearchX, AlertTriangle } from "lucide-react";
 import type { RankedContentOpportunity } from "@/lib/ai/research/retrieval/types";
+import type { OwnerProposal } from "@/lib/ai/content/ownerProposals";
 import type { WeeklyContentPlan, WeeklyPlanItem } from "@/lib/ai/content/weeklyPlan";
 import { describeFreshnessBand } from "@/lib/ai/research/freshnessBand";
 import { describeContentType } from "@/lib/ai/research/contentTypeLabel";
@@ -58,6 +59,115 @@ function isSafeExternalUrl(url: string | undefined): url is string {
   }
 }
 
+// Owner-facing proposals: sourced current developments and evergreen expert
+// topics in two clearly separate groups — an evergreen topic is never shown
+// as news. Picking one only prepares the existing draft flow.
+function OwnerProposalList({
+  proposals,
+  selectedThemeId,
+  onPick,
+  disabled,
+}: {
+  proposals: OwnerProposal[];
+  selectedThemeId: string | null;
+  onPick: (proposal: OwnerProposal) => void;
+  disabled: boolean;
+}) {
+  const groups: { kind: OwnerProposal["kind"]; title: string; note: string }[] = [
+    { kind: "current", title: "Güncel gelişmelere dayalı öneriler", note: "Kaynağı ve tarihi belli, son 30 güne ait gelişmeler." },
+    { kind: "evergreen", title: "Zamansız uzmanlık konuları", note: "Güncel haber değildir; mülk sahiplerinin sürekli sorduğu konular." },
+  ];
+  return (
+    <div className="space-y-4">
+      <p className="text-sm font-medium text-white">Mülk sahipleri için içerik önerileri</p>
+      {groups.map((group) => {
+        const items = proposals.filter((proposal) => proposal.kind === group.kind);
+        if (items.length === 0) return null;
+        return (
+          <div key={group.kind}>
+            <p className="text-sm font-medium text-zinc-200">{group.title}</p>
+            <p className="mt-0.5 text-sm text-zinc-400">{group.note}</p>
+            <div className="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {items.map((proposal) => {
+                const isSelected = proposal.themeId === selectedThemeId;
+                return (
+                  <div
+                    key={proposal.themeId}
+                    className={`flex flex-col gap-2 rounded-lg border px-4 py-3.5 ${
+                      isSelected ? "border-indigo-500/60 bg-indigo-500/10" : "border-zinc-800 bg-zinc-950"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-medium">
+                      <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1 text-indigo-300">
+                        {proposal.themeLabel}
+                      </span>
+                      <span
+                        className={`rounded-full border px-2.5 py-1 ${
+                          proposal.kind === "current"
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                            : "border-zinc-700 text-zinc-300"
+                        }`}
+                      >
+                        {proposal.kind === "current" ? "Güncel" : "Zamansız"}
+                      </span>
+                      <span className="rounded-full border border-zinc-800 px-2.5 py-1 text-zinc-400">{proposal.format}</span>
+                    </div>
+                    <p className="text-[15px] font-medium leading-snug text-white">{proposal.title}</p>
+                    <p className="text-sm text-zinc-300">{proposal.benefit}</p>
+                    {proposal.scopeNote && <p className="text-xs text-amber-300/90">{proposal.scopeNote}</p>}
+                    {proposal.source?.title && (
+                      <p className="text-xs text-zinc-400">
+                        Haber başlığı: <span className="text-zinc-300">{proposal.source.title}</span>
+                      </p>
+                    )}
+                    {proposal.source ? (
+                      <p className="text-xs text-zinc-400">
+                        {proposal.sourceRole === "inspiration"
+                          ? "Konu ilhamı"
+                          : proposal.sourceRole === "context"
+                            ? "Haber kaynağı (bağlam, doğrulanmış bilgi değil)"
+                            : "Kaynak"}
+                        : {proposal.source.name}
+                        {proposal.source.publishedAt ? ` · ${formatDate(proposal.source.publishedAt)}` : " · tarihsiz başvuru sayfası"}
+                        {isSafeExternalUrl(proposal.source.url) && (
+                          <>
+                            {" · "}
+                            <a
+                              href={proposal.source.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-zinc-300 underline underline-offset-2 hover:text-indigo-300"
+                            >
+                              Kaynağı Görüntüle
+                            </a>
+                          </>
+                        )}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-zinc-400">Kaynak: uzman değerlendirmesi (dış kaynak yok)</p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onPick(proposal)}
+                      disabled={disabled}
+                      className="mt-1 min-h-11 w-fit rounded-full border border-indigo-500/40 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-200 transition-colors hover:border-indigo-500/70 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isSelected ? "Seçildi" : "Bu öneriyi seç"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+      <p className="text-xs text-zinc-500">
+        Seçim yalnız taslak hazırlığını açar; içerik, aşağıdaki oluştur butonuna bastığınızda üretilir ve yayın için ayrıca onay gerekir.
+      </p>
+    </div>
+  );
+}
+
 // Untrusted JSON → list of strings (anything else dropped).
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -100,6 +210,10 @@ export default function CurrentOpportunities() {
   // accessIssues / coverageGaps (kept separate); lets an empty result say
   // what was and was not scanned instead of staying silent or overclaiming.
   const [accessIssues, setAccessIssues] = useState<string[]>([]);
+  // Owner-facing proposals (content/ownerProposals.ts) built from the search.
+  const [proposals, setProposals] = useState<OwnerProposal[]>([]);
+  const [selectedThemeId, setSelectedThemeId] = useState<string | null>(null);
+  const selectedPanelRef = useRef<HTMLDivElement>(null);
   const [coverageGaps, setCoverageGaps] = useState<string[]>([]);
   const searchRegionRef = useRef<HTMLDivElement>(null);
 
@@ -165,6 +279,8 @@ export default function CurrentOpportunities() {
     setIsSearching(true);
     setSearchError(null);
     setAccessIssues([]);
+    setProposals([]);
+    setSelectedThemeId(null);
     setCoverageGaps([]);
     setSelectedIndex(null);
     setContentPackage(null);
@@ -198,6 +314,7 @@ export default function CurrentOpportunities() {
       }
 
       setOpportunities(Array.isArray(data?.opportunities) ? data.opportunities : []);
+      setProposals(Array.isArray(data?.proposals) ? (data.proposals as OwnerProposal[]) : []);
       setAccessIssues(stringList(data?.accessIssues));
       setCoverageGaps(stringList(data?.coverageGaps));
       setHasSearched(true);
@@ -217,6 +334,31 @@ export default function CurrentOpportunities() {
       window.clearTimeout(timeout);
       setIsSearching(false);
       requestAnimationFrame(() => searchRegionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+    }
+  }
+
+  // Picking a proposal only prepares the existing draft flow — nothing is
+  // generated until the user presses that flow's own button.
+  function handlePickProposal(proposal: OwnerProposal) {
+    setSelectedThemeId(proposal.themeId);
+    if (proposal.kind === "current" && proposal.opportunity) {
+      const url = proposal.opportunity.sources[0]?.url;
+      const index = opportunities.findIndex((opportunity) => opportunity.sources[0]?.url === url);
+      if (index >= 0) {
+        handleSelect(index);
+        setFormatChoice(proposal.format === "Carousel" ? "carousel" : "single");
+        requestAnimationFrame(() => selectedPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      }
+      return;
+    }
+    if (proposal.instruction) {
+      setSelectedIndex(null);
+      setActiveInstruction(null);
+      setContentPackage(null);
+      setVisual(null);
+      setGenerationError(null);
+      setInstruction(proposal.instruction);
+      requestAnimationFrame(() => instructionBoxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
     }
   }
 
@@ -646,15 +788,29 @@ export default function CurrentOpportunities() {
         {hasSearched && !isSearching && !searchError && opportunities.length > 0 && (
           <div>
             <p className="text-sm text-zinc-400">
-              {opportunities.length} güncel konu bulundu. İçerik hazırlamak için birini seçin.
+              Taranan kaynaklarda {opportunities.length} gelişme bulundu; mülk sahipleri için uygun olanlar aşağıdaki
+              önerilere dönüştürüldü.
             </p>
             <SourceReportNotes accessIssues={accessIssues} coverageGaps={coverageGaps} />
           </div>
         )}
       </div>
 
+      {hasSearched && !isSearching && !searchError && proposals.length > 0 && (
+        <OwnerProposalList
+          proposals={proposals}
+          selectedThemeId={selectedThemeId}
+          onPick={handlePickProposal}
+          disabled={isGenerating}
+        />
+      )}
+
       {opportunities.length > 0 && (
-        <div className="space-y-4">
+        <details className="rounded-lg border border-zinc-800 px-4 py-3">
+          <summary className="cursor-pointer py-1 text-sm font-medium text-zinc-300">
+            Taranan gelişmelerin tamamı ({opportunities.length})
+          </summary>
+        <div className="mt-3 space-y-4">
           {/* Two groups, original indices kept for selection: national /
               own-area developments first; decisions local to another
               province/district (geoScope "elsewhere") apart and labelled,
@@ -743,10 +899,11 @@ export default function CurrentOpportunities() {
             );
           })}
         </div>
+        </details>
       )}
 
       {selectedOpportunity && (
-        <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+        <div ref={selectedPanelRef} className="scroll-mt-24 rounded-lg border border-zinc-800 bg-zinc-950 p-4">
           <p className="text-sm font-medium text-zinc-400">Seçilen fırsat</p>
           <p className="mt-1 text-base font-medium text-white">{selectedOpportunity.topic}</p>
           {selectedOpportunity.geoScope?.kind === "elsewhere" && (

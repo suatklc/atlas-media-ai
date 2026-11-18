@@ -13,6 +13,10 @@ export type BusinessProfileGeography = {
   // ("İstanbul genelinde …") is not "local to somewhere else", while another
   // district of the same province still is.
   province?: string;
+  // The district (ilçe) the business works in. A development named only at
+  // district level (e.g. another neighbourhood of Sarıyer) is NOT treated as
+  // directly concerning the primary area's sellers.
+  district?: string;
 };
 
 // One evergreen content idea: an expert-mode instruction for
@@ -28,6 +32,9 @@ export type ContentIdea = {
   reason: string;
   instruction: string;
   signature: string[];
+  // An official, live-verified page about THIS idea's subject, shown as the
+  // proposal's source (content/ownerProposals.ts). Never a guessed address.
+  reference?: { name: string; url: string };
 };
 
 // Weekly plan shape: each slot rotates through its pillars week by week;
@@ -39,12 +46,48 @@ export type ContentStrategy = {
   ideas: ContentIdea[];
 };
 
+// One of the owner-facing proposal themes "Güncel Konuları Bul" fills
+// (content/ownerProposals.ts). A current, sourced development is used when
+// its own title matches `matchStems`; otherwise the theme falls back to an
+// existing evergreen idea (`ideaIds`, in order; the idea's own `reference`,
+// if any, is shown as the source). `benefit` must not promise prices, sale
+// times or results.
+export type OwnerTheme = {
+  id: string;
+  label: string;
+  // Owner-facing proposal headlines for a NEWS item of this theme (the card
+  // title; the original news headline stays in the source line). The first
+  // entry whose stems match the news title wins; the last entry should have
+  // no stems (default). Must not state any fact, figure, place or promise.
+  newsHeadlines: { stems?: string[]; text: string }[];
+  benefit: string;
+  format: string;
+  matchStems: string[];
+  ideaIds: string[];
+};
+
+// How the business signs and how a reader can reach it. Contact URLs come
+// from the business's own existing channels (verified), never invented.
+export type BrandIdentity = { name: string; title: string };
+export type ContactChannels = { whatsappUrl?: string; leadFormUrl?: string };
+
 export type BusinessProfile = {
   industry: string;
   geography: BusinessProfileGeography;
   expertiseTopics: string[];
   excludedTopics: string[];
-  contentStrategy?: ContentStrategy;
+  brand: BrandIdentity;
+  contact?: ContactChannels;
+  // Sites the owner-proposal web search may use (research/ownerWebSearch.ts),
+  // named by the business itself. Topic inspiration only — never a fact
+  // source (same rule as social intelligence in research/sourceRegistry.ts).
+  webSearchDomains?: string[];
+  // Free RSS feeds of sites the business named (research/ownerFeeds.ts).
+  newsFeeds?: { id: string; name: string; url: string }[];
+  // ownerSignalStems: words in a news TITLE that show it concerns someone
+  // who owns or sells a property (not only buyers/tenants) — required for a
+  // news item to become an owner proposal (content/ownerProposals.ts).
+  contentStrategy?: ContentStrategy & { ownerThemes?: OwnerTheme[]; ownerSignalStems?: string[] };
 };
 
 // Atlas's first tenant/use-case configuration — not a permanent global
@@ -57,6 +100,7 @@ export const ATLAS_DEFAULT_BUSINESS_PROFILE: BusinessProfile = {
     primary: "Zekeriyaköy",
     nearby: ["Uskumruköy", "Demirciköy", "Gümüşdere", "Kilyos", "Bahçeköy", "Maden", "Sarıyer"],
     province: "İstanbul",
+    district: "Sarıyer",
   },
   expertiseTopics: [
     "villa",
@@ -68,7 +112,93 @@ export const ATLAS_DEFAULT_BUSINESS_PROFILE: BusinessProfile = {
     "bölgesel piyasa bilgisi",
   ],
   excludedTopics: [],
+  brand: { name: "Suat Kılıç", title: "Gayrimenkul Yatırım Danışmanı" },
+  // Existing channels: the WhatsApp link used on the lead site
+  // (suat-kilic-lead src/lib/contact.ts) and its live request form.
+  contact: {
+    whatsappUrl: "https://wa.me/905425087828",
+    leadFormUrl: "https://talep.suatkilic.net",
+  },
+  // Named by Suat (2026-11-18); both reachable, robots.txt allows crawlers
+  // on article pages (checked 2026-11-18).
+  webSearchDomains: ["gayrimenkulgundemi.com", "sariyerposta.com"],
+  // Their public RSS feeds (checked 2026-11-18): ~10 newest sector items
+  // (≈2 days) and ~20 newest local items (≈1 week) + old gallery/video posts.
+  newsFeeds: [
+    { id: "gayrimenkul-gundemi", name: "Gayrimenkul Gündemi", url: "https://www.gayrimenkulgundemi.com/feed" },
+    { id: "sariyer-posta", name: "Sarıyer Posta", url: "https://sariyerposta.com/rss" },
+  ],
   contentStrategy: {
+    // Seller-first (Atlas goal: owners who want to sell reach Suat). Idea
+    // `reference` pages were opened and verified live on 2026-11-17.
+    ownerSignalStems: [
+      // Seller/owner perspective only — bare "arsa", "fiyat" or "değer" also
+      // appear in buyer-side stories (e.g. a land-purchase support scheme).
+      "satarken", "satılırsa", "satıcı", "satışlar", "konut satış", "satılan konut", "ev sahib", "mülk sahib", "hak sahib",
+      "dönüşüm", "miras", "tapu", "fiyat endeks", "konut fiyat", "değerleme", "emlak vergi", "imar plan",
+    ],
+    ownerThemes: [
+      {
+        id: "pricing",
+        newsHeadlines: [
+          { stems: ["fiyat endeks", "konut fiyat", "reel fiyat"], text: "Ulusal fiyat verisi mülkünüzün değeri hakkında ne söyler, ne söylemez?" },
+          { text: "Mülkünüzün fiyatını belirlerken hangi bilgilere dayanmalısınız?" },
+        ],
+        label: "Doğru fiyatlandırma",
+        benefit: "Fiyatı tahmine değil, değerleme ve emsal mantığına dayandırmayı anlatır.",
+        format: "Carousel",
+        matchStems: ["değerleme", "rayiç", "emlak vergi", "beyan değer", "fiyat endeks", "konut fiyat", "reel fiyat", "değer kayb"],
+        ideaIds: ["evergreen-value-vs-price", "seller-initial-price"],
+      },
+      {
+        id: "sale-delay",
+        newsHeadlines: [
+          { text: "Satışlar yavaşlarken mülkünüzü satışa nasıl hazırlamalısınız?" },
+        ],
+        label: "Satışın uzama nedenleri",
+        benefit: "Satış beklerken fiyat, sunum ve hazırlık kararlarını gözden geçirmeye yardım eder.",
+        format: "Carousel",
+        matchStems: ["konut satış", "satılan konut", "satışlar", "bekleme dönem", "alıcı bul"],
+        ideaIds: ["seller-interest-no-offer", "seller-initial-price"],
+      },
+      {
+        id: "sale-prep",
+        newsHeadlines: [
+          { stems: ["miras"], text: "Miras kalan evi satmadan önce netleştirilmesi gereken sorular" },
+          { stems: ["vergi"], text: "Satıştan önce vergi sorularınızı kime ve nasıl netleştirmelisiniz?" },
+          { text: "Satışa çıkmadan önce hazırlığınızı tamamlamak için kontrol listesi" },
+        ],
+        label: "Satışa hazırlık",
+        benefit: "Satışa çıkmadan önce belge, vergi ve hazırlık konularını netleştirmeye yardım eder.",
+        format: "Carousel",
+        matchStems: ["tapu", "deprem sigorta", "dask", "iskan", "yapı kullanma", "miras", "satılırsa", "satarken", "değer artış kazanc"],
+        ideaIds: ["seller-sale-documents", "seller-presentation"],
+      },
+      {
+        id: "villa-land",
+        newsHeadlines: [
+          { text: "Arsa ya da villa satarken bu gelişmeyi nasıl değerlendirmelisiniz?" },
+        ],
+        label: "Villa / arsa satışı",
+        benefit: "Alıcının ilk soracağı imar ve parsel bilgilerine satıştan önce hazır olmayı sağlar.",
+        format: "Carousel",
+        matchStems: ["arsa", "arazi", "villa", "parsel", "imar durum", "taks", "kaks"],
+        ideaIds: ["seller-land-villa-readiness", "land-zoning-certificate"],
+      },
+      {
+        id: "regional",
+        newsHeadlines: [
+          { stems: ["dönüşüm", "kentsel dönüşüm"], text: "Kentsel dönüşüm sürecinde mülk sahipleri neleri takip etmeli?" },
+          { stems: ["imar plan"], text: "İmar planı değişikliği mülk sahibini nasıl ilgilendirir?" },
+          { text: "Bölgedeki bu gelişme mülk sahipleri için ne anlama geliyor?" },
+        ],
+        label: "Bölgesel gelişmeler",
+        benefit: "Bölgedeki plan ve dönüşüm kararlarının mülk sahibini nasıl ilgilendirdiğini gösterir.",
+        format: "Tek Görsel",
+        matchStems: ["kentsel dönüşüm", "dönüşüm", "rezerv yapı", "imar plan", "ulaşım", "altyapı"],
+        ideaIds: ["regional-seller-local-advisor", "regional-micro-location"],
+      },
+    ],
     pillarLabels: {
       regional: "Bölgesel",
       "land-zoning": "Arsa/İmar",
@@ -281,6 +411,30 @@ export const ATLAS_DEFAULT_BUSINESS_PROFILE: BusinessProfile = {
         signature: ["ilan metn", "gösterim"],
       },
       {
+        id: "seller-sale-documents",
+        pillar: "buyer-seller",
+        format: "kontrol listesi",
+        title: "Satıştan önce hazırlanacak belgeler",
+        reason: "Mülk sahibinin satışı tapu aşamasında aksatmamasını sağlar; süreç uzmanlığını gösterir.",
+        instruction:
+          "Mülkünü satmak isteyen sahiplere, tapuda satış aşamasında belge eksikliği yüzünden gün kaybetmemek için hangi belge türlerini (kimlik, tapu bilgisi, belediyeden alınan belgeler, gerekiyorsa vekâletname gibi) önceden hazırlamanın işe yarayacağını genel hatlarıyla anlatan bir paylaşım hazırla. Kesin ve güncel listenin tapu müdürlüğünden veya TKGM'den teyit edilmesi gerektiğini söyle. Harç oranı, ücret, süre veya tarih verme.",
+        signature: ["satıştan önce", "belge"],
+        reference: {
+          name: "TKGM — Sıkça Sorulan Sorular (Satış işlemleri için gerekli belgeler)",
+          url: "https://www.tkgm.gov.tr/sss",
+        },
+      },
+      {
+        id: "seller-land-villa-readiness",
+        pillar: "buyer-seller",
+        format: "kontrol listesi",
+        title: "Arsa ya da villa satarken alıcının ilk soracakları",
+        reason: "Arsa/villa sahibine ulaşır; bölgesel arsa ve villa uzmanlığını gösterir.",
+        instruction:
+          "Zekeriyaköy ve çevresinde arsasını veya villasını satmayı düşünen mülk sahiplerine, satışa çıkmadan önce imar durumu, parsel ve yapı belgeleri gibi alıcının ilk soracağı bilgileri hazır bulundurmanın neden önemli olduğunu anlatan bir paylaşım hazırla. Rakam, oran, süre veya mevzuat hükmü verme.",
+        signature: ["alıcının ilk", "satışa çıkmadan"],
+      },
+      {
         id: "buyer-negotiation",
         pillar: "buyer-seller",
         format: "soru-cevap",
@@ -442,6 +596,10 @@ export const ATLAS_DEFAULT_BUSINESS_PROFILE: BusinessProfile = {
         instruction:
           "Mülk sahiplerine, bir mülkün değeri ile ilan fiyatı arasındaki farkı ve değerin nelere göre şekillendiğini anlatan bir paylaşım hazırla.",
         signature: ["ilan fiyat", "değer"],
+        reference: {
+          name: "SPK — Gayrimenkul Değerleme Kuruluşları Tanıtım Rehberi",
+          url: "https://spk.gov.tr/kurumlar/gayrimenkul-degerleme-kuruluslari/tanitim-rehberi",
+        },
       },
       {
         id: "evergreen-decision-questions",

@@ -8,6 +8,8 @@ const SOURCE_LABELS: Record<string, string> = {
   "resmi-gazete": "Resmî Gazete",
   csb: "Çevre, Şehircilik ve İklim Değişikliği Bakanlığı",
   "aa-dunya": "AA / Dünya haber akışları",
+  "gayrimenkul-gundemi": "Gayrimenkul Gündemi RSS",
+  "sariyer-posta": "Sarıyer Posta RSS",
 };
 
 export type SourceReportSummary = {

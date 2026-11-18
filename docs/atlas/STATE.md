@@ -801,6 +801,187 @@ days".
   two extra TLS connections per search, diagnosis only; delete together
   with the other `[radar-diag]` code once B is understood.
 
+## Owner proposals — "Güncel Konuları Bul" for seller acquisition (2026-11-17; committed + deployed 2026-11-18 — see "Owner proposal cards" below)
+
+Goal (Suat, 2026-11-17): owners in Sarıyer and around who want to sell reach
+Suat; portfolio acquisition. TKGM access work is ON HOLD.
+
+- **What changed:** after a search the dashboard shows up to 5 owner-facing
+  proposals, one per theme in `businessProfile.ts` `ownerThemes` (Doğru
+  fiyatlandırma, Satışın uzama nedenleri, Satışa hazırlık, Villa/arsa
+  satışı, Bölgesel gelişmeler) — `content/ownerProposals.ts`,
+  deterministic, no AI/network. A theme uses a current Radar item only when
+  its own title matches the theme, it is not local to another
+  province/district and not institutional promotion (minister/ceremony/
+  summit/praise); otherwise an existing evergreen idea, shown in a separate
+  "Zamansız uzmanlık konuları" group, never as news. Each card: theme,
+  Güncel/Zamansız, format, title, owner benefit (fixed text, no price/
+  time/result claims), source name + date + link, or "uzman değerlendirmesi
+  (dış kaynak yok)". The raw Radar list moved into a collapsed "Taranan
+  gelişmelerin tamamı". Picking a proposal only prepares the EXISTING flow
+  (current → selected Radar opportunity + "İçerik Oluştur"; evergreen →
+  instruction box + "Carousel Oluştur"); nothing is generated until the user
+  presses that button; approval/publish unchanged.
+- **Profile:** `brand` (name/title, now the single source for
+  content-package's signature and brand mentions — prompt text verified
+  byte-identical), `contact` (WhatsApp link from the lead site's own
+  `contact.ts` + `talep.suatkilic.net`), `ownerThemes`, two new seller ideas
+  (`seller-sale-documents`, `seller-land-villa-readiness`) and an optional
+  per-idea `reference` (verified live 2026-11-17: SPK valuation guide,
+  TKGM SSS). Dead links found and NOT used: old TKGM PDFs now redirect to
+  the homepage; sariyer.bel.tr serves JS-only pages.
+- **Contact CTA:** content-package captions (news + expert) get one
+  deterministic line before the signature: "İletişim — WhatsApp: … · Talep
+  formu: …" (`content/contactLine.ts`); the model never writes an address.
+  The slide-5 invitation prompt is unchanged. Brand literal "Suat'la"
+  (Turkish suffix) remains in one prompt line.
+- **Web search NOT built in-app:** the only existing web-search integration
+  (Anthropic `web_search`, allowlisted domains, ≤8 searches ≈ $0.08 + model
+  tokens, < ~$0.20 per click) is still the paused `stash@{0}` — not applied.
+  Proposals today use the free Radar sources + profile ideas. No sector
+  publication or Sarıyer neighbourhood source is registered beyond the
+  source registry (AA, Dünya, sariyer.bel.tr planned). Enabling in-app web
+  search needs Suat's cost decision.
+- **Verified:** live free Radar run → 5 proposals (4 evergreen with matching
+  references or none, 1 current: Resmî Gazete 20.10.2026 İstanbul urban-
+  transformation aid deadline, title-only — PDF text not machine-readable);
+  harness (390 px, mocked API) shows the two groups, no overflow, a pick
+  issues no generation call. Tests 692 (688 pass; only the 4 known), 7 new
+  in `tests/owner-proposals.test.mjs`; content-package signature tests
+  updated for the contact line. tsc, ESLint 0 errors, `next build` green.
+- **Not done:** a paid generation run to see a real draft with the contact
+  line; production deploy; Suat's acceptance.
+
+### Owner web search (2026-11-18, code deployed but OFF — `OWNER_WEB_SEARCH_ENABLED` unset, NEVER run live)
+
+- **What:** `research/ownerWebSearch.ts` — ONE Messages API call
+  (`AI_MODEL` = `claude-sonnet-5`) with `web_search_20260209`,
+  `allowed_domains` = `businessProfile.webSearchDomains`
+  (`gayrimenkulgundemi.com`, `sariyerposta.com` — named by Suat; both
+  reachable, robots.txt allows article pages, both have RSS), `max_uses` 5,
+  `max_tokens` 6000, direct calls (no dynamic filtering), Istanbul
+  `user_location`, SDK `maxRetries: 0`, 45 s timeout, no `pause_turn`
+  continuation. Runs in parallel with Radar in `/api/research/discover`;
+  never throws (error → "Web araması (yanıt alınamadı)" access note).
+  **OFF unless `OWNER_WEB_SEARCH_ENABLED=true`** (not set anywhere).
+- **Guards:** a proposal survives only if its URL is in that call's real
+  `web_search_result`s and on an allowed domain; one per theme / per URL;
+  date from the result's `page_age` (≤30 days → "Güncel", else
+  "Zamansız"; undated never current); other provinces/districts
+  (`classifyGeoScope`), institutional promotion and price/time/return/
+  guarantee wording dropped. Sources are shown as "Konu ilhamı", never as
+  fact sources: a web proposal drives the EXPERT instruction flow (no
+  figures/dates/claims transferred). Merge order per theme: official Radar
+  item → web proposal → profile idea. Log line `[radar-diag]
+  owner-web-search` carries counts, tokens and computed cost only.
+- **Taken from stash@{0} (read only, not applied):** line-format parsing,
+  URL verification, direct search calls. Not taken: its separate Radar
+  layer and domain list.
+- **Pricing (official, checked 2026-11-18):** web search $10 / 1,000
+  searches (failed searches free; results billed as input tokens);
+  Claude Sonnet 5 $2 / $10 per MTok in/out. Estimated per click: typical
+  ≈ $0.10–0.15; upper bound ≈ $0.45 (5 searches $0.05 + 6,000 output
+  tokens $0.06 + ≤~160k input tokens $0.32, assuming ≤10k tokens per
+  search result set re-read across ≤6 sampling steps) — input is not hard-
+  capped by the API; actual cost is logged per call.
+- **Real blocker (verified 2026-11-18):** the Anthropic account's credit
+  balance is too low — even the free `count_tokens` call returned 400
+  "Your credit balance is too low". No live web-search run is possible
+  until credits are added (Plans & Billing). Production text generation
+  already moved to OpenAI for the same reason.
+- **2026-11-18 later:** paid web search ON HOLD (code kept, still off);
+  old/undated pages are now DROPPED, never relabelled evergreen.
+- **Verified free:** 10 stub-client tests (`tests/owner-web-search.test.mjs`:
+  request shape, disabled = no call, one call / no retries, URL and domain
+  verification, page_age dating, geo/promo/claim drops, error handling,
+  merge order, cost math, route wiring); tests 702 (698 pass, only the 4
+  known); tsc, ESLint 0 errors, `next build` green.
+
+### Owner news from free RSS + benefit-first selection (2026-11-18, committed + deployed with the card change below)
+
+- **Feeds:** `research/ownerFeeds.ts` reads `businessProfile.newsFeeds`
+  (Gayrimenkul Gündemi `/feed`, Sarıyer Posta `/rss`) in parallel with
+  Radar in `/api/research/discover`: title, date, link from RSS; gallery/
+  video entries ignored; a cheap title screen (dated ≤30 days, owner signal,
+  no promotion/clickbait, title not local elsewhere) decides which items get
+  their article body read (≤8, own paragraphs only — `articleBody` /
+  `entry-content`, og:description fallback, RSS description as last
+  resort). Survivors become ordinary opportunities via discover.ts
+  `buildContentOpportunities` (tier `commentary` → existing "not verified
+  fact" caveat; same grounded news flow as AA/Dünya items).
+- **Coverage is reported, never implied:** each feed's span = its oldest
+  dated article (live: Gayrimenkul Gündemi ≈ 43 h, 10 items; Sarıyer Posta
+  since 9 Nov, 20 items) → "Kapsamı eksik kaynaklar" lines.
+- **Selection (`content/ownerProposals.ts`, replaces official-first):**
+  every candidate (Radar + feeds) scored the same way — owner signal in the
+  title required (`ownerSignalStems`, seller perspective only), theme fit
+  (title ×2, article head ×1, cap 4), own area +3 / profile province +1
+  (own area may be named in the body; "elsewhere" judged on the title),
+  recency ≤3 days +2 / ≤7 days +1; official status gives nothing. Undated
+  or >30-day items are dropped (never evergreen). One news item per theme,
+  ≤5, never padded. Evergreen expert ideas are a separate group, only for
+  themes no news covered. Each news proposal carries its score parts.
+- **Live free run (2026-11-18, real sources, ~10–14 s, no AI):** 4 news —
+  Sarıyer Posta "Poligon’da 40 ailenin dönüşüm çağrısı!" (16.11, score 9:
+  own area named in the article), Gayrimenkul Gündemi "Konut Piyasasında
+  Bekleme Dönemi: Satışlar Düştü…" (18.11), "Konut Fiyat Endeksi Ekim
+  Ayında Yüzde 0,7 Arttı" (17.11), "Miras Kalan Ev Satılırsa Vergi Çıkar
+  mı?" (16.11) — plus 1 evergreen (Villa/arsa: "Arsa ya da villa satarken
+  alıcının ilk soracakları"). Dropped: buyer-only, landlord, clickbait,
+  politics/sports, other cities, ministry promotion; the official
+  İstanbul-wide 8189 decision lost the regional slot on locality/recency.
+- **Model calls:** none needed for selection; generating a draft from a
+  proposal uses the existing (paid) content-package flow only when the user
+  presses its button.
+- **Tests:** `tests/owner-feeds.test.mjs` (5), `tests/owner-proposals.test.mjs`
+  rewritten for the new selection (10), web-search tests updated (10).
+  Suite 710 (706 pass; only the 4 known); tsc, ESLint 0 errors, `next
+  build` green.
+
+### Owner proposal cards — owner headline, scope, context routing (2026-11-18)
+
+- **Card title** = a fixed owner-facing template per theme
+  (`ownerThemes[].newsHeadlines`, first stem match on the news title,
+  else the theme default) — no figure, place or promise. The original
+  headline, date and link stay in the source block ("Haber başlığı", then
+  "Haber kaynağı … · tarih · Kaynağı Görüntüle"). No model call.
+- **Locality tiers** (replaces "home +3 / province +1"): profile primary +
+  nearby villages +3; district only (`geography.district` = Sarıyer) +1;
+  province (judged on the TITLE only) and national 0. Poligon (another
+  Sarıyer neighbourhood) is district context, never a direct Zekeriyaköy
+  item. Every news card shows a scope line, e.g. "Kapsam: Sarıyer · Poligon
+  Mahallesi — Zekeriyaköy için doğrudan değil, ilçe geneli bağlam" /
+  "Kapsam: Türkiye geneli veri — bölgenize veya tek bir mülkün fiyatına
+  doğrudan uygulanmaz".
+- **Routing by source tier:** official-authority / primary-data → the
+  existing grounded news flow (`sourceRole: "fact"`). Anything else
+  (both RSS feeds are commentary tier) → the EXPERT flow with a template
+  instruction (`sourceRole: "context"`): the news is the starting point
+  only; figures, rates, dates and tax/legal rulings are not carried over,
+  national data is not applied to the region or one property. Reason:
+  before this, a commentary item (e.g. "Miras Kalan Ev Satılırsa Vergi
+  Çıkar mı?") went to the fact flow and Job 1 could extract a tax rule
+  from a non-authoritative site as fact.
+- **Expert copy gate** (`content/expertCopyGate.ts`): now also fails on
+  any figure (digits not glued to letters; link tokens such as the
+  wa.me/… contact line ignored) and on tax/legal ruling phrasing
+  ("muaftır", "vergi çıkmaz", "vergi alınmaz", "istisnadır",
+  "zorunludur", "kanunen", "yasa gereği", …). Same behaviour as before:
+  one regeneration naming the phrases, then 502 — never a flawed package.
+  The (OFF) editorial repair can no longer reintroduce a gate hit in
+  expert mode. The expert brief says the same rule up front.
+- **Live free run (2026-11-18, no AI):** 4 news (all context → expert
+  flow): Poligon → "Kentsel dönüşüm sürecinde mülk sahipleri neleri takip
+  etmeli?" (score 7: district 1); GG bekleme dönemi → "Satışlar
+  yavaşlarken mülkünüzü satışa nasıl hazırlamalısınız?"; KFE %0,7 →
+  "Ulusal fiyat verisi mülkünüzün değeri hakkında ne söyler, ne
+  söylemez?"; miras/vergi → "Miras kalan evi satmadan önce
+  netleştirilmesi gereken sorular" — plus 1 evergreen (villa/arsa).
+- **Not verified:** no draft was generated (paid) — the gate is proven by
+  stubbed-model tests only (tax ruling → regenerate once → 502).
+- **Tests:** owner-proposals 12, content-package +2 (186). Suite 714
+  (710 pass; only the 4 known); tsc, ESLint 0 errors, `next build` green.
+
 ## Next work order (intentional — do not reorder without a genuine blocker)
 
 1. Claude Code persistent project memory — COMPLETE.
