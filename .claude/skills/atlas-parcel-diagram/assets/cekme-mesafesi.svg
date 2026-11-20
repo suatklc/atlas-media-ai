@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350" role="img" aria-labelledby="title desc">
+  <title id="title">Çekme mesafesi nerede okunur?</title>
+  <desc id="desc">Yola bakan temsili parselin kesintisiz dış çizgisi ile içerideki kesik yapı yaklaşma çizgisi gösterilir. Çizim ölçekli değildir.</desc>
+  <rect width="1080" height="1350" fill="#0a1a2f"/>
+  <path d="M90 109H188" stroke="#c9a568" stroke-width="5"/>
+  <g fill="#f5f1e8" font-family="sans-serif">
+    <text x="90" y="203" font-size="63" font-weight="bold">Çekme mesafesi</text>
+    <text x="90" y="276" font-size="63" font-weight="bold">nerede okunur?</text>
+    <text x="90" y="348" font-size="34" fill="#e8cf9e">Temsili şema · Ölçekli değildir</text>
+  </g>
+  <rect x="90" y="411" width="900" height="598" rx="24" fill="#132842"/>
+  <rect x="264" y="491" width="552" height="367" fill="#0a1a2f" stroke="#f5f1e8" stroke-width="5"/>
+  <rect x="361" y="559" width="358" height="203" fill="none" stroke="#e8cf9e" stroke-width="5" stroke-dasharray="17 12"/>
+  <path d="M540 778V841m-9-53 9-10 9 10m-18 43 9 10 9-10" fill="none" stroke="#e8cf9e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M264 927H816" stroke="#8f9cb1" stroke-width="3" stroke-dasharray="22 18"/>
+  <rect x="429" y="896" width="222" height="64" rx="12" fill="#132842"/>
+  <g font-family="sans-serif" font-size="36" fill="#f5f1e8">
+    <text x="540" y="940" text-anchor="middle">Yol cephesi</text>
+    <path d="M92 1084H147" stroke="#f5f1e8" stroke-width="5"/>
+    <text x="170" y="1097">Parsel sınırı</text>
+    <path d="M92 1155H147" stroke="#e8cf9e" stroke-width="5" stroke-dasharray="12 9"/>
+    <text x="170" y="1168">Yapı yaklaşma sınırı</text>
+    <text x="90" y="1268" fill="#e8cf9e" font-size="35">İki sınır arasındaki ok, yol tarafındaki mesafeyi gösterir.</text>
+  </g>
+</svg>

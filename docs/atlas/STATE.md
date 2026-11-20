@@ -1007,8 +1007,17 @@ Suat; portfolio acquisition. TKGM access work is ON HOLD.
 10. STATIC CONTENT V1 — COMPLETE and frozen (see above): grounding
     (Gap 1, Gap 2, Scenario Boundary Positional Rule), Carousel Final
     Quality, and the hashtags-at-publish blocker.
-11. Canva Gold Standard PoC — not started (next, per CLAUDE.md's
-    Current Development Order).
+11. Canva Gold Standard PoC — manual pilot completed 2026-11-20.
+    The Canva draft required resizing, text/layout corrections and would
+    need manual font cleanup. Saved settings were confirmed in Claude;
+    refreshed visuals were not independently verified. Suat chose Atlas
+    for routine carousels and Canva for occasional manual edits. Revisit
+    integration once a brand template reliably renders at 1080 × 1350
+    with consistent typography on first output.
+    Last 30 Days: a narrow Reddit-only Sarıyer/Zekeriyaköy pilot returned
+    zero usable items; installation deferred. Keep Current Content Radar
+    for topic discovery. The optional Atlas parcel-diagram skill is
+    manual only and includes a schematic setback example for review.
 12. External publishing PoC (Buffer first candidate) — not started.
 13. Video / Reels V1 — INFRASTRUCTURE ONLY: provider layer +
     `video/reelPlan.ts` implemented, nothing calls them, NOT yet live-tested
